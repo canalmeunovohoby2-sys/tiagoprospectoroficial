@@ -289,30 +289,29 @@ export function LeadSearchForm({
       const isEmptyReal = searchStatus === "EMPTY_REAL" || searchStatus === "EMPTY";
 
       if (realLeads.length === 0) {
-        const googleWarnings = warnings.filter(isGoogleWarning);
-        const visibleWarnings = googleWarnings.length > 0 ? googleWarnings.slice(0, 1) : warnings.slice(0, 3);
-        const primaryWarning = visibleWarnings[0];
-        for (const w of visibleWarnings) {
+        const googleUnavailable = warnings.some(isGoogleWarning);
+        const nonGoogleWarnings = warnings.filter((w) => !isGoogleWarning(w));
+        for (const w of nonGoogleWarnings.slice(0, 2)) {
           toast.warning(`${SOURCE_LABEL[w.source] ?? w.source}: ${w.message}`, {
             description: w.action,
-            duration: 10000,
+            duration: 7000,
           });
         }
         const msg = isEmptyWithLimitations
-          ? "Nenhum lead encontrado pelas fontes consultadas. Algumas fontes estavam temporariamente indisponíveis e podem reduzir a cobertura da busca."
+          ? "Nenhum lead encontrado pelas fontes públicas disponíveis."
           : data?.error
             ? getSearchErrorMessage(null, data)
-            : "Nenhum lead encontrado pelas fontes consultadas para este segmento e localização.";
+            : "Nenhum lead encontrado para este segmento e localização nas fontes públicas disponíveis.";
         setNotice({
           tone: isEmptyWithLimitations ? "warning" : "error",
           title: msg,
           description: isEmptyWithLimitations
-            ? "Fontes indisponíveis não permitem afirmar que não existem empresas. Refaça a busca em alguns segundos para tentar recuperar a cobertura."
-            : primaryWarning
-              ? `${primaryWarning.message} ${primaryWarning.action ?? ""}`.trim()
+            ? "Uma das fontes de dados estava temporariamente indisponível, o que pode reduzir a cobertura. Refaça em alguns instantes ou tente outro termo/cidade."
+            : googleUnavailable
+              ? "A busca utiliza fontes públicas (OpenStreetMap) e pode ter cobertura menor em alguns segmentos. Tente outra cidade, outro segmento ou um termo mais amplo."
               : "Tente outro segmento, uma cidade maior ou um termo mais amplo.",
         });
-        toast.warning(msg, { duration: 10000 });
+        toast.warning(msg, { duration: 8000 });
         setSearching(false); stopStageRotation(); setProgress(0);
         return;
       }
