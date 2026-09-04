@@ -156,6 +156,7 @@ ${JSON.stringify(original)}
 Devolva a spec COMPLETA atualizada conforme a instrução.`;
 
     let raw = "";
+    let usedModel = DEFAULT_GEMINI_MODEL;
     try {
       const result = await generateText({
         system: SYSTEM_PROMPT,
@@ -165,6 +166,7 @@ Devolva a spec COMPLETA atualizada conforme a instrução.`;
         maxOutputTokens: 8192,
       });
       raw = result.text;
+      usedModel = result.model;
     } catch (e) {
       if (e instanceof AiError) {
         return new Response(
@@ -193,7 +195,7 @@ Devolva a spec COMPLETA atualizada conforme a instrução.`;
     }
 
     const changed = JSON.stringify(spec) !== JSON.stringify(original);
-    return new Response(JSON.stringify({ spec, model: DEFAULT_GEMINI_MODEL, status: "ok", changed }), {
+    return new Response(JSON.stringify({ spec, model: usedModel, status: "ok", changed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

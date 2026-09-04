@@ -121,15 +121,15 @@ type SearchError = { status: number; text: string; endpoint: string; durationMs?
 const OSM_SEGMENT_FILTERS: Array<{ match: string[]; filters: OsmTagFilter[] }> = [
   { match: ["dentista", "dentistas", "odontologia", "odontologico", "odontológica", "odontologica"], filters: [{ key: "amenity", value: "dentist" }, { key: "healthcare", value: "dentist" }] },
   { match: ["medico", "médico", "medicos", "médicos", "clinica", "clínica", "clinicas", "clínicas"], filters: [{ key: "amenity", value: "clinic" }, { key: "healthcare", value: "clinic" }, { key: "healthcare", value: "doctor" }] },
-  { match: ["advogado", "advogados", "advocacia"], filters: [{ key: "office", value: "lawyer" }] },
-  { match: ["contador", "contadores", "contabilidade"], filters: [{ key: "office", value: "accountant" }] },
+  { match: ["advogado", "advogados", "advocacia"], filters: [{ key: "office", value: "lawyer" }, { key: "amenity", value: "lawyer" }, { key: "name", regex: "advogad|advocaci|lawyer|oab" }] },
+  { match: ["contador", "contadores", "contabilidade"], filters: [{ key: "office", value: "accountant" }, { key: "name", regex: "contabil|contador" }] },
   { match: ["imobiliaria", "imobiliária", "imobiliarias", "imobiliárias"], filters: [{ key: "office", value: "estate_agent" }, { key: "shop", value: "estate_agent" }] },
   { match: ["restaurante", "restaurantes"], filters: [{ key: "amenity", value: "restaurant" }, { key: "amenity", value: "food_court" }] },
   { match: ["oficina", "oficinas", "mecanica", "mecânica"], filters: [{ key: "shop", value: "car_repair" }, { key: "craft", value: "mechanic" }, { key: "shop", value: "tyres" }, { key: "shop", value: "motorcycle_repair" }] },
   { match: ["academia", "academias", "fitness"], filters: [{ key: "leisure", value: "fitness_centre" }, { key: "amenity", value: "gym" }] },
   { match: ["estetica", "estética", "beleza"], filters: [{ key: "shop", value: "beauty" }, { key: "beauty", regex: ".+" }] },
-  { match: ["arquiteto", "arquitetos", "arquitetura"], filters: [{ key: "office", value: "architect" }] },
-  { match: ["psicologo", "psicólogo", "psicologos", "psicólogos", "psicologia"], filters: [{ key: "healthcare", value: "psychotherapist" }, { key: "office", value: "therapist" }] },
+  { match: ["arquiteto", "arquitetos", "arquitetura"], filters: [{ key: "office", value: "architect" }, { key: "name", regex: "arquitet" }] },
+  { match: ["psicologo", "psicólogo", "psicologos", "psicólogos", "psicologia"], filters: [{ key: "healthcare", value: "psychotherapist" }, { key: "office", value: "therapist" }, { key: "name", regex: "psicolog" }] },
   { match: ["veterinario", "veterinário", "veterinarios", "veterinários"], filters: [{ key: "amenity", value: "veterinary" }, { key: "healthcare", value: "veterinary" }] },
   { match: ["salao", "salão", "saloes", "salões", "cabeleireiro"], filters: [{ key: "shop", value: "hairdresser" }, { key: "shop", value: "beauty" }] },
   { match: ["escola", "escolas"], filters: [{ key: "amenity", value: "school" }] },
@@ -1206,14 +1206,16 @@ async function searchOverpass(segment: string, city: string, state: string, ctx?
       areaHeader = `area["name"="${cityEscaped}"]["boundary"="administrative"]["admin_level"="8"]->.searchArea;`;
     }
 
-    // Timeout de 60s: São Paulo/RJ têm grafos gigantes e travam com 25s.
+    // Timeout de 90s: São Paulo/RJ têm grafos gigantes e travam com 25s.
+    // `out center tags 1000` evita truncar cidades grandes (ex.: SP tem 800+
+    // clínicas mapeadas; antes retornava no máximo 100).
     const query = `
-      [out:json][timeout:60];
+      [out:json][timeout:90];
       ${areaHeader}
       (
         ${selectors.join("\n")}
       );
-      out center tags 100;
+      out center tags 1000;
     `.trim();
 
     console.info("[search-places] Overpass request", {
@@ -1318,12 +1320,12 @@ async function searchOverpassByName(
     }
 
     const query = `
-      [out:json][timeout:60];
+      [out:json][timeout:90];
       ${areaHeader}
       (
         ${selectors.join("\n")}
       );
-      out center tags 100;
+      out center tags 500;
     `.trim();
 
     console.info("[search-places] Overpass RECOVERY request", {
@@ -1444,6 +1446,16 @@ function mapOverpassToLeads(elements: OverpassElement[], city: string, state: st
     const tags = el.tags ?? {};
     const name = tags.name ?? tags["brand"] ?? tags["operator"] ?? "";
     if (!name || name.trim().length < 2) continue;
+
+    // Filtro geográfico rigoroso: se o elemento declara addr:city de outra
+    // cidade (fallback "around" sem área administrativa), não pode entrar.
+    const addrCity = tags["addr:city"];
+    if (addrCity) {
+      const normAddr = normalizeText(addrCity);
+      const normTarget = normalizeText(city);
+      const compatible = normAddr.includes(normTarget) || normTarget.includes(normAddr);
+      if (!compatible) continue;
+    }
 
     const extId = `osm:${el.type}:${el.id}`;
     if (seen.has(extId)) continue;

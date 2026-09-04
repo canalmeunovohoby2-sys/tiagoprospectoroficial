@@ -52,14 +52,50 @@ export interface SiteCta {
   value?: string;
 }
 
+export const LAYOUT_ARCHETYPES = ["editorial", "corporate", "minimal", "luxury", "bold", "service_focused", "local_business"] as const;
+export const HERO_VARIANTS = ["split", "centered", "editorial", "statement", "service_first"] as const;
+export const CARD_STYLES = ["flat", "bordered", "elevated", "editorial"] as const;
+export const BUTTON_STYLES = ["solid", "outline", "soft"] as const;
+export const NAV_STYLES = ["minimal", "centered", "boxed"] as const;
+export const CTA_TREATMENTS = ["primary_section", "band", "inline"] as const;
+export const FOOTER_STYLES = ["simple", "editorial", "centered"] as const;
+export const SECTION_SPACINGS = ["compact", "comfortable", "generous"] as const;
+export const VISUAL_DENSITIES = ["airy", "balanced", "dense"] as const;
+export const DECORATIVE_INTENSITIES = ["none", "low", "medium"] as const;
+export const CONTAINER_WIDTHS = ["narrow", "standard", "wide"] as const;
+export const RADIUS_SCALES = ["none", "small", "medium", "large"] as const;
+export const HEADING_SCALES = ["normal", "large", "display"] as const;
+
+export type DesignToken = string;
+
+export interface SiteDesignSystem {
+  colors?: Record<string, string>;
+  typography?: {
+    heading_font?: string;
+    body_font?: string;
+    heading_weight?: "regular" | "semibold" | "bold";
+    heading_scale?: (typeof HEADING_SCALES)[number];
+    body_size?: "normal" | "large";
+  };
+  visual_style?: string;
+  layout_mood?: string;
+  layout_archetype?: (typeof LAYOUT_ARCHETYPES)[number];
+  hero_variant?: (typeof HERO_VARIANTS)[number];
+  card_style?: (typeof CARD_STYLES)[number];
+  button_style?: (typeof BUTTON_STYLES)[number];
+  navigation_style?: (typeof NAV_STYLES)[number];
+  cta_treatment?: (typeof CTA_TREATMENTS)[number];
+  footer_style?: (typeof FOOTER_STYLES)[number];
+  section_spacing?: (typeof SECTION_SPACINGS)[number];
+  visual_density?: (typeof VISUAL_DENSITIES)[number];
+  decorative_intensity?: (typeof DECORATIVE_INTENSITIES)[number];
+  container_width?: (typeof CONTAINER_WIDTHS)[number];
+  radius_scale?: (typeof RADIUS_SCALES)[number];
+}
+
 export interface SiteSpec {
   business?: Partial<SiteBusiness>;
-  design_system?: {
-    colors?: Record<string, string>;
-    typography?: { heading_font?: string; body_font?: string };
-    visual_style?: string;
-    layout_mood?: string;
-  };
+  design_system?: SiteDesignSystem;
   pages?: Record<string, boolean>;
   sections?: SiteSection[];
   navigation?: SiteNavItem[];
@@ -133,13 +169,31 @@ export function pickLeadForSpec(lead: LeadSource): Record<string, unknown> {
   };
 }
 
+function enumOr<T extends readonly string[]>(raw: unknown, list: T, fallback?: T[number]): T[number] | undefined {
+  const v = str(raw);
+  if (!v) return fallback;
+  return (list as readonly string[]).includes(v) ? (v as T[number]) : fallback;
+}
+
 export const SITE_PROJECT_DEFAULT_SPEC: SiteSpec = {
   business: { name: "", segment: "", city: "", state: "" },
   design_system: {
     colors: {},
     typography: { heading_font: "", body_font: "" },
     visual_style: "",
-    layout_mood: "",
+    layout_mood: "minimal",
+    layout_archetype: "minimal",
+    hero_variant: "centered",
+    card_style: "bordered",
+    button_style: "solid",
+    navigation_style: "minimal",
+    cta_treatment: "primary_section",
+    footer_style: "simple",
+    section_spacing: "comfortable",
+    visual_density: "airy",
+    decorative_intensity: "low",
+    container_width: "standard",
+    radius_scale: "medium",
   },
   pages: { home: true },
   sections: [],
@@ -182,9 +236,24 @@ export function normalizeSpec(raw: SiteSpec | Record<string, unknown> | null | u
       typography: {
         heading_font: str(typoRaw.heading_font) || undefined,
         body_font: str(typoRaw.body_font) || undefined,
+        heading_weight: str(typoRaw.heading_weight) === "regular" || str(typoRaw.heading_weight) === "semibold" || str(typoRaw.heading_weight) === "bold" ? typoRaw.heading_weight as "regular" | "semibold" | "bold" : undefined,
+        heading_scale: enumOr(typoRaw.heading_scale, HEADING_SCALES),
+        body_size: str(typoRaw.body_size) === "large" ? "large" : undefined,
       },
       visual_style: str(designRaw.visual_style) || undefined,
       layout_mood: str(designRaw.layout_mood) || undefined,
+      layout_archetype: enumOr(designRaw.layout_archetype, LAYOUT_ARCHETYPES),
+      hero_variant: enumOr(designRaw.hero_variant, HERO_VARIANTS),
+      card_style: enumOr(designRaw.card_style, CARD_STYLES),
+      button_style: enumOr(designRaw.button_style, BUTTON_STYLES),
+      navigation_style: enumOr(designRaw.navigation_style, NAV_STYLES),
+      cta_treatment: enumOr(designRaw.cta_treatment, CTA_TREATMENTS),
+      footer_style: enumOr(designRaw.footer_style, FOOTER_STYLES),
+      section_spacing: enumOr(designRaw.section_spacing, SECTION_SPACINGS),
+      visual_density: enumOr(designRaw.visual_density, VISUAL_DENSITIES),
+      decorative_intensity: enumOr(designRaw.decorative_intensity, DECORATIVE_INTENSITIES),
+      container_width: enumOr(designRaw.container_width, CONTAINER_WIDTHS),
+      radius_scale: enumOr(designRaw.radius_scale, RADIUS_SCALES),
     },
     pages: raw.pages && typeof raw.pages === "object"
       ? Object.fromEntries(Object.entries(raw.pages as Record<string, unknown>).map(([k, v]) => [k, !!v]))

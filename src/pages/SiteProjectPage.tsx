@@ -23,6 +23,7 @@ export default function SiteProjectPage() {
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [draftSpec, setDraftSpec] = useState<SiteSpec>(normalizeSpec(null));
   const [dirty, setDirty] = useState(false);
@@ -64,6 +65,7 @@ export default function SiteProjectPage() {
   async function generate() {
     if (!project) return;
     setGenerating(true);
+    setGenError(null);
     try {
       const briefing = (project.briefing ?? {}) as Record<string, unknown>;
       const { spec, model } = await generateSiteSpec(briefing);
@@ -71,7 +73,9 @@ export default function SiteProjectPage() {
       toast.success("Especificação gerada e salva");
       await load();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao gerar especificação");
+      const message = e instanceof Error ? e.message : "Erro ao gerar especificação";
+      setGenError(message);
+      toast.error(message);
       try {
         await supabase.from("site_projects").update({ status: "error" }).eq("id", project.id);
         await load();
@@ -250,7 +254,9 @@ export default function SiteProjectPage() {
           <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
           <div className="text-sm">
             <p className="font-semibold text-amber-600">A última geração falhou.</p>
-            <p className="text-muted-foreground text-xs mt-1">Verifique se a chave GEMINI_API_KEY está configurada e tente novamente.</p>
+            <p className="text-muted-foreground text-xs mt-1">
+              {genError ? genError : "Falha temporária do provedor de IA ou tempo de resposta excedido. Clique em “Gerar site com IA” para tentar novamente."}
+            </p>
           </div>
         </Card>
       )}

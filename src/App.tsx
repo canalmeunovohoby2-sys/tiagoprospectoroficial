@@ -26,13 +26,6 @@ const SiteProjectPage = lazyWithRetry(() => import("./pages/SiteProjectPage"), "
 const Placeholder = lazyWithRetry(() => import("./pages/Placeholder"), "Placeholder");
 const NotFound = lazyWithRetry(() => import("./pages/NotFound"), "NotFound");
 
-// Orvix ERP — módulo separado, apenas estrutura visual nesta fase.
-const OrvixProspectar = lazyWithRetry(() => import("./pages/orvix/Prospectar"), "OrvixProspectar");
-const OrvixProspectarResultados = lazyWithRetry(() => import("./pages/orvix/ProspectarResultados"), "OrvixProspectarResultados");
-const OrvixDiagnostico = lazyWithRetry(() => import("./pages/orvix/Diagnostico"), "OrvixDiagnostico");
-const OrvixArgumentos = lazyWithRetry(() => import("./pages/orvix/Argumentos"), "OrvixArgumentos");
-const OrvixPropostas = lazyWithRetry(() => import("./pages/orvix/Propostas"), "OrvixPropostas");
-
 const queryClient = new QueryClient();
 
 const RouteFallback = () => (
@@ -62,11 +55,6 @@ const App = () => (
                   <Route path="/sites" element={<Sites />} />
                   <Route path="/sites/:id" element={<SiteProjectPage />} />
                   <Route path="/settings" element={<Placeholder title="Configurações" subtitle="Preferências da conta" />} />
-                  <Route path="/orvix/prospectar" element={<OrvixProspectar />} />
-                  <Route path="/orvix/prospectar/resultados" element={<OrvixProspectarResultados />} />
-                  <Route path="/orvix/diagnostico" element={<OrvixDiagnostico />} />
-                  <Route path="/orvix/argumentos" element={<OrvixArgumentos />} />
-                  <Route path="/orvix/propostas" element={<OrvixPropostas />} />
                 </Route>
                 <Route path="*" element={<NotFound />} />
               </Routes>

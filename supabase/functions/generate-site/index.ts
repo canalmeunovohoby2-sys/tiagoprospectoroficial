@@ -38,62 +38,106 @@ function asStringArray(v: unknown): string[] {
 
 const SYSTEM_PROMPT = `Você é o diretor de criação do gerador de sites do TiagoProspector. Você transforma dados reais de um pequeno negócio brasileiro em uma ESPECIFICAÇÃO ESTRUTURADA de site (JSON), pronta para renderização futura.
 
+# MÉTODO (pense rápido, sem mostrar o raciocínio)
+Antes de escrever o JSON, decida internamente:
+A. Segmento real (ex.: clínica, advocacia, restaurante, oficina, salão, cafeteria...).
+B. Posicionamento provável do negócio e público-alvo.
+C. Intenção comercial da página (agendar? reservar? orçar? contato?).
+D. Hierarquia de informação (o que o visitante deve ver primeiro, depois, por último).
+E. Direção visual coerente com o segmento (não troque apenas a cor).
+F. Arquitetura da página (escolha UMA variação real — ver "ARQUITETURAS").
+G. Conteúdo editorial curto, baseado apenas nos dados reais.
+H. CTAs contextuais (um CTA principal coerente).
+I. SEO simples.
+
+Depois produza o JSON final.
+
 # SUA SAÍDA — JSON EXATO com estas chaves (não invente outras de nível superior):
 
 {
   "business": {
-    "name": string,
-    "segment": string,
-    "city": string,
-    "state": string,
-    "tagline": string | null,
-    "about": string | null
+    "name": string, "segment": string, "city": string, "state": string,
+    "tagline": string | null, "about": string | null
   },
   "design_system": {
-    "colors": { "primary": "#hex", "on_primary": "#hex", "secondary": "#hex", "accent": "#hex", "background": "#hex", "surface": "#hex", "on_surface": "#hex", "muted": "#hex" },
-    "typography": { "heading_font": "nome da fonte Google Fonts", "body_font": "nome da fonte Google Fonts" },
-    "visual_style": "descrição curta da atmosfera visual",
-    "layout_mood": "um destes: minimal | editorial | bold | organic | premium | playful"
+    "colors": { "primary": "#hex", "on_primary": "#hex", "secondary": "#hex", "accent": "#hex", "background": "#hex", "surface": "#hex", "on_surface": "#hex", "muted": "#hex", "border": "#hex" },
+    "typography": { "heading_font": "fonte Google", "body_font": "fonte Google", "heading_weight": "regular|semibold|bold", "heading_scale": "normal|large|display", "body_size": "normal|large" },
+    "visual_style": "descrição curta da atmosfera",
+    "layout_mood": "minimal|editorial|bold|organic|premium|playful",
+    "layout_archetype": "editorial|corporate|minimal|luxury|bold|service_focused|local_business",
+    "hero_variant": "split|centered|editorial|statement|service_first",
+    "card_style": "flat|bordered|elevated|editorial",
+    "button_style": "solid|outline|soft",
+    "navigation_style": "minimal|centered|boxed",
+    "cta_treatment": "primary_section|band|inline",
+    "footer_style": "simple|editorial|centered",
+    "section_spacing": "compact|comfortable|generous",
+    "visual_density": "airy|balanced|dense",
+    "decorative_intensity": "none|low|medium",
+    "container_width": "narrow|standard|wide",
+    "radius_scale": "none|small|medium|large"
   },
   "pages": { "home": true, "services": boolean, "contact": boolean },
   "navigation": [ { "label": string, "anchor": "hero|about|services|testimonials|contact" } ],
-  "sections": [
-    { "id": "hero", "type": "hero", "title": string, "order": 1 },
-    { "id": "about", "type": "about", "title": string, "order": 2 }
-  ],
+  "sections": [ { "id": string, "type": "hero|about|services|testimonials|cta|contact", "order": number } ],
   "content": {
-    "hero": { "title": string, "subtitle": string, "primary_cta": string | null, "secondary_cta": string | null, "image": null },
+    "hero": { "title": string, "subtitle": string, "primary_cta": string|null, "primary_cta_type": "whatsapp|tel|scroll|link", "primary_cta_value": string|null, "secondary_cta": string|null, "image": null },
     "about": { "title": string, "body": string },
-    "services": { "title": string, "subtitle": string | null, "items": [ { "title": string, "description": string, "icon": string | null } ] },
-    "testimonials": { "title": string, "items": [ { "quote": string, "author": string, "role": string | null } ] },
-    "cta": { "title": string, "body": string, "button_label": string | null },
-    "contact": { "title": string, "body": string | null, "phone": string | null, "whatsapp": string | null },
+    "services": { "title": string, "subtitle": string|null, "items": [ { "title": string, "description": string, "icon": string|null } ] },
+    "testimonials": { "title": string, "items": [] },
+    "cta": { "title": string, "body": string, "button_label": string|null },
+    "contact": { "title": string, "body": string|null, "phone": string|null, "whatsapp": string|null },
     "footer": { "tagline": string }
   },
   "calls_to_action": [ { "label": string, "type": "whatsapp|tel|scroll|link", "value": string } ],
   "seo": { "title": string, "description": string, "keywords": string[] }
 }
 
+# ARQUITETURAS DE PÁGINA (escolha UMA com justificativa; NÃO invente ordem aleatória)
+- A — institucional com serviços: Nav > Hero (centered/split) > Sobre > Serviços > Depoimentos? > CTA > Contato > Footer.
+- B — conversão comercial: Nav > Hero orientado (split/service_first) > Serviços > Diferenciais > Contato > CTA > Footer.
+- C — editorial/confiança: Nav > Hero editorial > Prova (sobre com autoridade) > Serviços > CTA > Contato > Footer.
+- D — negócio local: Nav > Hero (service_first/centered) > Serviços > Contato + dados práticos > Footer.
+
+# DIREÇÕES VISUAIS POR SEGMENTO (referência — adapte com critério)
+- CLÍNICA/SAÚDE: limpa, sofisticada, humana, confiável. Muito espaço negativo; tipografia elegante (ex.: serif/geometrica suave); hierarquia calma; CTA de agendamento/contato; sem cards infantis; paleta sóbria (azul-escuro, teal, neutros quentes). Archetype: service_focused ou editorial.
+- ADVOCACIA: autoridade e sobriedade. Composição editorial; tipografia institucional (serif forte p/ títulos); contraste controlado; menos decoração; CTA "Falar com um advogado". Archetype: editorial ou corporate.
+- RESTAURANTE/ALIMENTAÇÃO: sensorial, marcante. Tipografia display expressiva; hierarquia comercial; destaque para marca; CTA "Reservar mesa"/"Ver cardápio". Evite corporativo. Archetype: bold ou local_business.
+- OFICINA/AUTOMOTIVO: robusto e objetivo. Visual técnico; informações comerciais claras; serviços organizados; CTA "Solicitar orçamento". Archetype: service_focused ou local_business.
+- SALÃO/ESTÉTICA: refinamento, sofisticação; tipografia elegante; NADA de rosa/roxo padrão ou gradientes clichê. Archetype: luxury ou editorial.
+- PADARIA/CAFETERIA/LOCAL: acolhedor artesanal; tipografia display calorosa; fotos de produto; CTA de encomenda/WhatsApp. Archetype: local_business ou bold.
+- OUTROS: escolha a direção mais plausível para o segmento.
+
 # REGRAS DE CONTEÚDO (CRÍTICAS)
 - Português do Brasil. Textos curtos, diretos e profissionais.
-- NUNCA invente fatos sobre a empresa: não crie telefone, endereço, e-mail, horário, avaliações, CNPJ, funcionários nem prêmios.
-- Informações não fornecidas: use null (e o sistema mostra espaço editável). NUNCA preencha com dados falsos.
-- Telefone/WhatsApp: use SOMENTE se vierem nos dados do lead. Caso contrário null.
-- Serviços: liste serviços TÍPICOS do segmento como sugestões editáveis (ex.: "Cardápio e encomendas" para cafeterias). NUNCA afirme que o lead oferece algo específico sem dado real.
-- Sobre (about): texto institucional genérico e editável baseado no segmento, sem afirmar histórico/anos/números da empresa.
-- A "tagline" deve usar apenas o segmento/cidade reais.
+- NUNCA invente fatos: telefone, endereço, e-mail, horário, avaliações, CNPJ, funcionários, prêmios, anos de história, números.
+- Dados não fornecidos → null. Serviços: liste serviços TÍPICOS do segmento como sugestões EDITÁVEIS, sem afirmar que o negócio oferece algo específico.
+- Sobre: institucional genérico editável, sem história/anos/números.
+- Depoimentos: deixe items [] SEMPRE, salvo se o lead fornecer depoimento real (não fornece). NUNCA crie depoimentos.
+- Tagline: use apenas segmento/cidade reais.
 
-# REGRAS DE DESIGN (ANTI-TEMPLATE)
-- Analise o segmento e escolha um conceito visual próprio e coerente. NÃO use sempre o mesmo template.
-- Varie: layout_mood, paletas, tipografia (escolha fontes reais disponíveis no Google Fonts) e estrutura de seções conforme o nicho.
-- Paleta: 2-3 cores de marca + neutros, com contraste legível (texto sobre fundo). Use hex exatos.
-- Tipografia: par heading/body com personalidade (ex.: serif + sans para estética, display condensada para café, grotesca limpa para clínica, etc.).
-- Seções: hero + combinação natural para o negócio (about, services, testimonials, cta, contact). Mínimo hero + 3 seções + footer.
-- Imagens: image deve ser null (as imagens serão inseridas depois). Descreva em visual_style quais TIPOS de imagem combinariam (ex.: "fotos de cafés e ambiente aconchegante").
-- NUNCA inclua URLs de imagem, links externos, iframes ou código.
+# REGRAS DE DESIGN (QUALIDADE PROFISSIONAL)
+- Composição > decoração. Priorize whitespace, proporção, contraste, alinhamento, ritmo vertical, hierarquia e legibilidade.
+- NÃO use: gradientes aleatórios; excesso de sombras; cards para tudo; blocos gigantes; títulos enormes sem função; múltiplas cores decorativas; botões repetidos; seções redundantes; aparência de template ou estética "feita por IA".
+- CORES: paleta com função — background, surface, text (on_surface), muted, primary, secondary, accent, border. Garanta contraste (texto sobre fundo legível). Escolha por segmento, não por gosto.
+- Gradiente: NÃO use gradientes no hero por padrão. Se usar, mínimo e sutil (ex.: só um toque no CTA), nunca como base de todo o site.
+- TIPOGRAFIA: par heading/body coerente e disponível no Google Fonts. heading_scale: normal/large/display conforme impacto desejado; display apenas para marcas fortes (restaurante, salão, estética). body_size large para editorial. heading_weight coerente com a fonte.
+- SEÇÕES: hero + 3 a 5 seções com função + footer. Cada seção deve ter papel na conversão.
+- O hero NÃO precisa ocupar a tela toda. Prefira composições equilibradas.
+- Imagens: deixe "image": null. Em visual_style, descreva que TIPOS de imagem combinariam (não URLs).
 
 # VALIDADE
 Retorne APENAS o JSON (sem markdown, sem comentários). Use aspas duplas válidas.`;
+
+function normToken<T extends readonly string[]>(raw: unknown, list: T, fallback: T[number]): T[number] {
+  const v = typeof raw === "string" ? raw.trim() : "";
+  return (list as readonly string[]).includes(v) ? (v as T[number]) : fallback;
+}
+
+function normFont(raw: unknown, fallback: string): string {
+  const v = typeof raw === "string" ? raw.trim() : "";
+  return v.length >= 2 && v.length <= 48 ? v : fallback;
+}
 
 function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<string, unknown> {
   const business = asRecord(raw.business);
@@ -103,9 +147,9 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
   const design = asRecord(raw.design_system);
   const colors = asRecord(design.colors);
   const defaultColors: Record<string, string> = {
-    primary: "#2563eb", on_primary: "#ffffff", secondary: "#1e293b",
-    accent: "#0f766e", background: "#f8fafc", surface: "#ffffff",
-    on_surface: "#0f172a", muted: "#64748b",
+    primary: "#0f766e", on_primary: "#ffffff", secondary: "#134e4a",
+    accent: "#b45309", background: "#f8fafc", surface: "#ffffff",
+    on_surface: "#0f172a", muted: "#64748b", border: "#e2e8f0",
   };
   const cleanColors: Record<string, string> = {};
   for (const key of Object.keys(defaultColors)) {
@@ -114,8 +158,11 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
   }
   const typography = asRecord(design.typography);
   const cleanTypography = {
-    heading_font: s(typography.heading_font) || "Plus Jakarta Sans",
-    body_font: s(typography.body_font) || "Inter",
+    heading_font: normFont(typography.heading_font, "Plus Jakarta Sans"),
+    body_font: normFont(typography.body_font, "Inter"),
+    heading_weight: ["regular", "semibold", "bold"].includes(s(typography.heading_weight)) ? s(typography.heading_weight) : "bold",
+    heading_scale: normToken(typography.heading_scale, ["normal", "large", "display"], "large"),
+    body_size: s(typography.body_size) === "large" ? "large" : "normal",
   };
 
   const sections = asArray(raw.sections)
@@ -144,6 +191,20 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
 
   const seo = asRecord(raw.seo);
 
+  const mood = normToken(design.layout_mood, ["minimal", "editorial", "bold", "organic", "premium", "playful"], "minimal");
+  const archetype = normToken(design.layout_archetype, ["editorial", "corporate", "minimal", "luxury", "bold", "service_focused", "local_business"], "service_focused");
+  const heroVariant = normToken(design.hero_variant, ["split", "centered", "editorial", "statement", "service_first"], archetype === "editorial" || archetype === "luxury" ? "editorial" : archetype === "bold" ? "statement" : "split");
+  const cardStyle = normToken(design.card_style, ["flat", "bordered", "elevated", "editorial"], archetype === "editorial" || archetype === "luxury" ? "editorial" : "bordered");
+  const buttonStyle = normToken(design.button_style, ["solid", "outline", "soft"], "solid");
+  const navStyle = normToken(design.navigation_style, ["minimal", "centered", "boxed"], "minimal");
+  const ctaTreatment = normToken(design.cta_treatment, ["primary_section", "band", "inline"], archetype === "editorial" ? "inline" : "band");
+  const footerStyle = normToken(design.footer_style, ["simple", "editorial", "centered"], "simple");
+  const sectionSpacing = normToken(design.section_spacing, ["compact", "comfortable", "generous"], "comfortable");
+  const density = normToken(design.visual_density, ["airy", "balanced", "dense"], "airy");
+  const decorative = normToken(design.decorative_intensity, ["none", "low", "medium"], "low");
+  const container = normToken(design.container_width, ["narrow", "standard", "wide"], "standard");
+  const radiusScale = normToken(design.radius_scale, ["none", "small", "medium", "large"], "medium");
+
   return {
     business: {
       name,
@@ -156,10 +217,20 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
     design_system: {
       colors: cleanColors,
       typography: cleanTypography,
-      visual_style: s(design.visual_style) || "Moderno e acolhedor",
-      layout_mood: ["minimal", "editorial", "bold", "organic", "premium", "playful"].includes(s(design.layout_mood))
-        ? s(design.layout_mood)
-        : "minimal",
+      visual_style: s(design.visual_style) || "",
+      layout_mood: mood,
+      layout_archetype: archetype,
+      hero_variant: heroVariant,
+      card_style: cardStyle,
+      button_style: buttonStyle,
+      navigation_style: navStyle,
+      cta_treatment: ctaTreatment,
+      footer_style: footerStyle,
+      section_spacing: sectionSpacing,
+      visual_density: density,
+      decorative_intensity: decorative,
+      container_width: container,
+      radius_scale: radiusScale,
     },
     pages: {
       home: true,
@@ -230,6 +301,7 @@ ${businessFacts || "Nenhum dado factual além do nome."}
 Gere a especificação JSON do site.`;
 
     let raw = "";
+    let usedModel = "gemini-2.5-flash";
     try {
       const result = await generateText({
         system: SYSTEM_PROMPT,
@@ -239,6 +311,7 @@ Gere a especificação JSON do site.`;
         maxOutputTokens: 8192,
       });
       raw = result.text;
+      usedModel = result.model;
     } catch (e) {
       if (e instanceof AiError) {
         return new Response(
@@ -259,7 +332,7 @@ Gere a especificação JSON do site.`;
 
     const spec = normalizeSpec(parsed, lead);
 
-    return new Response(JSON.stringify({ spec, model: "gemini-2.5-flash", status: "ok" }), {
+    return new Response(JSON.stringify({ spec, model: usedModel, status: "ok" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
