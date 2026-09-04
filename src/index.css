@@ -1,0 +1,225 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* LeadHunter Brasil — Premium Tech SaaS Design System
+   Dark-first. Deep slate base, electric blue secondary, turquoise CTA accent.
+*/
+
+@layer base {
+  :root {
+    /* Dark-first by default */
+    --background: 222 30% 6%;
+    --foreground: 210 20% 96%;
+
+    --card: 222 28% 9%;
+    --card-foreground: 210 20% 96%;
+
+    --popover: 222 28% 9%;
+    --popover-foreground: 210 20% 96%;
+
+    /* Primary = Turquoise (reserved for main CTAs / important highlights) */
+    --primary: 0 84% 55%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 10 90% 62%;
+
+    /* Secondary = Tech blue */
+    --secondary: 217 91% 60%;
+    --secondary-foreground: 210 20% 98%;
+
+    --muted: 222 20% 14%;
+    --muted-foreground: 215 16% 65%;
+
+    --accent: 217 91% 60%;
+    --accent-foreground: 210 20% 98%;
+
+    --destructive: 0 75% 58%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 0 84% 55%;
+    --warning: 38 92% 55%;
+
+    --border: 222 20% 16%;
+    --input: 222 20% 16%;
+    --ring: 0 84% 55%;
+
+    --radius: 0.875rem;
+
+    --gradient-primary: linear-gradient(135deg, hsl(0 84% 55%), hsl(10 90% 62%));
+    --gradient-secondary: linear-gradient(135deg, hsl(217 91% 60%), hsl(199 89% 65%));
+    --gradient-surface: linear-gradient(160deg, hsl(222 28% 11% / 0.85), hsl(222 28% 8% / 0.85));
+    --gradient-glow: radial-gradient(circle at top right, hsl(0 84% 55% / 0.18), transparent 60%);
+    --gradient-bg: radial-gradient(1200px 600px at 15% -10%, hsl(217 91% 50% / 0.18), transparent 60%),
+                   radial-gradient(900px 500px at 95% 10%, hsl(0 84% 50% / 0.12), transparent 60%),
+                   radial-gradient(900px 700px at 50% 110%, hsl(199 89% 50% / 0.10), transparent 60%);
+
+    --shadow-elegant: 0 10px 40px -10px hsl(0 84% 55% / 0.35);
+    --shadow-glow: 0 0 0 1px hsl(0 84% 55% / 0.25), 0 8px 32px -8px hsl(0 84% 55% / 0.45);
+    --shadow-glow-blue: 0 0 0 1px hsl(217 91% 60% / 0.25), 0 8px 32px -8px hsl(217 91% 60% / 0.45);
+    --shadow-card: 0 1px 0 hsl(0 0% 100% / 0.04) inset, 0 8px 24px hsl(0 0% 0% / 0.35);
+
+    --sidebar-background: 222 32% 5%;
+    --sidebar-foreground: 215 16% 75%;
+    --sidebar-primary: 0 84% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 25% 11%;
+    --sidebar-accent-foreground: 210 20% 96%;
+    --sidebar-border: 222 25% 12%;
+    --sidebar-ring: 0 84% 55%;
+  }
+
+  .dark {
+    --background: 222 30% 6%;
+    --foreground: 210 20% 96%;
+    --card: 222 28% 9%;
+    --card-foreground: 210 20% 96%;
+    --popover: 222 28% 9%;
+    --popover-foreground: 210 20% 96%;
+    --primary: 0 84% 55%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 10 90% 62%;
+    --secondary: 217 91% 60%;
+    --secondary-foreground: 210 20% 98%;
+    --muted: 222 20% 14%;
+    --muted-foreground: 215 16% 65%;
+    --accent: 217 91% 60%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 0 75% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 20% 16%;
+    --input: 222 20% 16%;
+    --ring: 0 84% 55%;
+    --sidebar-background: 222 32% 5%;
+    --sidebar-foreground: 215 16% 75%;
+    --sidebar-primary: 0 84% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 25% 11%;
+    --sidebar-accent-foreground: 210 20% 96%;
+    --sidebar-border: 222 25% 12%;
+    --sidebar-ring: 0 84% 55%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  h1, h2, h3, h4, h5 {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    @apply tracking-tight;
+  }
+}
+
+@layer utilities {
+  .bg-gradient-primary { background-image: var(--gradient-primary); }
+  .bg-gradient-secondary { background-image: var(--gradient-secondary); }
+  .bg-gradient-glow { background-image: var(--gradient-glow); }
+  .bg-gradient-bg { background-image: var(--gradient-bg); }
+  .shadow-elegant { box-shadow: var(--shadow-elegant); }
+  .shadow-glow { box-shadow: var(--shadow-glow); }
+  .shadow-glow-blue { box-shadow: var(--shadow-glow-blue); }
+  .shadow-card { box-shadow: var(--shadow-card); }
+
+  .text-gradient {
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Glassmorphism card */
+  .glass {
+    background: linear-gradient(160deg, hsl(222 28% 12% / 0.7), hsl(222 28% 8% / 0.55));
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    border: 1px solid hsl(0 84% 55% / 0.45);
+    box-shadow: var(--shadow-card), 0 0 0 1px hsl(0 84% 55% / 0.12), 0 0 18px -6px hsl(0 84% 55% / 0.35);
+  }
+
+  .glass-hover {
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  }
+  .glass-hover:hover {
+    transform: translateY(-2px);
+    border-color: hsl(0 84% 55% / 0.85);
+    box-shadow: 0 12px 40px -12px hsl(0 84% 55% / 0.55), 0 0 0 1px hsl(0 84% 55% / 0.35), 0 1px 0 hsl(0 0% 100% / 0.06) inset;
+  }
+
+  /* Hover glow for CTAs */
+  .hover-glow {
+    transition: transform 0.2s ease, box-shadow 0.25s ease, filter 0.2s ease;
+  }
+  .hover-glow:hover {
+    transform: translateY(-1px) scale(1.015);
+    box-shadow: var(--shadow-glow);
+    filter: brightness(1.05);
+  }
+  .hover-glow-blue:hover {
+    box-shadow: var(--shadow-glow-blue);
+  }
+
+  /* Animated tech grid background */
+  .tech-grid {
+    background-image:
+      linear-gradient(hsl(210 30% 80% / 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(210 30% 80% / 0.045) 1px, transparent 1px);
+    background-size: 44px 44px;
+    background-position: -1px -1px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+  }
+
+  /* Slow drifting aurora blob */
+  .aurora-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.45;
+    pointer-events: none;
+    animation: aurora-drift 11s ease-in-out infinite alternate;
+  }
+
+  @keyframes aurora-drift {
+    0%   { transform: translate3d(0, 0, 0) scale(1); }
+    50%  { transform: translate3d(30px, -20px, 0) scale(1.08); }
+    100% { transform: translate3d(-20px, 25px, 0) scale(0.96); }
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .skeleton-shimmer {
+    background: linear-gradient(90deg,
+      hsl(222 20% 14%) 0%,
+      hsl(222 20% 18%) 50%,
+      hsl(222 20% 14%) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s linear infinite;
+  }
+
+  .fade-in-up { animation: fade-in-up 0.5s ease-out both; }
+}
+
+a[href*="lovable.dev"], 
+iframe[src*="lovable.dev"],
+div[style*="Edit with Lovable"],
+.lovable-badge {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  position: absolute !important;
+  z-index: -9999 !important;
+}
+

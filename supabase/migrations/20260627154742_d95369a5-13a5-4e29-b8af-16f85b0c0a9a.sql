@@ -1,0 +1,1 @@
+UPDATE public.leads SET in_crm = false, crm_status = 'new' WHERE in_crm = true;
