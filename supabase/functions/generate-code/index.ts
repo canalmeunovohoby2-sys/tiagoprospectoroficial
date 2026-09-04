@@ -1,4 +1,5 @@
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
+import { generateText, AiError } from "../_shared/ai.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -8,14 +9,6 @@ Deno.serve(async (req) => {
     if (!lead || typeof lead !== "object") {
       return new Response(JSON.stringify({ error: "lead obrigatório" }), {
         status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const key = Deno.env.get("LOVABLE_API_KEY");
-    if (!key) {
-      return new Response(JSON.stringify({ error: "LOVABLE_API_KEY ausente" }), {
-        status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -46,17 +39,16 @@ Deno.serve(async (req) => {
 Sua ÚNICA missão: gerar UM Super Prompt completo, estruturado e personalizado com base nos dados reais do lead. NÃO gere código. NÃO escreva proposta comercial. Apenas a RECEITA TÉCNICA pronta para colar no Lovable.
 
 ═══════════════════════════════════════════
-FORMATO DE RESPOSTA (OBRIGATÓRIO — JSON ESTRITO)
+FORMATO DE RESPOSTA (OBRIGATÓRIO)
 ═══════════════════════════════════════════
-Responda APENAS JSON válido, sem markdown, sem texto antes ou depois:
-{"prompt_tecnico_criacao":"<o super prompt completo, multilinha, em markdown estruturado>"}
+Responda APENAS com o Super Prompt final em Markdown puro. NÃO use JSON. NÃO envolva tudo em code fence. NÃO adicione texto antes ou depois. O conteúdo da sua resposta DEVE ser o próprio prompt.
 
 ═══════════════════════════════════════════
-ESTRUTURA OBRIGATÓRIA DO "prompt_tecnico_criacao"
+ESTRUTURA OBRIGATÓRIA DO CONTEÚDO
 ═══════════════════════════════════════════
 Escreva em português, em markdown, com títulos em negrito e bullets. Cruze os dados reais do lead (nome, segmento, contatos, endereço, serviços inferidos do segmento) em CADA seção.
 
-⚠️ OBRIGATÓRIO: Inicie o "prompt_tecnico_criacao" com o bloco literal abaixo (sem alterar uma palavra), ANTES de qualquer outra seção:
+⚠️ OBRIGATÓRIO: Inicie o conteúdo com o bloco literal abaixo (sem alterar uma palavra), ANTES de qualquer outra seção:
 
 ---
 ## ✅ CHECKLIST ESTRUTURAL DE EXECUÇÃO (LEIA ANTES DE COMPILAR)
@@ -280,45 +272,26 @@ Retângulo cru, foto de rosto humano ou logo de terceiros = entrega REPROVADA.
 
 Seja EXAUSTIVO, PERSONALIZADO e COLE OS BLOCOS DE CÓDIGO LITERAIS acima. Esse prompt vale R$ 10.000,00.`;
 
-    const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Lovable-API-Key": key,
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        max_tokens: 8192,
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: promptSystem },
-          { role: "user", content: baseLead },
-        ],
-      }),
-    });
-
-    if (!resp.ok) {
-      const errTxt = await resp.text();
-      return new Response(JSON.stringify({ error: `Gateway ${resp.status}: ${errTxt}` }), {
-        status: resp.status,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const data = await resp.json();
-    const raw: string = data?.choices?.[0]?.message?.content ?? "";
-
-    let parsed: { prompt_tecnico_criacao?: string } = {};
+    let raw = "";
     try {
-      parsed = JSON.parse(raw);
-    } catch {
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try { parsed = JSON.parse(jsonMatch[0]); } catch { /* ignore */ }
+      const result = await generateText({
+        system: promptSystem,
+        user: baseLead,
+        temperature: 0.7,
+        maxOutputTokens: 8192,
+      });
+      raw = result.text;
+    } catch (e) {
+      if (e instanceof AiError) {
+        return new Response(
+          JSON.stringify({ error: e.message, kind: e.kind, detail: e.detail }),
+          { status: e.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
+      throw e;
     }
 
-    const prompt_tecnico_criacao = (parsed.prompt_tecnico_criacao ?? "").trim();
+    const prompt_tecnico_criacao = raw.trim();
 
     if (!prompt_tecnico_criacao) {
       return new Response(JSON.stringify({ error: "Resposta da IA inválida", raw: raw.slice(0, 500) }), {

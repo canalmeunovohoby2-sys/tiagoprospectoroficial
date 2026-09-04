@@ -1,10 +1,10 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Star, Globe, MapPin, Phone, MessageSquare, Sparkles, Eye, Check,
   Search as SearchIcon, Trash2, Loader2, Instagram, Facebook, ExternalLink, Map as MapIcon, Copy, Plus,
-
+  FileCode2,
   ShieldCheck, Shield, ShieldAlert, Clock, Download, ClipboardCopy,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -31,6 +31,7 @@ import { OfferCard } from "@/components/app/OfferCard";
 
 import { useWaitingQueue } from "@/hooks/useWaitingQueue";
 import { calculateLeadROI } from "@/lib/leadROI";
+import { openOrCreateSiteProject } from "@/lib/siteProjectsApi";
 import { ListChecks } from "lucide-react";
 
 type Filter =
@@ -73,6 +74,7 @@ function normalizeLeadRows(rows: unknown): Lead[] {
 export default function Leads() {
   const { user } = useAuth();
   const [params] = useSearchParams();
+  const navigate = useNavigate();
   const searchId = params.get("search");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,6 +85,20 @@ export default function Leads() {
   const [websiteFilter, setWebsiteFilter] = useState<"all" | "yes" | "no">("all");
   const [selected, setSelected] = useState<Lead | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [openingSiteId, setOpeningSiteId] = useState<string | null>(null);
+
+  async function openSite(lead: Lead) {
+    if (!user) { toast.error("Sessão indisponível. Recarregue a página."); return; }
+    setOpeningSiteId(lead.id);
+    try {
+      const projectId = await openOrCreateSiteProject(user.id, lead);
+      navigate(`/sites/${projectId}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao criar projeto de site");
+    } finally {
+      setOpeningSiteId(null);
+    }
+  }
 
   async function load() {
     if (!user) return;
@@ -333,6 +349,8 @@ export default function Leads() {
               onFavorite={() => updateLead(l.id, { is_favorite: !l.is_favorite })}
               onContacted={() => updateLead(l.id, { is_contacted: !l.is_contacted })}
               onSendToCrm={() => updateLead(l.id, { in_crm: true, crm_status: l.crm_status || "new" })}
+              onGenerateSite={() => openSite(l)}
+              openingSite={openingSiteId === l.id}
             />
           ))}
         </div>
@@ -344,6 +362,7 @@ export default function Leads() {
         onUpdate={updateLead}
         onDelete={deleteLead}
         onGenerate={generateMessage}
+        onGenerateSite={openSite}
         generating={generating}
       />
     </div>
@@ -403,9 +422,9 @@ function ScoreStars({ score }: { score: number }) {
 }
 
 function LeadRow({
-  lead, onOpen, onFavorite, onContacted, onSendToCrm,
+  lead, onOpen, onFavorite, onContacted, onSendToCrm, onGenerateSite, openingSite,
 }: {
-  lead: Lead; onOpen: () => void; onFavorite: () => void; onContacted: () => void; onSendToCrm: () => void;
+  lead: Lead; onOpen: () => void; onFavorite: () => void; onContacted: () => void; onSendToCrm: () => void; onGenerateSite: () => void; openingSite: boolean;
 }) {
   const isHot = (lead.final_score ?? 0) >= 80;
   return (
@@ -513,6 +532,12 @@ function LeadRow({
             >
               <ClipboardCopy className="h-4 w-4" />
             </Button>
+            <Button
+              size="icon" variant="ghost" title="Gerar Site" onClick={onGenerateSite} disabled={openingSite}
+              className={openingSite ? "opacity-70" : ""}
+            >
+              {openingSite ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCode2 className="h-4 w-4 text-violet-500" />}
+            </Button>
             <LandingPromptButton lead={lead} variant="icon" />
             <Button size="icon" variant="ghost" onClick={onContacted} title="Marcar como contatado">
               <Check className={`h-4 w-4 ${lead.is_contacted ? "text-blue-500" : ""}`} />
@@ -538,12 +563,13 @@ function HoverInfo({ children, content }: { children: ReactNode; content: ReactN
 }
 
 function LeadDetail({
-  lead, onClose, onUpdate, onDelete, onGenerate, generating,
+  lead, onClose, onUpdate, onDelete, onGenerate, onGenerateSite, generating,
 }: {
   lead: Lead | null; onClose: () => void;
   onUpdate: (id: string, patch: Partial<Lead>) => void;
   onDelete: (id: string) => void;
   onGenerate: (lead: Lead, channel: "whatsapp" | "email") => void;
+  onGenerateSite: (lead: Lead) => void;
   generating: boolean;
 }) {
   const [notes, setNotes] = useState("");
@@ -684,6 +710,9 @@ function LeadDetail({
             {lead.google_url && <Button size="sm" variant="outline" asChild><a href={lead.google_url} target="_blank" rel="noreferrer"><MapIcon className="h-3.5 w-3.5 mr-1" /> Google</a></Button>}
             {lead.instagram && <Button size="sm" variant="outline" asChild><a href={lead.instagram} target="_blank" rel="noreferrer"><Instagram className="h-3.5 w-3.5 mr-1" /> Instagram</a></Button>}
             {lead.facebook && <Button size="sm" variant="outline" asChild><a href={lead.facebook} target="_blank" rel="noreferrer"><Facebook className="h-3.5 w-3.5 mr-1" /> Facebook</a></Button>}
+            <Button size="sm" variant="default" onClick={() => onGenerateSite(lead)}>
+              <FileCode2 className="h-3.5 w-3.5 mr-1" /> Gerar Site
+            </Button>
             <LandingPromptButton lead={lead} variant="full" />
           </div>
 

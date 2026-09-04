@@ -21,6 +21,8 @@ const Leads = lazyWithRetry(() => import("./pages/Leads"), "Leads");
 const History = lazyWithRetry(() => import("./pages/History"), "History");
 const Queue = lazyWithRetry(() => import("./pages/Queue"), "Queue");
 const Services = lazyWithRetry(() => import("./pages/Services"), "Services");
+const Sites = lazyWithRetry(() => import("./pages/Sites"), "Sites");
+const SiteProjectPage = lazyWithRetry(() => import("./pages/SiteProjectPage"), "SiteProjectPage");
 const Placeholder = lazyWithRetry(() => import("./pages/Placeholder"), "Placeholder");
 const NotFound = lazyWithRetry(() => import("./pages/NotFound"), "NotFound");
 
@@ -57,6 +59,8 @@ const App = () => (
                   <Route path="/history" element={<History />} />
                   <Route path="/queue" element={<Queue />} />
                   <Route path="/services" element={<Services />} />
+                  <Route path="/sites" element={<Sites />} />
+                  <Route path="/sites/:id" element={<SiteProjectPage />} />
                   <Route path="/settings" element={<Placeholder title="Configurações" subtitle="Preferências da conta" />} />
                   <Route path="/orvix/prospectar" element={<OrvixProspectar />} />
                   <Route path="/orvix/prospectar/resultados" element={<OrvixProspectarResultados />} />

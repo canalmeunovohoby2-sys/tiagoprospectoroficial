@@ -1,4 +1,5 @@
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
+import { generateText, AiError, extractJson } from "../_shared/ai.ts";
 
 /**
  * Orvix ERP — Gerador de mensagens comerciais com IA (dedicado, isolado).
@@ -229,14 +230,6 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const key = Deno.env.get("GEMINI_API_KEY");
-    if (!key) {
-      return new Response(JSON.stringify({ error: "Missing GEMINI_API_KEY" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const body = await req.json().catch(() => ({}));
     const lead: OrvixLeadInput = body?.lead ?? {};
     const diag: OrvixDiagnosticInput = body?.diagnostic ?? {};
@@ -280,51 +273,28 @@ ${leadBlock}
 
 Lembre-se: mensagens devem parecer escritas manualmente, adaptadas ao segmento real, com pelo menos uma observação personalizada baseada nos dados acima.`;
 
-    // Chamada direta à API oficial do Google Gemini (sem Lovable AI Gateway).
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`;
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: ORVIX_CONTEXT }] },
-        contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-        generationConfig: {
-          temperature: 0.85,
-          responseMimeType: "application/json",
-        },
-      }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      if (res.status === 429) {
-        return new Response(JSON.stringify({ error: "Limite de uso do Gemini atingido. Tente novamente em instantes.", detail: text }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (res.status === 401 || res.status === 403) {
-        return new Response(JSON.stringify({ error: "GEMINI_API_KEY inválida ou sem permissão", detail: text }), {
-          status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ error: "Falha ao gerar mensagem Orvix (Gemini)", detail: text }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const data = await res.json();
-    const raw: string = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p?.text ?? "").join("") ?? "";
-
-    let parsed: Record<string, string> = {};
+    // Gera via camada compartilhada de IA (Gemini). Contrato igual ao anterior.
+    let raw = "";
     try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // fallback: extrai bloco JSON caso o modelo tenha embrulhado em texto
-      const match = raw.match(/\{[\s\S]*\}/);
-      if (match) {
-        try { parsed = JSON.parse(match[0]); } catch { parsed = {}; }
+      const result = await generateText({
+        system: ORVIX_CONTEXT,
+        user: userPrompt,
+        temperature: 0.85,
+        json: true,
+        model: MODEL,
+      });
+      raw = result.text;
+    } catch (e) {
+      if (e instanceof AiError) {
+        return new Response(
+          JSON.stringify({ error: e.message, kind: e.kind, detail: e.detail }),
+          { status: e.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
       }
+      throw e;
     }
+
+    const parsed = extractJson(raw) as Record<string, unknown>;
 
     const result = {
       whatsapp_curta: String(parsed.whatsapp_curta ?? "").trim(),

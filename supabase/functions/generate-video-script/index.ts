@@ -1,4 +1,5 @@
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
+import { generateText, AiError } from "../_shared/ai.ts";
 
 interface LeadInput {
   name: string;
@@ -12,14 +13,6 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const key = Deno.env.get("LOVABLE_API_KEY");
-    if (!key) {
-      return new Response(JSON.stringify({ error: "Missing LOVABLE_API_KEY" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const body = await req.json();
     const lead: LeadInput = body?.lead ?? {};
     if (!lead?.name) {
@@ -72,41 +65,24 @@ Deno.serve(async (req) => {
 CONTEXTO DO LEAD:
 ${ctx}`;
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+    let script = "";
+    try {
+      const result = await generateText({
+        system,
+        user,
         temperature: 0.95,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-      }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      if (res.status === 429) {
-        return new Response(JSON.stringify({ error: "Limite de uso atingido. Tente novamente em instantes." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (res.status === 402) {
-        return new Response(JSON.stringify({ error: "Créditos de IA esgotados. Adicione créditos no workspace." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ error: "Falha ao gerar roteiro", detail: text }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        maxOutputTokens: 1600,
       });
+      script = result.text.trim();
+    } catch (e) {
+      if (e instanceof AiError) {
+        return new Response(
+          JSON.stringify({ error: e.message, kind: e.kind, detail: e.detail }),
+          { status: e.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      throw e;
     }
-
-    const data = await res.json();
-    const script: string = (data?.choices?.[0]?.message?.content ?? "").trim();
 
     return new Response(JSON.stringify({ script }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -7,6 +7,7 @@ import {
   Target,
   ListChecks,
   Briefcase,
+  Globe,
   Radar,
   Stethoscope,
   MessageSquareQuote,
@@ -31,6 +32,7 @@ const items = [
   { title: "Meus Leads", url: "/leads", icon: Users },
   { title: "Fila de Espera", url: "/queue", icon: ListChecks },
   { title: "Serviços", url: "/services", icon: Briefcase },
+  { title: "Sites", url: "/sites", icon: Globe },
   { title: "Histórico", url: "/history", icon: History },
 ];
 

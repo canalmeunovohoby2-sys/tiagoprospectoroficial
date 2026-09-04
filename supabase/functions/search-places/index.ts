@@ -290,17 +290,18 @@ function normalizePhone(intl?: string, national?: string): string | null {
   return raw;
 }
 
-// WhatsApp link: any valid Brazilian commercial phone (mobile or landline).
-// Output is digits only, formatted as 55 + DDD(2) + number(8 or 9).
-// Returns null when phone is missing or doesn't look like a real BR number.
+// WhatsApp link: somente números móveis brasileiros.
+// Exige DDD + 9 dígitos (nono dígito obrigatório). Telefone fixo (8 dígitos)
+// NÃO é convertido em WhatsApp sem evidência — permanece apenas como phone.
+// Output é digits only, formatado como 55 + DDD(2) + 9 dígitos.
 function inferWhatsapp(intl?: string, national?: string): string | null {
   const digits = (intl ?? national ?? "").replace(/\D/g, "");
   if (!digits) return null;
   // Already includes country code 55
-  let m = digits.match(/^55(\d{2})(\d{8,9})$/);
+  let m = digits.match(/^55(\d{2})(9\d{8})$/);
   if (m) return `55${m[1]}${m[2]}`;
-  // National format (no country code): DDD + 8/9 digits
-  m = digits.match(/^(\d{2})(\d{8,9})$/);
+  // National format (no country code): DDD + 9 dígitos
+  m = digits.match(/^(\d{2})(9\d{8})$/);
   if (m) return `55${m[1]}${m[2]}`;
   return null;
 }
@@ -512,12 +513,14 @@ function normalizeGoogleError(status: number, text: string, endpoint = "Google P
 //   • Cache de boundary Nominatim por cidade+UF na mesma execução.
 //   • Serialização (mutex) para Nominatim (política 1 req/s).
 // ────────────────────────────────────────────────────────────────
+type GeoBounds = { south: number; west: number; north: number; east: number };
+
 type SearchCtx = {
   google429: number;
   googleCircuitOpen: boolean;
   nominatim429: number;
   nominatimCircuitOpen: boolean;
-  boundaryCache: Map<string, { areaId: number | null; lat: number | null; lon: number | null; error?: string }>;
+  boundaryCache: Map<string, { areaId: number | null; lat: number | null; lon: number | null; bounds?: GeoBounds | null; error?: string }>;
   nominatimGate: Promise<unknown>;
   sourcesFailed: string[];
 };
@@ -670,13 +673,14 @@ async function fetchLegacyPlaceDetails(p: LegacyTextSearchResult): Promise<Legac
 async function searchPlacesNew(
   textQuery: string,
   maxPages: number,
-  options?: { locationBias?: { lat: number; lon: number; radius: number }; includedType?: string | null; ctx?: SearchCtx },
+  options?: { locationBias?: { lat: number; lon: number; radius: number }; locationRestriction?: GeoBounds | null; includedType?: string | null; ctx?: SearchCtx },
 ): Promise<{ places: PlaceRaw[]; error?: SearchError }> {
   const ctx = options?.ctx;
 
   const allPlaces: PlaceRaw[] = [];
   let pageToken: string | undefined;
   const locationBias = options?.locationBias;
+  const locationRestriction = options?.locationRestriction;
   const includedType = options?.includedType ?? null;
 
   for (let page = 0; page < maxPages; page++) {
@@ -689,7 +693,14 @@ async function searchPlacesNew(
     };
     if (pageToken) payload.pageToken = pageToken;
     if (includedType) payload.includedType = includedType;
-    if (locationBias) {
+    if (locationRestriction) {
+      payload.locationRestriction = {
+        rectangle: {
+          low: { latitude: locationRestriction.south, longitude: locationRestriction.west },
+          high: { latitude: locationRestriction.north, longitude: locationRestriction.east },
+        },
+      };
+    } else if (locationBias) {
       payload.locationBias = {
         circle: {
           center: { latitude: locationBias.lat, longitude: locationBias.lon },
@@ -838,9 +849,10 @@ async function searchPlacesLegacy(textQuery: string, maxPages: number): Promise<
 
 function mapPlacesNewToLeads(unique: PlaceRaw[], city: string, state: string): PublicLead[] {
   const cityNorm = city.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const stateNorm = state.trim().toUpperCase();
   return unique
     .filter((p) => !p.businessStatus || p.businessStatus === "OPERATIONAL")
-    .map((p) => {
+    .map((p): PublicLead | null => {
       const phone = normalizePhone(p.internationalPhoneNumber, p.nationalPhoneNumber);
       const whatsapp = inferWhatsapp(p.internationalPhoneNumber, p.nationalPhoneNumber);
       const site = p.websiteUri ?? null;
@@ -850,6 +862,10 @@ function mapPlacesNewToLeads(unique: PlaceRaw[], city: string, state: string): P
       const placeStateShort = p.addressComponents?.find((a) => a.types?.includes("administrative_area_level_1"))?.shortText ?? null;
       const placeCityNorm = placeCity.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       const cityMatches = !placeCity || placeCityNorm.includes(cityNorm) || cityNorm.includes(placeCityNorm);
+      // Filtro rígido de localização: descarta empresas comprovadamente de outra
+      // cidade ou de outro estado. Só mantém quando a cidade não é determinável.
+      const stateMatches = !placeStateShort || placeStateShort.toUpperCase() === stateNorm;
+      if ((placeCity && !cityMatches) || !stateMatches) return null;
       const { score, reasons } = scoreOpportunity(p, hasSite);
 
       return {
@@ -877,14 +893,16 @@ function mapPlacesNewToLeads(unique: PlaceRaw[], city: string, state: string): P
         city_matches: cityMatches,
       };
     })
+    .filter((l): l is PublicLead => l !== null)
     .sort((a, b) => Number(b.city_matches) - Number(a.city_matches));
 }
 
 function mapLegacyPlacesToLeads(unique: LegacyDetailsResult[], city: string, state: string): PublicLead[] {
   const cityNorm = city.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const stateNorm = state.trim().toUpperCase();
   return unique
     .filter((p) => !p.business_status || p.business_status === "OPERATIONAL")
-    .map((p) => {
+    .map((p): PublicLead | null => {
       const phone = normalizePhone(p.international_phone_number, p.formatted_phone_number);
       const whatsapp = inferWhatsapp(p.international_phone_number, p.formatted_phone_number);
       const site = p.website ?? null;
@@ -893,6 +911,9 @@ function mapLegacyPlacesToLeads(unique: LegacyDetailsResult[], city: string, sta
       const placeStateShort = p.address_components?.find((a) => a.types?.includes("administrative_area_level_1"))?.short_name ?? null;
       const placeCityNorm = placeCity.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       const cityMatches = !placeCity || placeCityNorm.includes(cityNorm) || cityNorm.includes(placeCityNorm);
+      // Filtro rígido de localização (mesma regra do Places New).
+      const stateMatches = !placeStateShort || placeStateShort.toUpperCase() === stateNorm;
+      if ((placeCity && !cityMatches) || !stateMatches) return null;
       const proxyPlace: PlaceRaw = { id: p.place_id, userRatingCount: p.user_ratings_total, rating: p.rating };
       const { score, reasons } = scoreOpportunity(proxyPlace, !!site);
 
@@ -921,6 +942,7 @@ function mapLegacyPlacesToLeads(unique: LegacyDetailsResult[], city: string, sta
         city_matches: cityMatches,
       };
     })
+    .filter((l): l is PublicLead => l !== null)
     .sort((a, b) => Number(b.city_matches) - Number(a.city_matches));
 }
 
@@ -937,6 +959,7 @@ type NominatimItem = {
   address?: Record<string, string>;
   extratags?: Record<string, string>;
   namedetails?: Record<string, string>;
+  boundingbox?: string[];
 };
 
 type OverpassElement = {
@@ -1055,14 +1078,14 @@ async function searchNominatim(segment: string, city: string, state: string, ctx
 }
 
 
-async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx): Promise<{ areaId: number | null; lat: number | null; lon: number | null; error?: string }> {
+async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx): Promise<{ areaId: number | null; lat: number | null; lon: number | null; bounds?: GeoBounds | null; error?: string }> {
   // Cache por-request — evita 2 lookups idênticos para a mesma cidade+UF.
   const cacheKey = `${city.toLowerCase()}|${state.toUpperCase()}`;
   if (ctx?.boundaryCache.has(cacheKey)) {
     return ctx.boundaryCache.get(cacheKey)!;
   }
   if (ctx?.nominatimCircuitOpen) {
-    const val = { areaId: null, lat: null, lon: null, error: "Nominatim circuit open" };
+    const val = { areaId: null, lat: null, lon: null, bounds: null as GeoBounds | null, error: "Nominatim circuit open" };
     ctx.boundaryCache.set(cacheKey, val);
     return val;
   }
@@ -1075,6 +1098,7 @@ async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx
     url.searchParams.set("limit", "1");
     url.searchParams.set("countrycodes", "br");
     url.searchParams.set("accept-language", "pt-BR");
+    url.searchParams.set("polygon_geojson", "0");
 
     const doFetch = () => fetchWithRetry(url.toString(), {
       method: "GET",
@@ -1086,7 +1110,7 @@ async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx
     const res = ctx ? await runSerialized(ctx, NOMINATIM_MIN_INTERVAL_MS, doFetch) : await doFetch();
 
     if (!res.ok) {
-      const val = { areaId: null, lat: null, lon: null, error: `Nominatim boundary HTTP ${res.status}` };
+      const val = { areaId: null, lat: null, lon: null, bounds: null as GeoBounds | null, error: `Nominatim boundary HTTP ${res.status}` };
       if (ctx) ctx.boundaryCache.set(cacheKey, val);
       return val;
     }
@@ -1098,14 +1122,27 @@ async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx
     const lat = item?.lat ? Number(item.lat) : null;
     const lon = item?.lon ? Number(item.lon) : null;
 
+    // Nominatim boundingbox = [south, north, west, east] (strings).
+    let bounds: GeoBounds | null = null;
+    const bbox = item?.boundingbox;
+    if (Array.isArray(bbox) && bbox.length >= 4) {
+      const south = Number(bbox[0]);
+      const north = Number(bbox[1]);
+      const west = Number(bbox[2]);
+      const east = Number(bbox[3]);
+      if ([south, north, west, east].every((v) => Number.isFinite(v) && Math.abs(v) <= 180)) {
+        bounds = { south, west, north, east };
+      }
+    }
+
     // Overpass area IDs: relation + 3600000000, way + 2400000000.
     const areaId = osmId && osmType === "relation" ? 3600000000 + osmId : osmId && osmType === "way" ? 2400000000 + osmId : null;
-    const val = { areaId, lat: Number.isFinite(lat) ? lat : null, lon: Number.isFinite(lon) ? lon : null };
+    const val = { areaId, lat: Number.isFinite(lat) ? lat : null, lon: Number.isFinite(lon) ? lon : null, bounds };
     if (ctx) ctx.boundaryCache.set(cacheKey, val);
     return val;
   } catch (e) {
     console.error("[search-places] Nominatim boundary fatal", e);
-    const val = { areaId: null, lat: null, lon: null, error: e instanceof Error ? e.message : "boundary_failed" };
+    const val = { areaId: null, lat: null, lon: null, bounds: null as GeoBounds | null, error: e instanceof Error ? e.message : "boundary_failed" };
     if (ctx) ctx.boundaryCache.set(cacheKey, val);
     return val;
   }
@@ -1197,7 +1234,7 @@ async function searchOverpass(segment: string, city: string, state: string, ctx?
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "User-Agent": "LeadHunterBrasil/1.0 (lovable.app)",
+            "User-Agent": "TiagoProspector/1.0 (contato: tiagoprospector)",
           },
           body: new URLSearchParams({ data: query }).toString(),
         }, { retries: 1, respectRetryAfter: true });
@@ -1303,7 +1340,7 @@ async function searchOverpassByName(
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "User-Agent": "LeadHunterBrasil/1.0 (lovable.app)",
+            "User-Agent": "TiagoProspector/1.0 (contato: tiagoprospector)",
           },
           body: new URLSearchParams({ data: query }).toString(),
         }, { retries: 1, respectRetryAfter: true });
@@ -1794,8 +1831,11 @@ async function discoverWebsiteForLead(lead: PublicLead, city: string, state: str
 async function runWebsiteDiscovery(leads: PublicLead[], city: string, state: string): Promise<void> {
   const targets = leads.filter((l) => !l.website);
   if (targets.length === 0) return;
-  // Limit to keep total runtime reasonable
-  const queue = targets.slice(0, 25);
+  // Processa os leads sem site com mais sinais comerciais primeiro (reviews),
+  // limitado para manter o runtime do enrich aceitável.
+  const queue = [...targets]
+    .sort((a, b) => (b.reviews_count ?? 0) - (a.reviews_count ?? 0))
+    .slice(0, 60);
   const concurrency = 4;
   let idx = 0;
   const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
@@ -2091,8 +2131,9 @@ Deno.serve(async (req) => {
     if (GOOGLE_KEY_LOADED && GOOGLE_KEY!.startsWith("AIza")) {
       sourcesTried.push(SOURCE_LABELS.googleNew);
 
-      // Resolve city center for radius (locationBias) variants in parallel with first query
-      const boundaryPromise = getNominatimBoundary(city, state, ctx).catch(() => ({ areaId: null, lat: null, lon: null }));
+      // Resolve city center/bounds for geo-restricted (locationRestriction) variants in parallel with first query
+      const boundaryPromise = getNominatimBoundary(city, state, ctx)
+        .catch(() => ({ areaId: null, lat: null, lon: null, bounds: null as GeoBounds | null, error: "boundary failed" }));
 
       // Concurrency-limited runner (max 2 in-flight) — prevents HTTP 429
       // bursts against the same Google project. Retry with backoff is still
@@ -2119,10 +2160,15 @@ Deno.serve(async (req) => {
         { interItemDelayMs: GOOGLE_INTER_ITEM_DELAY_MS },
       );
 
-      // Then fire radius-biased variants (top 2 synonyms only) using the resolved center
+      // Then fire geo-restricted variants (top 2 synonyms only) using the resolved boundary
       const boundary = await boundaryPromise;
+      const geoOptions = boundary.bounds
+        ? { locationRestriction: boundary.bounds }
+        : boundary.lat && boundary.lon
+          ? { locationBias: { lat: boundary.lat, lon: boundary.lon, radius: 25000 } }
+          : null;
       let radiusResults: Array<{ places: PlaceRaw[]; error?: SearchError }> = [];
-      if (boundary.lat && boundary.lon && !ctx.googleCircuitOpen) {
+      if (geoOptions && !ctx.googleCircuitOpen) {
         const radiusSynonyms = synonyms.slice(0, 2);
         const radiusJobs: Array<{ synonym: string; includedType: string | null }> = [];
         for (const s of radiusSynonyms) {
@@ -2133,18 +2179,25 @@ Deno.serve(async (req) => {
           GOOGLE_CONCURRENCY,
           (job) => {
             if (ctx.googleCircuitOpen) {
-              return Promise.resolve({ places: [] as PlaceRaw[], error: { status: 429, text: JSON.stringify({ error: { message: "GOOGLE_CIRCUIT_OPEN" } }), endpoint: "searchText+bias" } as SearchError });
+              return Promise.resolve({ places: [] as PlaceRaw[], error: { status: 429, text: JSON.stringify({ error: { message: "GOOGLE_CIRCUIT_OPEN" } }), endpoint: "searchText+geo" } as SearchError });
             }
-            return searchPlacesNew(job.synonym, 2, { locationBias: { lat: boundary.lat!, lon: boundary.lon!, radius: 25000 }, includedType: job.includedType, ctx })
-              .catch((e) => ({ places: [] as PlaceRaw[], error: { status: 0, text: String(e), endpoint: "searchText+bias" } as SearchError }));
+            const base = (geoOptions ?? {}) as { locationBias?: { lat: number; lon: number; radius: number }; locationRestriction?: GeoBounds };
+            return searchPlacesNew(job.synonym, 2, { ...base, includedType: job.includedType, ctx })
+              .catch((e) => ({ places: [] as PlaceRaw[], error: { status: 0, text: String(e), endpoint: "searchText+geo" } as SearchError }));
           },
           { interItemDelayMs: GOOGLE_INTER_ITEM_DELAY_MS },
         );
-        console.info("[search-places] radius variants fired", { count: radiusJobs.length, lat: boundary.lat, lon: boundary.lon, concurrency: GOOGLE_CONCURRENCY });
+        console.info("[search-places] geo variants fired", {
+          count: radiusJobs.length,
+          restriction: !!boundary.bounds,
+          lat: boundary.lat,
+          lon: boundary.lon,
+          concurrency: GOOGLE_CONCURRENCY,
+        });
       } else if (ctx.googleCircuitOpen) {
-        console.warn("[search-places] radius variants skipped — Google circuit open");
+        console.warn("[search-places] geo variants skipped — Google circuit open");
       } else {
-        console.info("[search-places] no boundary center available, skipping radius variants");
+        console.info("[search-places] no boundary center available, skipping geo variants");
       }
 
 
