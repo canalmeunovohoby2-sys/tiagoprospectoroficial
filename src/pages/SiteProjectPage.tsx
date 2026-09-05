@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon, Code2 } from "lucide-react";
@@ -21,6 +21,7 @@ import { exportProjectZip, saveBlob, fetchImageAsDataUrl } from "@/lib/siteDownl
 import { buildCommercialPdf, pdfFileName } from "@/lib/sitePdf";
 import { buildConversationContext, buildDesignMemory } from "@/lib/aiEditContext";
 import { materializeProjectFiles, GENERATION_STEPS, EDIT_STEPS, type AgentProgress } from "@/lib/agentProject";
+import { LiveProjectPreview } from "@/components/sites/LiveProjectPreview";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -113,6 +114,8 @@ export default function SiteProjectPage() {
   const [codePrompt, setCodePrompt] = useState("");
   const [codeWorking, setCodeWorking] = useState(false);
   const [codeOpen, setCodeOpen] = useState(false);
+  const [draftFiles, setDraftFiles] = useState<Record<string, string> | null>(null);
+  const [previewNonce, setPreviewNonce] = useState(0);
 
   // Avança por fases reais do ciclo do agente enquanto a IA trabalha.
   function runAgentProgress(steps: AgentProgress[], intervalMs = 1600) {
@@ -383,6 +386,11 @@ export default function SiteProjectPage() {
       setAiHistory((prev) => [snapshot, ...prev].slice(0, 10));
       setDraftSpec(protectedSpec);
       setDirty(true);
+      // Live preview de código: re-materializa o rascunho editado para o preview
+      // refletir a alteração feita pelo chat (além das edições diretas do agente).
+      const draftNow = materializeProjectFiles(protectedSpec);
+      setDraftFiles((prev) => (prev && Object.keys(prev).length > 0 ? draftNow : draftNow));
+      setPreviewNonce((n) => n + 1);
       const summary = describeChanges(snapshot, protectedSpec);
       const msg = [res.reply?.trim(), `Alteração aplicada: ${summary} (ainda não salva).`].filter(Boolean).join(" ");
       setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
@@ -444,6 +452,35 @@ export default function SiteProjectPage() {
     }
   }
 
+  const prevFilesRef = useRef<Record<string, string> | null>(null);
+
+  // Live preview (code-first): o preview do modo edição mostra o código real do
+  // projeto. Ao entrar em edição, baseia-se em generated_code (arquivos reais,
+  // inclusive alterados pelo agente de código) OU materializa a spec do projeto.
+  // A partir daí, o código passa a ser o estado do preview — quando o agente de
+  // código executa, draftFiles é atualizado diretamente.
+  useEffect(() => {
+    if (!project) return;
+    if (prevFilesRef.current) return; // já inicializado nesta sessão de edição
+    const existing = (project.generated_code && typeof project.generated_code === "object"
+      ? project.generated_code as Record<string, unknown>
+      : {});
+    const hasRealFiles = Object.keys(existing).length > 0;
+    if (hasRealFiles) {
+      const cleaned: Record<string, string> = {};
+      for (const [p, c] of Object.entries(existing)) {
+        if (typeof c === "string") cleaned[p] = c;
+      }
+      prevFilesRef.current = cleaned;
+      setDraftFiles(cleaned);
+    } else {
+      const fromSpec = materializeProjectFiles(draftSpec);
+      prevFilesRef.current = fromSpec;
+      setDraftFiles(fromSpec);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
   // Code-first: o agente opera sobre os ARQUIVOS reais (generated_code) do projeto.
   async function runCodeEdit(instruction: string) {
     if (!project) return;
@@ -484,6 +521,9 @@ export default function SiteProjectPage() {
         setDirty(false);
         setPendingSummary(undefined);
         toast.success(res.reply || `Arquivos atualizados (${(res.touched ?? []).length}).`);
+        prevFilesRef.current = res.files;
+        setDraftFiles(res.files);
+        setPreviewNonce((n) => n + 1);
         await load();
       } else {
         toast.info(res.reply || "Nenhuma alteração foi necessária nos arquivos.");
@@ -698,7 +738,11 @@ export default function SiteProjectPage() {
               </h2>
               <span className="text-[10px] text-muted-foreground uppercase tracking-wide">O que você conversar aparece aqui — só salva quando você clicar em Salvar</span>
             </div>
-            <SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />
+            {draftFiles && Object.keys(draftFiles).length > 0 ? (
+              <LiveProjectPreview files={draftFiles} refreshKey={previewNonce} fallback={<SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />} />
+            ) : (
+              <SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />
+            )}
             <div className="mt-3 rounded-xl border border-border/70 bg-card/60 p-3">
               <button type="button" onClick={() => setCodeOpen((v) => !v)} className="flex w-full items-center justify-between gap-2 text-left">
                 <span className="flex items-center gap-2 text-sm font-semibold">
