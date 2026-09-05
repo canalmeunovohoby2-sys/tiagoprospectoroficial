@@ -257,13 +257,22 @@ export default function SiteProjectPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id, hasSpecNow]);
 
-  // Carrega a conversa persistida do projeto (a IA entende o histórico para sempre).
+  // Carrega a conversa persistida DO PROJETO (isolada por site_project).
+  // Ao trocar de projeto, limpa o histórico anterior ANTES de carregar o novo,
+  // para nunca exibir a conversa de outro projeto.
   useEffect(() => {
     if (!project?.id || !user) return;
     let active = true;
+    setAiMessages([]);
+    setAiHistory([]);
     loadSiteChatMessages(project.id)
       .then((rows) => {
-        if (!active || rows.length === 0) return;
+        if (!active) return;
+        if (rows.length === 0) {
+          // Projeto sem histórico: garante chat limpo (nenhuma mensagem de outro projeto).
+          setAiMessages([]);
+          return;
+        }
         setAiMessages(
           rows.map((r) => ({
             role: r.role,
@@ -272,7 +281,7 @@ export default function SiteProjectPage() {
           })),
         );
       })
-      .catch(() => {});
+      .catch(() => setAiMessages([]));
     return () => {
       active = false;
     };

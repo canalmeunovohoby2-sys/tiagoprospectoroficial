@@ -259,6 +259,7 @@ export async function loadSiteChatMessages(projectId: string): Promise<Persisted
   const { data, error } = await supabase
     .from("site_chat_messages")
     .select("id,role,text,attachment,created_at")
+    .eq("project_id", projectId)
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []).map((r) => ({
