@@ -22,6 +22,7 @@ import { buildCommercialPdf, pdfFileName } from "@/lib/sitePdf";
 import { buildConversationContext, buildDesignMemory } from "@/lib/aiEditContext";
 import { materializeProjectFiles, GENERATION_STEPS, EDIT_STEPS, type AgentProgress } from "@/lib/agentProject";
 import { LiveProjectPreview } from "@/components/sites/LiveProjectPreview";
+import { buildStrategyInstruction, strategyById } from "@/lib/siteStrategies";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -418,14 +419,19 @@ export default function SiteProjectPage() {
       { max: 5, maxChars: 260 },
     );
 
-  async function runAiInstruction(instruction: string, attachment?: { dataUrl: string; label: string }) {
+  async function runAiInstruction(
+    instruction: string,
+    attachment?: { dataUrl: string; label: string },
+    opts?: { displayText?: string; acceptReport?: boolean },
+  ) {
     if (!project) return;
-    setAiMessages((prev) => [...prev, { role: "user", text: instruction, image: attachment?.dataUrl, fileLabel: attachment?.label }]);
+    const displayText = opts?.displayText ?? instruction;
+    setAiMessages((prev) => [...prev, { role: "user", text: displayText, image: attachment?.dataUrl, fileLabel: attachment?.label }]);
     setAiRunning(true);
     setAiError(null);
     const stopProgress = runAgentProgress(EDIT_STEPS, 1400);
     const snapshot = draftSpec;
-    appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: instruction, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }]).catch(() => {});
+    appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }]).catch(() => {});
     const hasWorkspace = !!draftFiles && Object.keys(draftFiles).length > 0;
     const pushReply = (msg: string, activity?: Array<{ phase: string; detail: string }>) => {
       const activityLines = (activity ?? [])
@@ -473,7 +479,7 @@ export default function SiteProjectPage() {
           prevFilesRef.current = agentRes.files;
           setDraftFiles(agentRes.files);
           setPreviewNonce((n) => n + 1);
-          const autosave = await persistAutosave(derivedSpec, agentRes.files, `Alteração via chat: ${instruction}`);
+          const autosave = await persistAutosave(derivedSpec, agentRes.files, `Alteração via chat: ${displayText}`);
           const runtime = agentRes.runtime === "cline" ? "" : " (modo compatível)";
           let savedNote;
           if (autosave.ok && autosave.created) savedNote = "\n\n✓ Alterações salvas automaticamente";
@@ -485,6 +491,18 @@ export default function SiteProjectPage() {
           setAgentStep(null);
           setAiRunning(false);
           return;
+        }
+        if (opts?.acceptReport && !agentErr && agentRes) {
+          // Comando de análise (5.27): nenhuma mudança foi feita — esse é o
+          // resultado correto. Nada é alterado, versionado nem salvo.
+          const report = agentRes.reply?.trim();
+          if (report) {
+            pushReply(report, agentRes.activity);
+            stopProgress();
+            setAgentStep(null);
+            setAiRunning(false);
+            return;
+          }
         }
         if (agentErr || !agentRes || !agentRes.files || !Object.keys(agentRes.files).length) {
           // Sem evidência de mudança → fallback para o fluxo spec (edit-site).
@@ -554,6 +572,22 @@ export default function SiteProjectPage() {
       setAgentStep(null);
       setAiRunning(false);
     }
+  }
+
+  // Comandos rápidos (5.27): cada botão dispara uma MISSÃO profissional completa
+  // (analisar → decidir → executar → testar → criticar → corrigir → verificar)
+  // construída pela camada de estratégias — SEMPRE pelo MESMO agente/autosave/
+  // guards, nunca como prompt solto ou progresso falso.
+  function runQuickStrategy(id: string) {
+    if (!project || aiRunning) return;
+    const strategy = strategyById(id);
+    if (!strategy) return;
+    const label = `${strategy.emoji} ${strategy.label}`;
+    const instruction = buildStrategyInstruction(id, {
+      name: project.company_name || project.name,
+      segment: project.segment,
+    });
+    void runAiInstruction(instruction, undefined, { displayText: label, acceptReport: strategy.analyzeOnly });
   }
 
   async function undoAi() {
@@ -865,6 +899,7 @@ export default function SiteProjectPage() {
               dirty={dirty}
               onApply={runAiInstruction}
               onRevert={undoAi}
+              onQuickStrategy={runQuickStrategy}
               runningLabel={aiRunning && agentStep !== null && EDIT_STEPS[agentStep] ? EDIT_STEPS[agentStep].label : undefined}
             />
           </div>

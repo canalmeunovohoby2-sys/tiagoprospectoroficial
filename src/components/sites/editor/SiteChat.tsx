@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, type ChangeEvent, type ReactN
 import { Sparkles, RotateCcw, Loader2, Mic, Paperclip, Send, X, CircleDot, ArrowDown } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
+import { QUICK_STRATEGIES } from "@/lib/siteStrategies";
 
 export interface ChatMsg {
   role: "user" | "assistant";
@@ -19,6 +20,8 @@ interface SiteChatProps {
   onApply: (instruction: string, attachment?: { dataUrl: string; label: string }) => void;
   onRevert: () => void;
   runningLabel?: string;
+  onQuickStrategy?: (id: string) => void;
+  quickStrategyDisabled?: boolean;
 }
 
 function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> {
@@ -49,7 +52,7 @@ function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> 
   });
 }
 
-export function SiteChat({ messages, running, error, canUndo, dirty, runningLabel, onApply, onRevert }: SiteChatProps) {
+export function SiteChat({ messages, running, error, canUndo, dirty, runningLabel, onQuickStrategy, quickStrategyDisabled, onApply, onRevert }: SiteChatProps) {
   const [instruction, setInstruction] = useState("");
   const [attachment, setAttachment] = useState<{ dataUrl: string; label: string } | null>(null);
   const [listening, setListening] = useState(false);
@@ -213,6 +216,36 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
       </div>
 
       <div className="relative flex flex-col">
+        <div className="mb-2 shrink-0">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10.5px] font-medium text-muted-foreground">Comandos rápidos</p>
+            {quickStrategyDisabled && running && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                <Loader2 className="h-2.5 w-2.5 animate-spin" /> em execução…
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {QUICK_STRATEGIES.map((s) => {
+              const disabled = running || quickStrategyDisabled;
+              const analyze = s.analyzeOnly ? " (só análise)" : "";
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onQuickStrategy?.(s.id)}
+                  title={`${s.label}${analyze} — ${s.hint}`}
+                  className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/[0.07] px-2 py-1 text-[10.5px] font-medium text-foreground/90 transition-colors hover:border-primary/50 hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-primary/20 disabled:hover:bg-primary/[0.07]"
+                >
+                  <span>{s.emoji}</span>
+                  <span className="hidden sm:inline">{s.label}</span>
+                  <span className="sm:hidden">{s.label.split(" ").slice(1).join(" ")}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         {error && (
           <p className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-[11px] text-destructive">{error}</p>
         )}
