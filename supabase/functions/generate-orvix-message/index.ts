@@ -1,5 +1,5 @@
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
-import { generateText, AiError, extractJson } from "../_shared/ai.ts";
+import { generateText, AiError, extractJson, DEFAULT_DEEPSEEK_MODEL } from "../_shared/ai.ts";
 
 /**
  * Orvix ERP — Gerador de mensagens comerciais com IA (dedicado, isolado).
@@ -53,7 +53,9 @@ interface OrvixDiagnosticInput {
   pitch?: string | null;
 }
 
-const MODEL = "gemini-2.5-flash";
+// Modelo padrão do gateway (DeepSeek). Apenas rótulo inicial — o modelo real
+// usado vem de result.model após generateText.
+const MODEL = DEFAULT_DEEPSEEK_MODEL;
 
 const ORVIX_CONTEXT = `# CONTEXTO FIXO — ORVIX SISTEMAS
 
@@ -273,7 +275,7 @@ ${leadBlock}
 
 Lembre-se: mensagens devem parecer escritas manualmente, adaptadas ao segmento real, com pelo menos uma observação personalizada baseada nos dados acima.`;
 
-    // Gera via camada compartilhada de IA (Gemini). Contrato igual ao anterior.
+    // Gera via camada compartilhada de IA (provider configurado via secrets).
     let raw = "";
     try {
       const result = await generateText({
@@ -281,7 +283,6 @@ Lembre-se: mensagens devem parecer escritas manualmente, adaptadas ao segmento r
         user: userPrompt,
         temperature: 0.85,
         json: true,
-        model: MODEL,
       });
       raw = result.text;
     } catch (e) {
@@ -303,7 +304,6 @@ Lembre-se: mensagens devem parecer escritas manualmente, adaptadas ao segmento r
       follow_up: String(parsed.follow_up ?? "").trim(),
       model: MODEL,
     };
-
     if (!result.whatsapp_curta && !result.whatsapp_consultiva) {
       return new Response(JSON.stringify({ error: "Modelo retornou saída vazia ou malformada", raw }), {
         status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -1,5 +1,5 @@
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
-import { generateText, AiError, extractJson } from "../_shared/ai.ts";
+import { generateText, AiError, extractJson, DEFAULT_DEEPSEEK_MODEL } from "../_shared/ai.ts";
 import { getNicheDesign } from "../_shared/niche-design.ts";
 import { getDesignDirective, normalizeMotionMeta, defaultMotionMeta } from "../_shared/design-directive.ts";
 import { qualityIssues, ensureBaseContent, qualityScore, premiumScore, premiumQA, PREMIUM_QA_MIN, qaIssuesForRefinement } from "../_shared/site-quality.ts";
@@ -455,7 +455,7 @@ ${businessFacts || "Nenhum dado factual além do nome."}
     };
 
     let raw = "";
-    let usedModel = "gemini-2.5-flash";
+    let usedModel = DEFAULT_DEEPSEEK_MODEL;
     let finalSpec: Record<string, unknown> | null = null;
     let lastIssues: string[] = [];
     let lastScore = 100;

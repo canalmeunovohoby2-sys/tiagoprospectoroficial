@@ -1,6 +1,6 @@
 // AI Health Check — diagnóstico sanitizado dos providers do AI Gateway.
 // Nunca retorna chaves/secrets/prompts. Testa apenas o provider ativo.
-import { AIProviderConfigurationError } from "../_shared/ai.ts";
+import { AIProviderConfigurationError, DEFAULT_PROVIDER } from "../_shared/ai.ts";
 
 export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini";
 export type ProviderStatus = "online" | "rate_limited" | "unavailable" | "timeout" | "not_configured" | "configuration_error" | "error" | "configured";
@@ -65,7 +65,7 @@ export async function runHealthCheck(opts: {
   runProvider: (provider: ProviderName, model: string) => Promise<{ model: string }>;
 }): Promise<HealthPayload> {
   const { getEnv, runProvider } = opts;
-  const rawActive = getEnv("AI_PROVIDER") ?? "gemini";
+  const rawActive = getEnv("AI_PROVIDER") ?? DEFAULT_PROVIDER;
   const active: ProviderName | null = isProvider(rawActive) ? rawActive : null;
   const rawFallback = getEnv("AI_FALLBACK_PROVIDER");
   const fallback: ProviderName | null = rawFallback && isProvider(rawFallback) ? rawFallback : null;

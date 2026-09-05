@@ -103,7 +103,7 @@ export function LandingPromptButton({ lead, variant = "icon" }: { lead: Lead; va
                 <Sparkles className="h-7 w-7 text-primary" />
               </div>
               <p className="text-sm text-muted-foreground max-w-md">
-                Clique em <strong>Gerar Super Prompt com Gemini</strong> para receber a receita técnica completa.
+                Clique em <strong>Gerar Super Prompt com IA</strong> para receber a receita técnica completa.
               </p>
             </div>
           )}
@@ -171,7 +171,7 @@ export function LandingPromptButton({ lead, variant = "icon" }: { lead: Lead; va
                 </>
               ) : (
                 <>
-                  <Sparkles className="h-4 w-4 mr-2" /> ✨ {hasContent ? "Gerar Novamente" : "Gerar Super Prompt com Gemini"}
+                  <Sparkles className="h-4 w-4 mr-2" /> ✨ {hasContent ? "Gerar Novamente" : "Gerar Super Prompt com IA"}
                 </>
               )}
             </Button>

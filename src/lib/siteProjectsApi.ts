@@ -127,7 +127,7 @@ export async function generateSiteSpec(lead: LeadSource): Promise<{ spec: SiteSp
   if (!data?.spec || typeof data.spec !== "object") {
     throw new Error("A IA não retornou uma especificação válida.");
   }
-  return { spec: data.spec, model: data.model ?? "gemini-2.5-flash" };
+  return { spec: data.spec, model: data.model ?? "deepseek-chat" };
 }
 
 export async function saveGeneratedSite(
@@ -170,7 +170,7 @@ export async function editSiteWithAI(
   if (!data?.spec || typeof data.spec !== "object") {
     throw new Error("A IA não retornou uma especificação válida.");
   }
-  return { spec: data.spec, model: data.model ?? "gemini-2.5-flash", changed: data.changed !== false, reply: data.reply, mode: data.mode };
+  return { spec: data.spec, model: data.model ?? "deepseek-chat", changed: data.changed !== false, reply: data.reply, mode: data.mode };
 }
 
 export interface PersistedChatMsg {

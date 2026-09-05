@@ -13,6 +13,10 @@ export const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 export const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
+// Provider e modelo padrão do produto. O DeepSeek é o motor principal do
+// Prospector; os demais ficam disponíveis para health check/fallback manual.
+export const DEFAULT_PROVIDER: ProviderName = "deepseek";
+
 export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini";
 export type AiKind = "missing_key" | "rate_limit" | "auth" | "bad_request" | "timeout" | "empty" | "upstream" | "config";
 export interface AIMessage { role: "system" | "user"; content: string }
@@ -158,7 +162,7 @@ async function geminiLike(opts: { messages: AIMessage[]; temperature: number; ma
 }
 
 function resolveProvider(opts: GenerateTextOptions): ProviderName {
-  const asked = opts.provider === "auto" || !opts.provider ? (getEnv("AI_PROVIDER") ?? "gemini") : opts.provider;
+  const asked = opts.provider === "auto" || !opts.provider ? (getEnv("AI_PROVIDER") ?? DEFAULT_PROVIDER) : opts.provider;
   if (asked === "nvidia" || asked === "deepseek" || asked === "openai" || asked === "gemini") return asked;
   throw new AIProviderConfigurationError(`AI_PROVIDER inválido: ${asked}`);
 }

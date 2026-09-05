@@ -1,5 +1,5 @@
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
-import { generateText, AiError, extractJson, DEFAULT_GEMINI_MODEL } from "../_shared/ai.ts";
+import { generateText, AiError, extractJson, DEFAULT_DEEPSEEK_MODEL } from "../_shared/ai.ts";
 import { getImageNeeds, type SiteAsset } from "../_shared/image-assets.ts";
 
 const ALLOWED_SECTIONS = ["hero", "trust", "features", "numbers", "process", "faq", "gallery", "about", "services", "testimonials", "cta", "contact"];
@@ -302,7 +302,7 @@ ${JSON.stringify(original)}
 Devolva a spec COMPLETA atualizada conforme a instrução.`;
 
     let raw = "";
-    let usedModel = DEFAULT_GEMINI_MODEL;
+    let usedModel = DEFAULT_DEEPSEEK_MODEL;
     try {
       const result = await generateText({
         system: SYSTEM_PROMPT,
