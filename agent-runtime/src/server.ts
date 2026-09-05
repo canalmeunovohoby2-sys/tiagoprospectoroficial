@@ -59,6 +59,7 @@ function makeAgent(sessionKey: string, projectId: string, files: Record<string, 
     maxIterations: typeof body.maxIterations === "number" ? body.maxIterations : undefined,
     initialFiles: files,
     mode: typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit",
+    enableBrowser: body.enableBrowser !== false, // default ligado (browser QA disponível)
   });
 }
 

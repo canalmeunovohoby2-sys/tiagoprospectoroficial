@@ -50,6 +50,21 @@ O app (`SiteProjectPage`) usa o agente como motor principal do chat quando há w
 - O agente nunca lê secrets; a chave fica no Supabase (`ai-proxy`) ou em env local do runtime.
 - Sem execução arbitrária de shell no runtime (tools são de arquivo scoped + contexto).
 
-## Evidência funcional
+## Browser QA (FASE 5.20)
 
-`scripts/e2e-hero-badge.ts` roda o Cline Agent de verdade contra um site estático e verifica que ele **editou o arquivo real** (`index.html` ganhou `.hero-badge` + "Atendimento Premium"), com eventos `tool-started`/`tool-finished`.
+O runtime integra **Playwright/Chromium** como ferramentas do próprio Cline Agent:
+
+- `browser_open` — abre o site do workspace num servidor local seguro (só o root do projeto; `.env`/traversal bloqueados).
+- `browser_inspect` — DOM renderizado + métricas (título, headings, overflow horizontal, anchors quebrados, imagens com erro).
+- `browser_console` — erros/warnings de JavaScript e requests que falharam.
+- `browser_links` — anchors quebrados e imagens que não carregam.
+- `browser_screenshot` — captura screenshot em `PROSPECTOR_SHOTS` ou tmp.
+- `browser_set_viewport` / `browser_reload` — testa mobile/desktop e revalida após correções.
+
+Instalação (uma vez): `cd agent-runtime && npx playwright install chromium`.
+Requisito de runtime p/ produção: Node + Chromium no host do agent-runtime.
+
+Teste de prova (detectar → corrigir → revalidar):
+`node --env-file=.env --import tsx scripts/e2e-browser-qa.ts`
+
+

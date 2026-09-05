@@ -5,6 +5,8 @@ import { Agent, createTool } from "@cline/agents";
 import type { AgentRuntimeEvent } from "@cline/agents";
 import { z } from "zod";
 import { buildSiteTools, type BusinessContext } from "./tools";
+import { buildBrowserTools } from "./browser-tools";
+import { BrowserSession } from "./browser-session";
 import { readWorkspace, type FileMap } from "./workspace";
 import { GENERATION_SYSTEM_PROMPT } from "./generation-prompt";
 
@@ -31,6 +33,8 @@ export interface ProspectorAgentOptions {
   systemPrompt?: string;
   /** mode de missão: "edit" (padrão) ou "generate" (criação inicial). */
   mode?: "edit" | "generate";
+  /** habilita browser tools (Playwright) — browser real para QA do site. */
+  enableBrowser?: boolean;
 }
 
 const SYSTEM_PROMPT = `Você é o ProspectorSiteAgent: um SENIOR Web Designer + Art Director + Frontend Engineer que trabalha DENTRO do código real de um site de um pequeno negócio brasileiro.
@@ -53,6 +57,13 @@ REGRAS DE TRABALHO:
 7. Ao terminar, resuma em pt-BR, de forma natural, o que foi feito (reply) — sem expor chain-of-thought.
 8. Se uma tool falhar, analise o erro e tente corrigir antes de desistir.
 
+BROWSER QA (ferramentas browser_*):
+- Você possui ferramentas de navegador real (browser_open, browser_inspect, browser_console, browser_links, browser_screenshot, browser_set_viewport, browser_reload) que abrem o SITE RENDERIZADO do workspace.
+- Use-as quando a tarefa envolver validar o resultado visual/estrutural (geração completa, "deixa o site perfeito", responsividade mobile, overflow, contraste, links quebrados, console). NÃO use para mudanças triviais de texto.
+- Fluxo recomendado: editar código → browser_open → browser_inspect / browser_console / mobile (browser_set_viewport mobile) → se houver problema (overflow horizontal, anchor quebrado, imagem que não carrega, erro de console), edite o código → browser_reload → confirme que resolveu.
+- Retorne na resposta apenas os problemas reais encontrados e corrigidos; nunca invente QA.
+- Screenshot: a ferramenta salva o arquivo, mas o modelo pode NÃO receber a imagem visualmente — use as métricas de DOM/console/links como evidência primária.
+
 O site DEVE continuar válido: index.html com <!doctype html>, <style> balanceado, src/site.json JSON válido.`;
 
 export class ProspectorSiteAgent {
@@ -61,6 +72,7 @@ export class ProspectorSiteAgent {
   private options: ProspectorAgentOptions;
   private beforeFiles: FileMap = {};
   private conversationStarted = false;
+  private browserSession: BrowserSession | null = null;
 
   constructor(options: ProspectorAgentOptions) {
     this.options = options;
@@ -78,13 +90,23 @@ export class ProspectorSiteAgent {
 
     this.beforeFiles = { ...(options.initialFiles ?? {}) };
     const systemPrompt = options.systemPrompt ?? (options.mode === "generate" ? GENERATION_SYSTEM_PROMPT : SYSTEM_PROMPT);
+
+    // Browser tools: compartilham UMA sessão Playwright por agente (lazy).
+    let browserTools: ReturnType<typeof buildBrowserTools> = [];
+    if (options.enableBrowser) {
+      browserTools = buildBrowserTools(() => {
+        if (!this.browserSession) this.browserSession = new BrowserSession(options.workspaceRoot);
+        return this.browserSession;
+      });
+    }
+
     this.agent = new (Agent as unknown as new (cfg: Record<string, unknown>) => unknown)({
       providerId: options.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
       modelId: options.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
       apiKey: options.apiKey ?? process.env.DEEPSEEK_API_KEY ?? process.env.PROSPECTOR_API_KEY,
       baseUrl: options.baseUrl ?? process.env.PROSPECTOR_BASE_URL ?? "https://api.deepseek.com",
       systemPrompt,
-      tools: [...tools, complete],
+      tools: [...tools, ...browserTools, complete],
       maxIterations: options.maxIterations ?? 40,
     });
   }
@@ -163,6 +185,10 @@ export class ProspectorSiteAgent {
       return { ok: false, reply: "", files, touched: [], iterations: 0, events, error: e instanceof Error ? e.message : String(e) };
     } finally {
       unsub();
+      if (this.browserSession) {
+        await this.browserSession.close().catch(() => {});
+        this.browserSession = null;
+      }
     }
   }
 
