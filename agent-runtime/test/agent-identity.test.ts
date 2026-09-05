@@ -10,17 +10,21 @@ describe("Agent Identity central (5.27) — profissional permanente", () => {
   });
 
   it("regras anti-preguiça e anti-invenção estão presentes", () => {
-    expect(AGENT_IDENTITY.toLowerCase()).toContain("não fazer o mínimo");
-    expect(AGENT_IDENTITY.toLowerCase()).toContain("autocrítica");
-    expect(AGENT_IDENTITY.toLowerCase()).toContain("nunca invente");
-    expect(AGENT_IDENTITY.toLowerCase()).toContain("mesma url de imagem");
-    expect(AGENT_IDENTITY.toLowerCase()).toContain("evidência");
-    expect(AGENT_IDENTITY.toLowerCase()).toContain("ciclos");
+    const id = AGENT_IDENTITY.toLowerCase();
+    expect(id).toContain("alteração mínima não é a solução");
+    expect(id).toContain("complexidade real da tarefa");
+    expect(id).toContain("intenção não é evidência");
+    expect(id).toContain("nunca invente");
+    expect(id).toContain("evidência");
+    expect(id).toContain("continue trabalhando");
+    expect(id).toContain("verificações reais");
   });
 
   it("prompt de edição usa a identidade central (sem prompt local duplicado)", () => {
     const p = buildEditSystemPrompt();
-    expect(p).toContain("ENTENDER ANTES DE EDITAR");
+    expect(p).toContain("PROTOCOLO DE TRABALHO");
+    expect(p).toContain("ENTENDER → INSPECIONAR → DECIDIR → EXECUTAR → TESTAR → CRITICAR → CORRIGIR → VERIFICAR");
+    expect(p).toContain("finish_task");
     expect(p).toContain("BROWSER QA");
     expect(p.toLowerCase()).toContain("pt-br");
   });

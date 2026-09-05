@@ -11,6 +11,7 @@ import { readWorkspace, type FileMap } from "./workspace";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision";
 import { decideFinishBlock } from "./completion-guard";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity";
+import { computeWorkEvidence, type WorkEventLike } from "./work-evidence";
 
 export interface AgentRunOutcome {
   ok: boolean;
@@ -56,6 +57,8 @@ export class ProspectorSiteAgent {
   private finishBlocked = false;
   private runStartFiles: Record<string, string> | null = null;
   private currentInstruction = "";
+  /** Sequência de tool-started da run atual — evidência real para o Depth Guard. */
+  private currentToolEvents: WorkEventLike[] = [];
 
   constructor(options: ProspectorAgentOptions) {
     this.options = options;
@@ -124,6 +127,7 @@ export class ProspectorSiteAgent {
         segment: options.business?.segment ?? undefined,
         name: options.business?.name ?? undefined,
         finishSkips: this.finishSkips,
+        work: this.currentToolEvents.length ? computeWorkEvidence(this.currentToolEvents) : undefined,
       });
       if (decision.block) {
         this.finishSkips += 1;
@@ -202,7 +206,15 @@ export class ProspectorSiteAgent {
   // (mesmo Agent), usa continue() para manter o contexto da conversa.
   async runTask(instruction: string, opts?: { continueSession?: boolean }): Promise<AgentRunOutcome> {
     const events: AgentRuntimeEvent[] = [];
-    const unsub = this.agent.subscribe((event: AgentRuntimeEvent) => events.push(event));
+    this.currentToolEvents = []; // nova missão → nova trilha de evidência da run
+    const unsub = this.agent.subscribe((event: AgentRuntimeEvent) => {
+      events.push(event);
+      // Registra só o início das tools (ordem real), usado pelo Depth Guard.
+      const ev = event as Partial<AgentRuntimeEvent> & WorkEventLike;
+      if (ev?.type === "tool-started" && (ev.toolName || ev.toolCall?.toolName)) {
+        this.currentToolEvents.push({ type: ev.type, toolName: ev.toolName, toolCall: ev.toolCall });
+      }
+    });
     const shouldContinue = opts?.continueSession === true && this.conversationStarted;
     // Nova missão → reset do guard (retentativas de finish por missão).
     if (!shouldContinue) {
