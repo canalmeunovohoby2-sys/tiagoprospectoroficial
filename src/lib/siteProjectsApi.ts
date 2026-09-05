@@ -251,6 +251,34 @@ export async function invokeProspectorAgent(input: {
   return invokeAgentExecute(input);
 }
 
+// Geração inicial via Cline (FASE 5.19): o agente cria o site real no workspace.
+// Prefere o runtime Node; se indisponível, retorna { status: "error", runtime: "edge-fallback" }
+// para o caller decidir cair no gerador clássico (spec).
+export async function invokeProspectorGenerate(input: {
+  projectId: string;
+  context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null; about?: string | null; services?: string[] };
+  briefing?: Record<string, unknown>;
+}): Promise<AgentExecuteResult> {
+  const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
+  if (!runtimeUrl) return { status: "error", runtime: "edge-fallback", errors: ["runtime não configurado"] };
+  try {
+    const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {} }),
+      signal: AbortSignal.timeout(300_000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as AgentExecuteResult & { error?: string };
+      if (data.error) return { status: "error", runtime: "cline", errors: [data.error] };
+      return data;
+    }
+    return { status: "error", runtime: "edge-fallback", errors: [`runtime indisponível (HTTP ${res.status})`] };
+  } catch {
+    return { status: "error", runtime: "edge-fallback", errors: ["runtime indisponível"] };
+  }
+}
+
 export interface PersistedChatMsg {
   id: string;  role: "user" | "assistant";
   text: string;

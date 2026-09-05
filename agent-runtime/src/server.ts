@@ -58,6 +58,7 @@ function makeAgent(sessionKey: string, projectId: string, files: Record<string, 
     providerId: typeof body.providerId === "string" ? body.providerId : undefined,
     maxIterations: typeof body.maxIterations === "number" ? body.maxIterations : undefined,
     initialFiles: files,
+    mode: typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit",
   });
 }
 
@@ -86,6 +87,96 @@ export function startServer(port = PORT, host = HOST) {
         const projectId = String(body.projectId ?? "").trim();
         if (projectId) sessions.delete(projectId);
         send(res, 200, { ok: true });
+        return;
+      }
+
+      if (url.pathname === "/generate" && req.method === "POST") {
+        const body = (await readJson(req)) as Record<string, unknown>;
+        const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
+        if (!projectId) { send(res, 400, { error: "projectId é obrigatório" }); return; }
+        const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
+        const briefing = (body.briefing && typeof body.briefing === "object" ? body.briefing : {}) as Record<string, unknown>;
+
+        // Missão de geração: workspace limpo (ou arquivos pré-existentes se houver).
+        const seed = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
+        const genKey = `generate:${projectId}`;
+        pruneSessions();
+        const existingGen = sessions.get(genKey);
+        const agent = existingGen?.agent ?? makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate" });
+        if (!existingGen) sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "" });
+
+        const activity: Array<{ phase: string; detail: string }> = [];
+        const events: string[] = [];
+        agent.subscribe((event) => {
+          try {
+            events.push((event as { type: string }).type);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const e = event as any;
+            if (e.type === "tool-started") {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const input = e.toolCall?.input ?? {};
+              const path = typeof input?.path === "string" ? input.path : "";
+              const tool = e.toolCall?.toolName ?? "";
+              const detail = path ? `${path}` : "";
+              if (tool === "read_file" || tool === "list_files" || tool === "get_site_context") {
+                activity.push({ phase: detail ? "reading" : "analyzing", detail: detail ? `Analisando ${detail}` : "Analisando o negócio…" });
+              } else if (tool === "write_file") {
+                activity.push({ phase: "creating", detail: `Criando ${detail}` });
+              } else if (tool === "edit_file") {
+                activity.push({ phase: "editing", detail: `Ajustando ${detail}` });
+              } else if (tool === "finish_task") {
+                activity.push({ phase: "done", detail: "Finalizando" });
+              }
+            } else if (e.type === "turn-finished") {
+              activity.push({ phase: "reviewing", detail: "Revisando o código…" });
+            }
+          } catch { /* noop */ }
+        });
+
+        // Instrução da missão embutida com briefing (sem inventar fatos).
+        const ctxLines = [
+          business.name && `Empresa: ${business.name}`,
+          business.segment && `Segmento: ${business.segment}`,
+          business.city && `Cidade: ${business.city}`,
+          business.state && `Estado: ${business.state}`,
+          business.address && `Endereço: ${business.address}`,
+          business.phone && `Telefone: ${business.phone}`,
+          business.whatsapp && `WhatsApp: ${business.whatsapp}`,
+          Array.isArray(business.services) && business.services.length && `Serviços: ${(business.services as string[]).join(", ")}`,
+          typeof business.about === "string" && `Sobre: ${business.about}`,
+        ].filter(Boolean).join("\n");
+
+        const extra = Object.keys(briefing).length
+          ? `\nInformações adicionais do briefing (use o que for real; não invente o resto):\n${JSON.stringify(briefing).slice(0, 2000)}`
+          : "";
+
+        const mission = `Crie do zero o site deste negócio, seguindo o fluxo da sua instrução de sistema (analisar → direcionar → estruturar → criar código real → auto-revisar → corrigir → finalizar).
+
+CONTEXTO REAL DO NEGÓCIO:
+${ctxLines || "(apenas nome de arquivo/nenhum dado além do projeto)"}
+${extra}`;
+
+        const outcome = await agent.runTask(mission, { continueSession: !!existingGen });
+        const finalFiles = readWorkspace(resolveWorkspaceRoot(projectId));
+        // Move o agente de geração para o pool de edição do mesmo projectId,
+        // para que o chat continue a MESMA conversa/sessão após a geração.
+        sessions.delete(genKey);
+        sessions.set(projectId, { agent, projectId, lastActive: Date.now(), resetToken: "" });
+
+        send(res, 200, {
+          status: outcome.ok ? "ok" : "error",
+          reply: outcome.reply,
+          error: outcome.error,
+          changed: true,
+          touched: outcome.touched,
+          files: finalFiles,
+          model: process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
+          provider: process.env.PROSPECTOR_PROVIDER ?? "deepseek",
+          runtime: "cline",
+          mode: "generate",
+          events: events.slice(0, 200),
+          activity,
+        });
         return;
       }
 

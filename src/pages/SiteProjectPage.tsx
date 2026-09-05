@@ -11,7 +11,7 @@ import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, 
 import {
   fetchSiteProject, generateSiteSpec, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
-  createSiteVersion, invokeAgentExecute, invokeProspectorAgent,
+  createSiteVersion, invokeAgentExecute, invokeProspectorAgent, invokeProspectorGenerate,
 } from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
@@ -292,8 +292,49 @@ export default function SiteProjectPage() {
     const stopProgress = runAgentProgress(GENERATION_STEPS);
     try {
       const briefing = (project.briefing ?? {}) as Record<string, unknown>;
+      // CONTEXTO factual p/ o agente (sem inventar; apenas o que existe).
+      const cContent = ((briefing.content ?? (project.spec as SiteSpec | null)?.content) ?? {}) as Record<string, unknown>;
+      const cContact = (cContent.contact ?? {}) as Record<string, unknown>;
+      const servicesArr = Array.isArray((cContent.services as Record<string, unknown> | undefined)?.items)
+        ? ((cContent.services as Record<string, unknown>).items as Array<Record<string, unknown>>).map((i) => String(i.title ?? "")).filter(Boolean)
+        : [];
+
+      // TENTA A GERAÇÃO PELO CLINE (código real, self-review). Se indisponível,
+      // cai no gerador clássico (spec) — fallback preservado.
+      const genRes = await invokeProspectorGenerate({
+        projectId: project.id,
+        context: {
+          name: project.company_name || project.name,
+          segment: project.segment,
+          city: project.city,
+          state: project.state,
+          phone: typeof cContact.phone === "string" ? cContact.phone : null,
+          whatsapp: typeof cContact.whatsapp === "string" ? cContact.whatsapp : null,
+          address: typeof cContact.address === "string" ? cContact.address : null,
+          about: typeof briefing.about === "string" ? briefing.about : typeof cContent.about === "object" ? String((cContent.about as Record<string, unknown>).body ?? "") || null : null,
+          services: servicesArr.length ? servicesArr : undefined,
+        },
+        briefing,
+      });
+
+      if (genRes.status === "ok" && genRes.files && Object.keys(genRes.files).length > 0) {
+        // O agente criou o código real. SiteSpec derivada do site.json se houver.
+        const specFromJson = genRes.spec ? normalizeSpec(genRes.spec as SiteSpec | Record<string, unknown> | null) : null;
+        const base = specFromJson ?? normalizeSpec(null);
+        const derived = { ...base, business: { ...(base.business ?? {}), name: project.company_name || project.name, segment: project.segment, city: project.city, state: project.state } };
+        await saveGeneratedSite(project.id, derived, genRes.model ?? "cline", genRes.files);
+        if (user?.id) await createSiteVersion(project.id, user.id, derived, pendingSummary).catch(() => {});
+        setPendingSummary(undefined);
+        setDraftSpec(derived);
+        prevFilesRef.current = genRes.files;
+        setDraftFiles(genRes.files);
+        toast.success("Site criado pelo agente e salvo");
+        await load();
+        return;
+      }
+
+      // FALLBACK: gerador clássico (spec) quando o Cline não está disponível.
       const { spec, model } = await generateSiteSpec(briefing);
-      // O agente materializa o resultado em arquivos reais do projeto (workspace).
       const files = materializeProjectFiles(spec);
       await saveGeneratedSite(project.id, spec, model, files);
       if (user?.id) {

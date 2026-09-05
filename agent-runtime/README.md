@@ -37,6 +37,7 @@ npx tsx scripts/test-understanding.ts
 
 Endpoints:
 - `GET /health` — status do runtime e nº de sessões ativas.
+- `POST /generate` — **missão de geração inicial** (Cline cria o site do zero no workspace, com auto-revisão e correção; depois a sessão é reutilizada para edição no mesmo `projectId`). `{ projectId, context, briefing? }`.
 - `POST /run` — roda/continua o agente de um projeto. `projectId` identifica a sessão: se já existe um Agent vivo, a nova mensagem usa `agent.continue()` (contexto preservado). `fresh:true` reinicia a sessão.
 - `DELETE /session` `{projectId}` — encerra a sessão.
 

@@ -6,6 +6,7 @@ import type { AgentRuntimeEvent } from "@cline/agents";
 import { z } from "zod";
 import { buildSiteTools, type BusinessContext } from "./tools";
 import { readWorkspace, type FileMap } from "./workspace";
+import { GENERATION_SYSTEM_PROMPT } from "./generation-prompt";
 
 export interface AgentRunOutcome {
   ok: boolean;
@@ -27,6 +28,9 @@ export interface ProspectorAgentOptions {
   providerId?: string;
   maxIterations?: number;
   initialFiles?: FileMap;
+  systemPrompt?: string;
+  /** mode de missão: "edit" (padrão) ou "generate" (criação inicial). */
+  mode?: "edit" | "generate";
 }
 
 const SYSTEM_PROMPT = `Você é o ProspectorSiteAgent: um SENIOR Web Designer + Art Director + Frontend Engineer que trabalha DENTRO do código real de um site de um pequeno negócio brasileiro.
@@ -73,12 +77,13 @@ export class ProspectorSiteAgent {
     });
 
     this.beforeFiles = { ...(options.initialFiles ?? {}) };
+    const systemPrompt = options.systemPrompt ?? (options.mode === "generate" ? GENERATION_SYSTEM_PROMPT : SYSTEM_PROMPT);
     this.agent = new (Agent as unknown as new (cfg: Record<string, unknown>) => unknown)({
       providerId: options.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
       modelId: options.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
       apiKey: options.apiKey ?? process.env.DEEPSEEK_API_KEY ?? process.env.PROSPECTOR_API_KEY,
       baseUrl: options.baseUrl ?? process.env.PROSPECTOR_BASE_URL ?? "https://api.deepseek.com",
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt,
       tools: [...tools, complete],
       maxIterations: options.maxIterations ?? 40,
     });
