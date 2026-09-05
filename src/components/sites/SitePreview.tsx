@@ -367,10 +367,22 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
     if (heroVariant === "statement") {
       return (
         <section id="hero" className="relative overflow-hidden" style={{ backgroundColor: "var(--sp-secondary)", color: "var(--sp-on-primary)" }}>
+          {heroImg && (
+            <div aria-hidden className="absolute inset-0">
+              <img
+                src={heroImg.url}
+                alt=""
+                loading="eager"
+                className="h-full w-full object-cover"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+              />
+              <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, color-mix(in srgb, var(--sp-secondary) 90%, transparent) 0%, var(--sp-secondary) 72%)" }} />
+            </div>
+          )}
           {decorative !== "none" && (
             <div aria-hidden className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full opacity-10" style={{ backgroundColor: "var(--sp-on-primary)" }} />
           )}
-          <div className="mx-auto px-6 py-20 sm:py-28" style={{ maxWidth: "var(--sp-maxw)" }}>
+          <div className="relative mx-auto px-6 py-24 sm:py-32" style={{ maxWidth: "var(--sp-maxw)" }}>
             <div className="max-w-4xl space-y-7">
               <span className="text-[0.72rem] uppercase tracking-[0.24em]" style={{ color: "var(--sp-on-primary)", opacity: 0.85 }}>{segmentLabel}</span>
               <h1 className="font-bold leading-[1.02]" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "var(--sp-heading-size)", letterSpacing: "var(--sp-tracking)" }}>
@@ -390,12 +402,6 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
                   <a href="#contato" className="rounded-full border px-7 py-3 font-semibold" style={{ borderColor: "color-mix(in srgb, var(--sp-on-primary) 35%, transparent)", color: "var(--sp-on-primary)" }}>{str(hero.secondary_cta)}</a>
                 )}
               </div>
-              {heroImg && (
-                <div className="pt-6">
-                  <Picture src={heroImg.url} alt={heroImg.alt} ratio="21 / 9" eager className="rounded-2xl ring-1 ring-white/15 shadow-2xl" />
-                  {heroImgNote && <p className="mt-2 text-[11px]" style={{ color: "color-mix(in srgb, var(--sp-on-primary) 70%, transparent)" }}>{textRich(heroImgNote)}</p>}
-                </div>
-              )}
             </div>
           </div>
         </section>
@@ -503,7 +509,7 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
               const desc = str(item.description);
               const styleCss = cardCss();
               return (
-                <div key={i} className="p-6" style={{ ...styleCss, padding: cardStyle === "editorial" ? 0 : undefined }}>
+                <div key={i} className={`p-6 ${cardStyle === "editorial" ? "" : "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_28px_60px_-30px_rgba(16,24,40,0.4)]"}`} style={{ ...styleCss, padding: cardStyle === "editorial" ? 0 : undefined }}>
                   {cardStyle === "editorial" && <span className="mb-3 inline-block text-xs font-semibold" style={{ color: "var(--sp-primary)" }}>0{i + 1}</span>}
                   {!cardStyle.includes("editorial") && (
                     <div className="mb-4 h-9 w-9 rounded-lg flex items-center justify-center text-lg" style={{ backgroundColor: "color-mix(in srgb, var(--sp-primary) 10%, transparent)", color: "var(--sp-primary)" }}>
@@ -554,7 +560,7 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
           </div>
           <div className={`grid gap-px overflow-hidden rounded-2xl border ${columns}`} style={{ borderColor: "var(--sp-border)", backgroundColor: "var(--sp-border)" }}>
             {items.map((item, i) => (
-              <div key={i} className="group p-7 transition-colors hover:bg-primary/5" style={{ backgroundColor: "var(--sp-surface)" }}>
+              <div key={i} className="group p-7 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_28px_60px_-30px_rgba(16,24,40,0.4)]" style={{ backgroundColor: "var(--sp-surface)" }}>
                 <div className="mb-4 flex items-baseline justify-between">
                   <span className="text-sm font-bold" style={{ color: "var(--sp-primary)" }}>{str(item.icon) || `0${i + 1}`}</span>
                 </div>
@@ -654,7 +660,7 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
               const quote = str(item.quote);
               if (!quote) return null;
               return (
-                <figure key={i} className="p-7" style={{ ...cardCss(), borderLeft: "3px solid var(--sp-primary)" }}>
+                <figure key={i} className="p-7 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_28px_60px_-30px_rgba(16,24,40,0.4)]" style={{ ...cardCss(), borderLeft: "3px solid var(--sp-primary)" }}>
                   <blockquote className="text-[1.02rem] leading-relaxed" style={{ color: "var(--sp-on-surface)" }}>{textRich(quote)}</blockquote>
                   <figcaption className="mt-5 flex items-center gap-3">
                     <span className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-bold" style={{ backgroundColor: "color-mix(in srgb, var(--sp-primary) 14%, transparent)", color: "var(--sp-primary)" }}>

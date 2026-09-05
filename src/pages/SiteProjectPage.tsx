@@ -12,7 +12,7 @@ import {
   fetchSiteProject, generateSiteSpec, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
 } from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
-import { SiteEditor } from "@/components/sites/editor/SiteEditor";
+import { SiteChat } from "@/components/sites/editor/SiteChat";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface ChatMessage {
@@ -20,6 +20,21 @@ export interface ChatMessage {
   text: string;
   image?: string; // dataURL exibido apenas na sessão (sem storage nesta fase)
   fileLabel?: string;
+}
+
+function friendlyAiError(e: unknown): string {
+  const raw = e instanceof Error ? e.message : "Erro ao aplicar alteração.";
+  const lower = raw.toLowerCase();
+  if (/non-2xx|edge function returned|http 5\d\d|503|529/.test(lower)) {
+    return "O serviço de IA está temporariamente ocupado. Nada foi alterado — tente novamente em instantes.";
+  }
+  if (/429|quota|rate_limit|limite de uso/.test(lower)) {
+    return "Atingimos o limite temporário de uso da IA. Nada foi alterado — tente novamente em alguns instantes.";
+  }
+  if (/timeout|tempo limite|took too long/.test(lower)) {
+    return "A IA demorou demais para responder. Nada foi alterado — tente novamente.";
+  }
+  return raw;
 }
 
 function describeChanges(before: SiteSpec | null, after: SiteSpec | null): string {
@@ -123,7 +138,7 @@ export default function SiteProjectPage() {
       toast.success("Especificação gerada e salva");
       await load();
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erro ao gerar especificação";
+      const message = friendlyAiError(e);
       setGenError(message);
       toast.error(message);
       try {
@@ -185,7 +200,7 @@ export default function SiteProjectPage() {
       const summary = describeChanges(snapshot, protectedSpec);
       setAiMessages((prev) => [...prev, { role: "assistant", text: `Alteração aplicada: ${summary} Confira o preview — ainda não salvo.` }]);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Não foi possível aplicar a alteração. Sua spec atual foi preservada.";
+      const msg = friendlyAiError(e);
       setAiError(msg);
       setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
     } finally {
@@ -334,30 +349,24 @@ export default function SiteProjectPage() {
           </p>
         </Card>
       ) : editMode ? (
-        <div className="grid gap-5 lg:grid-cols-[400px_minmax(0,1fr)] items-start">
-          <div className="lg:max-h-[calc(100vh-140px)] lg:overflow-y-auto pr-1 -mr-1">
-            <div className="lg:sticky lg:top-0 space-y-2.5">
-              <SiteEditor
-                spec={draftSpec}
-                onChange={handleDraftChange}
-                aiPanel={{
-                  running: aiRunning,
-                  error: aiError,
-                  proposed: aiHistory.length > 0 || dirty,
-                  messages: aiMessages,
-                  canUndo: aiHistory.length > 0,
-                  onApply: runAiInstruction,
-                  onRevert: undoAi,
-                }}
-              />
-            </div>
+        <div className="grid gap-5 lg:h-[calc(100vh-150px)] lg:grid-cols-[420px_minmax(0,1fr)] lg:overflow-hidden">
+          <div className="lg:h-full">
+            <SiteChat
+              messages={aiMessages}
+              running={aiRunning}
+              error={aiError}
+              canUndo={aiHistory.length > 0}
+              dirty={dirty}
+              onApply={runAiInstruction}
+              onRevert={undoAi}
+            />
           </div>
-          <div className="min-w-0">
-            <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+          <div className="min-w-0 lg:h-full lg:overflow-y-auto lg:pr-1">
+            <div className="mb-2 flex items-center justify-between gap-2 flex-wrap">
               <h2 className="font-display font-semibold flex items-center gap-2">
                 <Eye className="h-4 w-4 text-primary" /> Preview ao vivo
               </h2>
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Alterações aparecem imediatamente</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">O que você conversar aparece aqui — só salva quando você clicar em Salvar</span>
             </div>
             <SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />
           </div>
