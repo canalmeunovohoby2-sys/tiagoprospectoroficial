@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideFinishBlock, MAX_FINISH_SKIPS_DEFAULT } from "../src/completion-guard";
+import { decideFinishBlock, instructionRequestsChange, MAX_FINISH_SKIPS_DEFAULT } from "../src/completion-guard";
 
 const GOOD = {
   "index.html": `<!doctype html><html><head><title>Academia Forte</title></head><body>
@@ -40,5 +40,33 @@ describe("Completion Guard (5.24) — conclusão com evidência", () => {
   it("maxFinishSkips custom é respeitado", () => {
     expect(decideFinishBlock({ mode: "generate", files: POOR, segment: "x", finishSkips: 1, maxFinishSkips: 1 }).block).toBe(false);
     expect(decideFinishBlock({ mode: "generate", files: POOR, segment: "x", finishSkips: 0, maxFinishSkips: 1 }).block).toBe(true);
+  });
+});
+
+describe("Guard de evidência (5.24) — não afirmar que alterou sem ter alterado", () => {
+  it("pede mudança mas NENHUM arquivo mudou → bloqueia (mesmo em edit)", () => {
+    const d = decideFinishBlock({
+      mode: "edit", files: POOR, startFiles: POOR, instruction: "Deixa o botão de matrícula mais visível", finishSkips: 0,
+    });
+    expect(d.block).toBe(true);
+    expect(d.reason ?? "").toMatch(/NENHUM arquivo foi modificado/i);
+  });
+
+  it("pede mudança E arquivo mudou → NÃO bloqueia (edit)", () => {
+    const changed = { ...POOR, "src/site.css": ".hero{} .cta{background:#111}" };
+    const d = decideFinishBlock({ mode: "edit", files: changed, startFiles: POOR, instruction: "Deixa o CTA mais visível", finishSkips: 0 });
+    expect(d.block).toBe(false);
+  });
+
+  it("pergunta sem pedir mudança → NÃO bloqueia mesmo sem alteração", () => {
+    const d = decideFinishBlock({ mode: "edit", files: POOR, startFiles: POOR, instruction: "O que dá pra melhorar nesse site?", finishSkips: 0 });
+    expect(d.block).toBe(false);
+  });
+
+  it("instructionRequestsChange distingue pedido de mudança de pergunta", () => {
+    expect(instructionRequestsChange("troca a cor do botão para azul")).toBe(true);
+    expect(instructionRequestsChange("adiciona uma seção de FAQ")).toBe(true);
+    expect(instructionRequestsChange("qual classe controla o título?")).toBe(false);
+    expect(instructionRequestsChange("obrigado")).toBe(false);
   });
 });

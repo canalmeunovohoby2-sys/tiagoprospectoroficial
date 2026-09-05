@@ -86,6 +86,8 @@ export class ProspectorSiteAgent {
   private pendingScreenshotPath: string | null = null;
   private finishSkips = 0;
   private finishBlocked = false;
+  private runStartFiles: Record<string, string> | null = null;
+  private currentInstruction = "";
 
   constructor(options: ProspectorAgentOptions) {
     this.options = options;
@@ -149,6 +151,8 @@ export class ProspectorSiteAgent {
       const decision = decideFinishBlock({
         mode: options.mode ?? "edit",
         files: readWorkspace(options.workspaceRoot),
+        startFiles: this.runStartFiles,
+        instruction: this.currentInstruction,
         segment: options.business?.segment ?? undefined,
         name: options.business?.name ?? undefined,
         finishSkips: this.finishSkips,
@@ -238,6 +242,9 @@ export class ProspectorSiteAgent {
       this.finishBlocked = false;
       this.pendingScreenshotPath = null;
     }
+    // Snapshot do início desta execução (para detectar "disse que alterou mas nada mudou").
+    this.runStartFiles = readWorkspace(this.options.workspaceRoot);
+    this.currentInstruction = instruction;
     try {
       // Estado "antes" real (para touched correto em continuações).
       const stateBefore = shouldContinue || this.conversationStarted ? readWorkspace(this.options.workspaceRoot) : this.beforeFiles;
