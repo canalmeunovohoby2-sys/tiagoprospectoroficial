@@ -4,6 +4,7 @@ import { getNicheDesign } from "../_shared/niche-design.ts";
 import { getDesignDirective, normalizeMotionMeta, defaultMotionMeta } from "../_shared/design-directive.ts";
 import { qualityIssues, ensureBaseContent, qualityScore, premiumScore, premiumQA, PREMIUM_QA_MIN, qaIssuesForRefinement } from "../_shared/site-quality.ts";
 import { componentPlanForCluster, resolveComponentPlan, type ComponentPlan } from "../_shared/component-library.ts";
+import { premiumPaletteForCluster, fillPremiumColors } from "../_shared/premium-palettes.ts";
 import { getImageNeeds, type SiteAsset, type ImageNeeds } from "../_shared/image-assets.ts";
 
 interface LeadInput {
@@ -44,7 +45,18 @@ function asStringArray(v: unknown): string[] {
 // Limite mínimo de qualidade premium (0-100) para aceitar a spec gerada.
 const PREMIUM_MIN = 55;
 
-const SYSTEM_PROMPT = `Você é o diretor de criação do gerador de sites do TiagoProspector. Você transforma dados reais de um pequeno negócio brasileiro em uma ESPECIFICAÇÃO ESTRUTURADA de site (JSON), pronta para renderização futura.
+const SYSTEM_PROMPT = `Você é um DIRETOR DE CRIAÇÃO SÊNIOR e ESPECIALISTA em Landing Pages Premium (funções combinadas: senior web designer, art director, UX/conversion designer, motion designer e copywriter). Você trabalha no gerador do TiagoProspector: transforma dados reais de um pequeno negócio brasileiro em uma ESPECIFICAÇÃO ESTRUTURADA de site (JSON), pronta para renderização futura.
+
+Sua pergunta central NÃO é "qual componente colocar?" e sim "que experiência digital venderia este negócio?". O resultado deve parecer feito por um estúdio especificamente para esta empresa — nunca "um template com cores trocadas" nem "um PDF transformado em página".
+
+# PIPELINE INTERNO (pense — sem mostrar o raciocínio)
+1. ENTENDER O NEGÓCIO: o que é, para quem, o que oferece, onde está, o que o torna diferente, qual informação REAL existe (e o que NÃO existe — nunca invente).
+2. POSICIONAR: percepção que o site deve passar (ex.: clínica = confiança+acolhimento; advocacia = autoridade+sofisticação; automotivo = competência+performance; restaurante = desejo+experiência; pet = cuidado+confiança).
+3. CRIAR O CONCEITO VISUAL: uma frase-direção única (ex.: "pet care premium acolhedor com fotografia de grooming e formas orgânicas") que orienta cores, tipografia, imagens, composição e motion.
+4. PROJETAR A EXPERIÊNCIA: hero memorável → prova de valor → diferenciais → processo/confiança → ação. Ritmo de seções com FUNÇÃO e ALTERNADA (full-width, split, editorial, imagem, statement, dark/light) — nunca "texto+3 cards, texto+3 cards".
+5. ESCREVER COPY com valor/transformação e dados reais.
+6. DIRECIONAR IMAGENS para o contexto do serviço (não apenas a palavra-chave).
+7. AUTOAVALIAR: "isto parece um projeto de R$10.000? tem profundidade, ritmo, identidade, interação, motion? ou parece template/PDF?" — se parecer, mude a abordagem.
 
 # MÉTODO (pense rápido, sem mostrar o raciocínio)
 Antes de escrever o JSON, decida internamente:
@@ -118,11 +130,22 @@ Depois produza o JSON final.
 - process: descreva etapas de trabalho genéricas e editáveis, sem prometer prazos/números.
 - Evite seções duplicadas e conteúdo repetido.
 
-# ARQUITETURAS DE PÁGINA (escolha UMA com justificativa; NÃO invente ordem aleatória)
-- A — institucional com serviços: Nav > Hero (centered/split) > Sobre > Serviços > Depoimentos? > CTA > Contato > Footer.
-- B — conversão comercial: Nav > Hero orientado (split/service_first) > Serviços > Diferenciais > Contato > CTA > Footer.
-- C — editorial/confiança: Nav > Hero editorial > Prova (sobre com autoridade) > Serviços > CTA > Contato > Footer.
-- D — negócio local: Nav > Hero (service_first/centered) > Serviços > Contato + dados práticos > Footer.
+# ARQUITETURAS DE PÁGINA (escolha UMA coerente com o negócio; nunca repita a mesma para tudo)
+Cada seção deve ter FUNÇÃO e o site deve ter RITMO — alterne composições (full-width, split, editorial,
+imagem, statement grande, dark/light, grid assimétrica). Se uma sequência "hero+serviços+contato" ou
+"hero + 3 cards + texto + 3 cards + depoimento + CTA" resolver o problema, é porque NÃO é a resposta certa.
+- A — institucional com serviços (clínica, advogado, arquitetura): Nav > Hero com forte direção de arte (editorial/split/asymmetric/cinematic) > Prova/confiança (sobre com autoridade ou trust) > Serviços (com imagem/env) > Como funciona ou Diferenciais > FAQ leve > CTA em faixa > Contato > Footer editorial rico.
+- B — conversão de serviço/experiência (oficina, salão, estética, pet): Nav > Hero de serviço/experiência (imagem contextual de profissional atendendo) > Barra de confiança/benefícios > Serviços como experiência (cards assimétricos ou lista editorial) > Processo em etapas > Ambiente/galeria real > CTA forte (agendar/orçar) > Contato > Footer multi-coluna.
+- C — desejo/experiência (restaurante, café, padaria): Nav leve sobre hero > Hero cinematográfico/imersivo com comida > Sobre a casa (pequena narrativa) > Experiência/galeria (masonry de pratos e ambiente) > Diferenciais do ambiente > Menu/serviços resumidos > CTA de reserva/encomenda > Contato/localização > Footer dark.
+- D — autoridade editorial (advocacia, consultoria, arquitetura premium): Nav editorial > Hero editorial com tipografia e pouco ornamento > Manchete de posicionamento > Áreas de atuação em lista editorial (não cards iguais) > Sobre/princípios > CTA sóbrio > Contato > Footer editorial.
+- E — negócio local prático (varejo, serviços de bairro): Nav > Hero direto com dados práticos > Serviços > Vantagens > Contato + endereço/horários > Footer completo.
+Sempre: 1 hero marcante + 4 a 6 seções com função + CTA + footer que NÃO é "logo + links + copyright".
+
+# REGRAS ANTI-TEMPLATE
+- A mesma combinação (paleta + hero + estrutura + cards) NÃO pode se repetir entre segmentos diferentes.
+- Cores, tipografia e arquitetura devem nascer do conceito do negócio — não de um padrão fixo.
+- Card igual em 3+ seções = sinal de template: varie a apresentação por seção (um bloco pode ser lista editorial, outro imagem+texto, outro card).
+- Hero nunca é "título + parágrafo + botão centralizados" se outro formato servir melhor o segmento.
 
 # DIREÇÕES VISUAIS POR SEGMENTO (referência — adapte com critério)
 - CLÍNICA/SAÚDE: limpa, sofisticada, humana, confiável. Muito espaço negativo; tipografia elegante (ex.: serif/geometrica suave); hierarquia calma; CTA de agendamento/contato; sem cards infantis; paleta sóbria (azul-escuro, teal, neutros quentes). Archetype: service_focused ou editorial.
@@ -199,25 +222,23 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
 
   const design = asRecord(raw.design_system);
   const colors = asRecord(design.colors);
-  const defaultColors: Record<string, string> = {
-    primary: "#0f766e", on_primary: "#ffffff", secondary: "#134e4a",
-    accent: "#b45309", background: "#f8fafc", surface: "#ffffff",
-    on_surface: "#0f172a", muted: "#64748b", border: "#e2e8f0",
-  };
-  const cleanColors: Record<string, string> = {};
-  for (const key of Object.keys(defaultColors)) {
-    const v = s(colors[key]);
-    cleanColors[key] = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(v) ? v : defaultColors[key];
-  }
+  const cluster = getNicheDesign(segment).cluster;
+  const premiumPalette = premiumPaletteForCluster(cluster);
+  // Paleta de fallback: curada por cluster (identidade por segmento), nunca o
+  // "teal padrão" genérico que faz todo site parecer template.
+  const cleanColors = fillPremiumColors(cluster, colors);
   const typography = asRecord(design.typography);
   const cleanTypography = {
-    heading_font: normFont(typography.heading_font, "Plus Jakarta Sans"),
-    body_font: normFont(typography.body_font, "Inter"),
+    heading_font: normFont(typography.heading_font, premiumPalette.headingFont),
+    body_font: normFont(typography.body_font, premiumPalette.bodyFont),
     heading_weight: ["regular", "semibold", "bold"].includes(s(typography.heading_weight)) ? s(typography.heading_weight) : "bold",
     heading_scale: normToken(typography.heading_scale, ["normal", "large", "display"], "large"),
     body_size: s(typography.body_size) === "large" ? "large" : "normal",
   };
+  const clusterVisualStyle = premiumPalette.visualStyle;
+  const clusterMood = premiumPalette.mood;
 
+  const seenTypes = new Set<string>();
   const sections = asArray(raw.sections)
     .map((sec) => {
       const r = asRecord(sec);
@@ -229,7 +250,11 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
         order: typeof r.order === "number" ? r.order : undefined,
       };
     })
-    .filter((x) => x.type.length > 0);
+    .filter((x) => {
+      if (x.type.length === 0 || seenTypes.has(x.type)) return false;
+      seenTypes.add(x.type);
+      return true;
+    });
 
   const contentRaw = asRecord(raw.content);
   const content = ensureBaseContent(contentRaw);
@@ -245,11 +270,10 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
 
   const seo = asRecord(raw.seo);
 
-  const mood = normToken(design.layout_mood, ["minimal", "editorial", "bold", "organic", "premium", "playful"], "minimal");
+  const mood = normToken(design.layout_mood, ["minimal", "editorial", "bold", "organic", "premium", "playful"], clusterMood);
   const archetype = normToken(design.layout_archetype, ["editorial", "corporate", "minimal", "luxury", "bold", "service_focused", "local_business"], "service_focused");
   // Plano de componentes do cluster (7.1) — fornece fallbacks coerentes quando
   // o modelo omitir/errar a variante. A spec guarda a escolha rica.
-  const cluster = getNicheDesign(segment).cluster;
   const plan = componentPlanForCluster(cluster);
   const heroVariant = normToken(design.hero_variant, ["split", "centered", "editorial", "statement", "service_first", "asymmetric", "layered", "collage", "typography_led", "cinematic"], plan.hero);
   const cardStyle = normToken(design.card_style, ["flat", "bordered", "elevated", "editorial"], archetype === "editorial" || archetype === "luxury" ? "editorial" : "bordered");
@@ -281,7 +305,7 @@ return {
      design_system: {
        colors: cleanColors,
        typography: cleanTypography,
-       visual_style: s(design.visual_style) || "",
+       visual_style: s(design.visual_style) || clusterVisualStyle,
        layout_mood: mood,
        layout_archetype: archetype,
        hero_variant: heroVariant,

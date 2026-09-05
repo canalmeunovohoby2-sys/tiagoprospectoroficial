@@ -1,4 +1,4 @@
-// Firecrawl Search â€” usa o Provider Key Pool (8 chaves, failover sequencial).
+// Firecrawl Search — usa o Provider Key Pool (8 chaves, failover sequencial).
 import type { PoolExecuteResult } from "../_shared/provider-pool.ts";
 import { runWithKeyPool, type PoolFailure } from "../_shared/provider-pool.ts";
 

@@ -65,12 +65,43 @@ Sua função: devolver a ESPECIFICAÇÃO COMPLETA atualizada em JSON válido, to
   "seo": { "title": string, "description": string, "keywords": string[] }
 }
 
+# COMPORTAMENTO — CONVERSE E RACIOCINE ANTES DE AGIR
+Você não é apenas um "aplicador de mudanças". Você é um diretor de criação que
+CONVERSA com o cliente, RACIOCINA sobre o pedido e SÓ executa quando há um pedido
+real e claro de modificação. Siga este fluxo de raciocínio a cada mensagem:
+
+1. INTENÇÃO: classifique a mensagem do usuário em:
+   - "chat"      → pequeno falar/combinar: "ok", "obrigado", "perfeito", "e aí?", "bom dia".
+   - "question"  → pergunta ou pedido de opinião/avaliação: "o que acha?", "como ficou?", "preciso de mais alguma coisa?", "o que posso melhorar?".
+   - "clarify"   → pedido vago que não dá para executar sem mais informação: "deixa bonito", "melhora aí", "quero algo diferente", "deixa profissional". NÃO adivinhe: faça 1 pergunta objetiva.
+   - "edit"      → pedido concreto de modificação ("troca a cor do botão para azul", "adiciona seção de FAQ", "muda o título do hero para X").
+2. SÓ aplique mudanças em "spec" quando a intenção for "edit".
+3. Para "chat"/"question"/"clarify", devolva a spec EXATAMENTE IDÊNTICA à entrada e responda em "reply". Se for "clarify", termine o reply com UMA pergunta objetiva (ex.: "Quer que eu deixe mais escuro e sóbrio ou mais claro e acolhedor?").
+4. Seja um bom consultor: comente o que já está bom, explique trade-offs com naturalidade e nunca trate conversa casual como ordem de alteração.
+5. Prefira respostas curtas (1–3 frases) e em pt-BR, no tom de um especialista em sites que também entende o negócio do cliente.
+
+# CONVERSA CONTÍNUA (memória do projeto)
+- Esta conversa é contínua sobre ESTE projeto. O bloco "TRANSCRIPT DA CONVERSA" traz
+  trocas anteriores (Usuário/Assistente). Use-o para entender referências como
+  "agora", "essa seção", "a cor anterior", "aquela imagem", "a hero que gostei",
+  "a mesma coisa no CTA", "deixa como estava antes".
+- "MEMÓRIA DE DECISÕES" resume preferências já expressas (aprovado/rejeitado/
+  direção visual). PRESERVE decisões aprovadas: se o usuário aprovou a hero e
+  depois pede outra mudança, altere apenas o que foi pedido e mantenha a hero.
+- EDIÇÃO INCREMENTAL: aplique a MENOR mudança coerente com o pedido. Não reconstrua
+  o site inteiro a cada mensagem. Preserve conteúdo, imagens aprovadas, cores e
+  decisões anteriores salvas na spec atual. Se o pedido for amplo ("deixa tudo mais
+  premium"), aí sim pode reavaliar a composição completa.
+- NUNCA invente fatos (endereço, telefone, avaliações, números, certificações,
+  preços, serviços, depoimentos). Pode sugerir no reply o que precisaria ser real.
+
 # FORMATO DA RESPOSTA (OBRIGATÓRIO)
 Responda APENAS com JSON exatamente neste formato:
-{ "reply": "mensagem curta em pt-BR (máx. 3 frases) para o usuário, como um assistente de projetos: explique o que você decidiu e mudou; se nada precisar mudar, converse/oriente normalmente.",
-  "spec": { ...a SPEC COMPLETA (atualizada se houver mudança; IDÊNTICA à entrada se não houver mudança)... } }
-- Se a mensagem do usuário for apenas pergunta/orientação ("o que posso melhorar?", "como fica?", "explica"), devolva spec idêntica e use "reply" para responder.
-- Se houver mudança, aplique tudo o que decidiu dentro de "spec" e resuma em "reply".
+{ "mode": "edit|question|clarify|chat",
+  "analysis": "raciocínio curto interno (1-2 frases): o que o usuário pediu e o que você decidiu. NÃO aparece para o cliente.",
+  "reply": "mensagem curta em pt-BR (máx. 3 frases) para o usuário, como um assistente de projetos: explique o que decidiu/mudou, ou converse/oriente se nada mudar.",
+  "spec": { ...a SPEC COMPLETA (atualizada se mode=edit; IDÊNTICA à entrada caso contrário)... } }
+- Se mode != "edit", "spec" DEVE ser byte-a-byte idêntica à entrada (deep copy).
 - Nunca omita chaves; preserve o restante da spec intacto.`;
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -234,13 +265,19 @@ Deno.serve(async (req) => {
       context.state && `Estado: ${context.state}`,
     ].filter(Boolean).join("\n");
 
-    // Histórico recente da conversa (opcional) — ajuda a entender referências
-    // como "agora", "essa seção", "a cor anterior". NUNCA inclui dados factuais.
+    // Transcript da conversa (intercalado Usuário/Assistente, das últimas trocas)
+    // + memória curta de decisões/preferências do projeto.
     const conversation = Array.isArray(body?.conversation)
-      ? (body.conversation as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(-6).map((x) => x.slice(0, 1200))
+      ? (body.conversation as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(-14).map((x) => x.slice(0, 1200))
       : [];
+    const memory = Array.isArray(body?.memory)
+      ? (body.memory as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(-6).map((x) => x.slice(0, 400))
+      : [];
+    const memoryBlock = memory.length > 0
+      ? `\nMEMÓRIA DE DECISÕES DO PROJETO (preferências que o usuário já expressou; preserve ao editar):\n- ${memory.join("\n- ")}\n`
+      : "";
     const conversationBlock = conversation.length > 0
-      ? `\nÚLTIMAS INSTRUÇÕES DA CONVERSA (referências como "agora", "essa seção", "antes" se aplicam a elas):\n- ${conversation.join("\n- ")}\n`
+      ? `\nTRANSCRIPT DA CONVERSA (referências como "agora", "essa seção", "antes", "aquela imagem" se aplicam a estas trocas):\n${conversation.join("\n")}\n`
       : "";
 
     // Se o pedido envolver imagens, busca assets reais do nicho (Pexels).
@@ -255,7 +292,7 @@ Deno.serve(async (req) => {
 
     const userPrompt = `CONTEXTO DO PROJETO:
 ${ctxLines || "(sem contexto adicional)"}
-${conversationBlock}${assetBlock}
+${conversationBlock}${memoryBlock}${assetBlock}
 INSTRUÇÃO DO USUÁRIO:
 "${instruction}"
 
@@ -294,8 +331,17 @@ Devolva a spec COMPLETA atualizada conforme a instrução.`;
       );
     }
     const reply = typeof parsedOuter.reply === "string" ? parsedOuter.reply.slice(0, 1200) : "";
+    const mode = ["edit", "question", "clarify", "chat"].includes(parsedOuter.mode as string) ? parsedOuter.mode as string : "edit";
     // Wrapper { reply, spec } — caso o modelo retorne a spec direto (compat), usa o próprio objeto.
     const specPayload = parsedOuter.spec && isObj(parsedOuter.spec) ? parsedOuter.spec : parsedOuter;
+
+    // Mensagens de conversa/consulta NÃO alteram nada (mode != edit).
+    if (mode !== "edit") {
+      return new Response(
+        JSON.stringify({ spec: original, model: usedModel, status: "ok", changed: false, reply, mode }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     const merged = deepMerge(original, specPayload) as Record<string, unknown>;
     const protectedSpec = protectFactual(original, merged, instruction);
@@ -309,7 +355,7 @@ Devolva a spec COMPLETA atualizada conforme a instrução.`;
 
     const changed = JSON.stringify(spec) !== JSON.stringify(original);
     return new Response(
-      JSON.stringify({ spec, model: usedModel, status: "ok", changed, reply }),
+      JSON.stringify({ spec, model: usedModel, status: "ok", changed, reply, mode }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {

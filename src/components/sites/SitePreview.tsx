@@ -247,7 +247,16 @@ export function SitePreview({ spec: raw, bare = false }: SitePreviewProps) {
         .sp-gallery-zoom .sp-pic:hover img{transform:scale(1.06)}
         .sp-stagger > *{opacity:0;transform:translateY(10px);animation:sp-rise .5s ease both;animation-delay:calc(var(--i,0)*60ms)}
         @keyframes sp-rise{to{opacity:1;transform:none}}
-        @media (prefers-reduced-motion: reduce){.sp-root section[id]{opacity:1 !important;transform:none !important;transition:none}.sp-cta-arrow{transition:none}.sp-gallery-zoom .sp-pic img{transition:none}.sp-stagger > *{animation:none;opacity:1;transform:none}}
+        .sp-root .sp-hero-orb{position:absolute;border-radius:50%;filter:blur(70px);pointer-events:none;opacity:.55;z-index:0}
+        .sp-root .sp-hero-glow{position:relative;isolation:isolate}
+        .sp-root .sp-btn-shine{position:relative;overflow:hidden}
+        .sp-root .sp-btn-shine::after{content:"";position:absolute;top:0;left:-70%;width:50%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-18deg);transition:left .55s ease}
+        .sp-root .sp-btn-shine:hover::after{left:120%}
+        .sp-card-tilt{transition:transform .35s cubic-bezier(.2,.7,.2,1),box-shadow .35s ease,border-color .3s ease}
+        .sp-card-tilt:hover{transform:translateY(-6px)}
+        .sp-gradient-text{background:linear-gradient(100deg,var(--sp-primary),var(--sp-accent));-webkit-background-clip:text;background-clip:text;color:transparent}
+        .sp-hairline{background:linear-gradient(90deg,var(--sp-primary),transparent)}
+        @media (prefers-reduced-motion: reduce){.sp-root section[id]{opacity:1 !important;transform:none !important;transition:none}.sp-cta-arrow{transition:none}.sp-gallery-zoom .sp-pic img{transition:none}.sp-stagger > *{animation:none;opacity:1;transform:none}.sp-root .sp-btn-shine::after{display:none}}
       `;
       document.head.appendChild(style);
     }
@@ -329,7 +338,7 @@ export function SitePreview({ spec: raw, bare = false }: SitePreviewProps) {
         href={href}
         target={href.startsWith("http") && !href.startsWith("#") ? "_blank" : undefined}
         rel={href.startsWith("http") && !href.startsWith("#") ? "noreferrer" : undefined}
-        className="inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-[0.95rem] font-semibold transition-transform hover:scale-[1.02]"
+        className={`inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-[0.95rem] font-semibold transition-transform hover:scale-[1.02] ${kind === "primary" && buttonStyle !== "soft" ? "sp-btn-shine" : ""}`}
         style={{ backgroundColor: bg, color: fg, border: bd, boxShadow: "none" }}
       >
         {label}
@@ -460,8 +469,14 @@ export function SitePreview({ spec: raw, bare = false }: SitePreviewProps) {
 
     if (heroVariant === "split" || heroVariant === "service_first") {
       return (
-        <section id="hero" style={{ backgroundColor: "var(--sp-background)", color: "var(--sp-on-surface)" }}>
-          <div className="mx-auto grid items-center gap-10 px-6 py-16 sm:py-24 lg:grid-cols-[1.1fr_0.9fr]" style={{ maxWidth: "var(--sp-maxw)" }}>
+        <section id="hero" className="sp-hero-glow relative overflow-hidden" style={{ backgroundColor: "var(--sp-background)", color: "var(--sp-on-surface)" }}>
+          {decorative !== "none" && (
+            <>
+              <div aria-hidden className="sp-hero-orb" style={{ width: 360, height: 360, left: -90, top: -110, background: "radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--sp-primary) 30%, transparent), transparent 70%)" }} />
+              <div aria-hidden className="sp-hero-orb" style={{ width: 300, height: 300, right: -80, bottom: -90, background: "radial-gradient(circle at 60% 40%, color-mix(in srgb, var(--sp-accent) 24%, transparent), transparent 70%)" }} />
+            </>
+          )}
+          <div className="relative mx-auto grid items-center gap-10 px-6 py-16 sm:py-24 lg:grid-cols-[1.1fr_0.9fr]" style={{ maxWidth: "var(--sp-maxw)" }}>
             <div className="space-y-6">
               <div>{eyebrow(segmentLabel)}</div>
               <h1 className="font-bold leading-[1.05]" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "var(--sp-heading-size)", letterSpacing: "var(--sp-tracking)" }}>
@@ -474,7 +489,7 @@ export function SitePreview({ spec: raw, bare = false }: SitePreviewProps) {
                 {str(hero.secondary_cta) && btn(str(hero.secondary_cta), "#contato", "ghost")}
               </div>
             </div>
-            <div>
+            <div className="relative">
               {heroImg ? (
                 <div className="space-y-3">
                   <Picture src={heroImg.url} alt={heroImg.alt} ratio="4 / 3" eager className="rounded-[calc(var(--sp-radius)*1.2)] shadow-[0_30px_70px_-30px_rgba(16,24,40,.35)]" />
@@ -743,8 +758,14 @@ export function SitePreview({ spec: raw, bare = false }: SitePreviewProps) {
     const ctaT = oneOf(str(ds.cta_treatment), ["primary_section", "band", "inline"] as const, "band");
     const solid = buttonStyle !== "outline";
     return (
-      <section id="cta" style={{ backgroundColor: ctaT === "band" ? "var(--sp-secondary)" : "var(--sp-background)", color: ctaT === "band" ? "var(--sp-on-primary)" : "var(--sp-on-surface)" }}>
-        <div className="mx-auto px-6 py-[var(--sp-py-section)]" style={{ maxWidth: "var(--sp-maxw)" }}>
+      <section id="cta" className={ctaT === "band" ? "relative overflow-hidden" : ""} style={{ backgroundColor: ctaT === "band" ? "var(--sp-secondary)" : "var(--sp-background)", color: ctaT === "band" ? "var(--sp-on-primary)" : "var(--sp-on-surface)", ...(ctaT === "band" ? { backgroundImage: "linear-gradient(125deg, var(--sp-secondary) 0%, color-mix(in srgb, var(--sp-primary) 38%, var(--sp-secondary)) 100%)" } : {}) }}>
+        {ctaT === "band" && (
+          <>
+            <div aria-hidden className="sp-hero-orb" style={{ width: 420, height: 420, right: -140, top: -160, background: "radial-gradient(circle, color-mix(in srgb, var(--sp-accent) 30%, transparent), transparent 70%)" }} />
+            <div aria-hidden className="sp-hero-orb" style={{ width: 300, height: 300, left: -110, bottom: -140, background: "radial-gradient(circle, color-mix(in srgb, var(--sp-on-primary) 14%, transparent), transparent 70%)" }} />
+          </>
+        )}
+        <div className="mx-auto px-6 py-[var(--sp-py-section)]" style={{ maxWidth: "var(--sp-maxw)", position: "relative" }}>
           <div className={`${ctaInline ? "lg:flex lg:items-end lg:justify-between lg:gap-10" : "text-center"}`}>
             <div className={`space-y-4 ${ctaInline ? "" : "mx-auto max-w-2xl"}`}>
               <h2 className="font-bold leading-tight" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "var(--sp-heading-size)", letterSpacing: "var(--sp-tracking)", color: ctaT === "band" ? "var(--sp-on-primary)" : undefined }}>

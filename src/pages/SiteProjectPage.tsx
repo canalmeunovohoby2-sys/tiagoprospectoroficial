@@ -19,25 +19,26 @@ import { SiteVersionsDialog } from "@/components/sites/editor/SiteVersionsDialog
 import { supabase } from "@/integrations/supabase/client";
 import { exportProjectZip, saveBlob, fetchImageAsDataUrl } from "@/lib/siteDownload";
 import { buildCommercialPdf, pdfFileName } from "@/lib/sitePdf";
+import { buildConversationContext, buildDesignMemory } from "@/lib/aiEditContext";
 
 export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
-  image?: string; // dataURL exibido apenas na sessÃ£o (sem storage nesta fase)
+  image?: string; // dataURL exibido apenas na sessão (sem storage nesta fase)
   fileLabel?: string;
 }
 
 function friendlyAiError(e: unknown): string {
-  const raw = e instanceof Error ? e.message : "Erro ao aplicar alteraÃ§Ã£o.";
+  const raw = e instanceof Error ? e.message : "Erro ao aplicar alteração.";
   const lower = raw.toLowerCase();
   if (/non-2xx|edge function returned|http 5\d\d|503|529/.test(lower)) {
-    return "O serviÃ§o de IA estÃ¡ temporariamente ocupado. Nada foi alterado â€” tente novamente em instantes.";
+    return "O serviço de IA está temporariamente ocupado. Nada foi alterado — tente novamente em instantes.";
   }
   if (/429|quota|rate_limit|limite de uso/.test(lower)) {
-    return "Atingimos o limite temporÃ¡rio de uso da IA. Nada foi alterado â€” tente novamente em alguns instantes.";
+    return "Atingimos o limite temporário de uso da IA. Nada foi alterado — tente novamente em alguns instantes.";
   }
   if (/timeout|tempo limite|took too long/.test(lower)) {
-    return "A IA demorou demais para responder. Nada foi alterado â€” tente novamente.";
+    return "A IA demorou demais para responder. Nada foi alterado — tente novamente.";
   }
   return raw;
 }
@@ -46,17 +47,17 @@ function describeChanges(before: SiteSpec | null, after: SiteSpec | null): strin
   if (!before || !after) return "";
   const areas: Array<[keyof SiteSpec, string]> = [
     ["design_system", "Visual (cores/tipografia)"],
-    ["content", "ConteÃºdo/textos"],
-    ["sections", "SeÃ§Ãµes"],
-    ["calls_to_action", "BotÃµes/CTAs"],
-    ["navigation", "NavegaÃ§Ã£o"],
+    ["content", "Conteúdo/textos"],
+    ["sections", "Seções"],
+    ["calls_to_action", "Botões/CTAs"],
+    ["navigation", "Navegação"],
     ["seo", "SEO"],
   ];
   const changed = areas.filter(([k]) => JSON.stringify(before[k]) !== JSON.stringify(after[k])).map(([, label]) => label);
   return changed.length > 0 ? changed.slice(0, 4).join(", ") + "." : "ajustes sutis aplicados.";
 }
 
-// Redimensiona e converte imagem para dataURL (mantÃ©m anexo leve, apenas na sessÃ£o).
+// Redimensiona e converte imagem para dataURL (mantém anexo leve, apenas na sessão).
 function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith("image/")) {
@@ -75,12 +76,12 @@ function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> 
       canvas.width = Math.round(img.width * scale);
       canvas.height = Math.round(img.height * scale);
       const ctx = canvas.getContext("2d");
-      if (!ctx) { URL.revokeObjectURL(url); reject(new Error("Canvas indisponÃ­vel")); return; }
+      if (!ctx) { URL.revokeObjectURL(url); reject(new Error("Canvas indisponível")); return; }
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
       resolve({ dataUrl: canvas.toDataURL("image/jpeg", 0.82), label: file.name });
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Imagem invÃ¡lida")); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Imagem inválida")); };
     img.src = url;
   });
 }
@@ -229,14 +230,14 @@ export default function SiteProjectPage() {
   }, [dirty]);
 
   // Chat-first: ao abrir um projeto com site, o construtor conversacional
-  // (chat + preview) jÃ¡ entra automaticamente â€” sem precisar clicar em "Editar".
+  // (chat + preview) já entra automaticamente — sem precisar clicar em "Editar".
   const hasSpecNow = !!project?.spec && Object.keys(project.spec as object).length > 0;
   useEffect(() => {
     if (hasSpecNow && !editMode) startEditing();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id, hasSpecNow]);
 
-  // Carrega a conversa persistida do projeto (a IA entende o histÃ³rico para sempre).
+  // Carrega a conversa persistida do projeto (a IA entende o histórico para sempre).
   useEffect(() => {
     if (!project?.id || !user) return;
     let active = true;
@@ -279,7 +280,7 @@ export default function SiteProjectPage() {
       try {
         await supabase.from("site_projects").update({ status: "error" }).eq("id", project.id);
         await load();
-      } catch { /* mantÃ©m estado atual */ }
+      } catch { /* mantém estado atual */ }
     } finally {
       setGenerating(false);
     }
@@ -301,10 +302,16 @@ export default function SiteProjectPage() {
   }
 
   const chatConversation = () =>
-    aiMessages
-      .filter((m) => m.role === "user")
-      .slice(-6)
-      .map((m) => (m.image || m.fileLabel ? `${m.text} (anexo: ${m.fileLabel ?? "imagem de referÃªncia"})` : m.text));
+    buildConversationContext(
+      aiMessages.map((m) => ({ role: m.role, text: m.text })),
+      { maxTurns: 12, maxCharsPerTurn: 700 },
+    );
+
+  const designMemory = () =>
+    buildDesignMemory(
+      aiMessages.map((m) => ({ role: m.role, text: m.text })),
+      { max: 5, maxChars: 260 },
+    );
 
   async function runAiInstruction(instruction: string, attachment?: { dataUrl: string; label: string }) {
     if (!project) return;
@@ -320,10 +327,17 @@ export default function SiteProjectPage() {
         city: project.city,
         state: project.state,
       };
-      const res = await editSiteWithAI(draftSpec, instruction, ctx, chatConversation());
+      const res = await editSiteWithAI(draftSpec, instruction, ctx, chatConversation(), designMemory());
 
-      if (!res.changed) {
-        const msg = res.reply?.trim() || "Entendi! Por enquanto nÃ£o apliquei mudanÃ§as no site â€” continue me pedindo o que quer ajustar.";
+      const mode = res.mode ?? "edit";
+      if (!res.changed || mode === "question" || mode === "clarify" || mode === "chat") {
+        // Conversa, dúvida ou pedido ambíguo: a IA responde sem alterar a spec.
+        let msg = res.reply?.trim();
+        if (!msg) {
+          msg = mode === "clarify"
+            ? "Entendi! Para eu ajustar com precisão, me diga o que você quer mudar (ex.: cor, texto, seção, layout)."
+            : "Entendi! Por enquanto não apliquei mudanças no site — continue me pedindo o que quer ajustar.";
+        }
         setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
         appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }]).catch(() => {});
         return;
@@ -331,7 +345,7 @@ export default function SiteProjectPage() {
 
       const protectedSpec = applyAiProtections(draftSpec, res.spec, instruction);
       if (specsEqual(draftSpec, protectedSpec)) {
-        const msg = res.reply?.trim() || "NÃ£o alterei nada relevante (dados factuais protegidos foram mantidos).";
+        const msg = res.reply?.trim() || "Não alterei nada relevante (dados factuais protegidos foram mantidos).";
         setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
         appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }]).catch(() => {});
         return;
@@ -341,7 +355,7 @@ export default function SiteProjectPage() {
       setDraftSpec(protectedSpec);
       setDirty(true);
       const summary = describeChanges(snapshot, protectedSpec);
-      const msg = [res.reply?.trim(), `AlteraÃ§Ã£o aplicada: ${summary} (ainda nÃ£o salva).`].filter(Boolean).join(" ");
+      const msg = [res.reply?.trim(), `Alteração aplicada: ${summary} (ainda não salva).`].filter(Boolean).join(" ");
       setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
       appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }]).catch(() => {});
     } catch (e) {
@@ -361,11 +375,11 @@ export default function SiteProjectPage() {
     setAiError(null);
     const savedSpec = project ? normalizeSpec(project.spec as SiteSpec | Record<string, unknown> | null) : null;
     setDirty(!specsEqual(prev, savedSpec));
-    setAiMessages((m) => [...m, { role: "assistant", text: "Desfeita a Ãºltima alteraÃ§Ã£o da IA." }]);
+    setAiMessages((m) => [...m, { role: "assistant", text: "Desfeita a última alteração da IA." }]);
   }
 
   function exitEditing() {
-    if (dirty && !window.confirm("HÃ¡ alteraÃ§Ãµes nÃ£o salvas. Descartar e sair do editor?")) return;
+    if (dirty && !window.confirm("Há alterações não salvas. Descartar e sair do editor?")) return;
     setEditMode(false);
     setDirty(false);
     setAiMessages([]);
@@ -401,7 +415,7 @@ export default function SiteProjectPage() {
   if (loading) {
     return (
       <div className="p-6 lg:p-8 max-w-7xl mx-auto flex items-center justify-center py-24 text-muted-foreground gap-2">
-        <Loader2 className="h-5 w-5 animate-spin" /> Carregando projetoâ€¦
+        <Loader2 className="h-5 w-5 animate-spin" /> Carregando projeto…
       </div>
     );
   }
@@ -410,7 +424,7 @@ export default function SiteProjectPage() {
     return (
       <div className="p-6 lg:p-8 max-w-7xl mx-auto">
         <Card className="p-12 text-center">
-          <p className="text-muted-foreground">Projeto nÃ£o encontrado.</p>
+          <p className="text-muted-foreground">Projeto não encontrado.</p>
           <Button className="mt-4" variant="outline" onClick={() => navigate("/sites")}>
             <ArrowLeft className="h-4 w-4 mr-1" /> Voltar para Sites
           </Button>
@@ -444,7 +458,7 @@ export default function SiteProjectPage() {
             <p className="text-sm text-muted-foreground mt-1">
               {project.company_name || project.name}
               {[project.segment, project.city && project.state ? `${project.city}/${project.state}` : project.city].filter(Boolean).length > 0 && (
-                <> Â· {[project.segment, project.city && project.state ? `${project.city}/${project.state}` : project.city].filter(Boolean).join(" Â· ")}</>
+                <> · {[project.segment, project.city && project.state ? `${project.city}/${project.state}` : project.city].filter(Boolean).join(" · ")}</>
               )}
             </p>
           </div>
@@ -459,7 +473,7 @@ export default function SiteProjectPage() {
               <>
                 <span className={`inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border ${dirty ? "border-amber-400/50 text-amber-500 bg-amber-500/10" : "border-border/60 text-muted-foreground"}`}>
                   <CircleDot className={`h-3 w-3 ${dirty ? "animate-pulse" : ""}`} />
-                  {dirty ? "AlteraÃ§Ãµes nÃ£o salvas" : "Tudo salvo"}
+                  {dirty ? "Alterações não salvas" : "Tudo salvo"}
                 </span>
                 <Button variant="outline" size="sm" onClick={exitEditing} disabled={saving}>
                   <X className="h-3.5 w-3.5 mr-1" /> Sair do editor
@@ -541,9 +555,9 @@ export default function SiteProjectPage() {
         <Card className="p-4 border-amber-500/40 bg-amber-500/5 flex items-start gap-3">
           <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
           <div className="text-sm">
-            <p className="font-semibold text-amber-600">A Ãºltima geraÃ§Ã£o falhou.</p>
+            <p className="font-semibold text-amber-600">A última geração falhou.</p>
             <p className="text-muted-foreground text-xs mt-1">
-              {genError ? genError : "Falha temporÃ¡ria do provedor de IA ou tempo de resposta excedido. Clique em â€œGerar site com IAâ€ para tentar novamente."}
+              {genError ? genError : "Falha temporária do provedor de IA ou tempo de resposta excedido. Clique em “Gerar site com IA” para tentar novamente."}
             </p>
           </div>
         </Card>
@@ -556,12 +570,12 @@ export default function SiteProjectPage() {
           </div>
           <h2 className="font-display font-semibold text-lg">Projeto em rascunho</h2>
           <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
-            Clique em <strong>Gerar site com IA</strong> para analisar o negÃ³cio e criar a especificaÃ§Ã£o estruturada (design, conteÃºdo, seÃ§Ãµes e SEO) deste projeto.
+            Clique em <strong>Gerar site com IA</strong> para analisar o negócio e criar a especificação estruturada (design, conteúdo, seções e SEO) deste projeto.
           </p>
         </Card>
       ) : editMode ? (
         <div className="grid gap-5 lg:h-[calc(100vh-150px)] lg:grid-cols-[420px_minmax(0,1fr)] lg:overflow-hidden">
-          <div className="lg:h-full">
+          <div className="min-h-0 lg:h-full">
             <SiteChat
               messages={aiMessages}
               running={aiRunning}
@@ -577,7 +591,7 @@ export default function SiteProjectPage() {
               <h2 className="font-display font-semibold flex items-center gap-2">
                 <Eye className="h-4 w-4 text-primary" /> Preview ao vivo
               </h2>
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">O que vocÃª conversar aparece aqui â€” sÃ³ salva quando vocÃª clicar em Salvar</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">O que você conversar aparece aqui — só salva quando você clicar em Salvar</span>
             </div>
             <SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />
           </div>
@@ -603,22 +617,22 @@ export default function SiteProjectPage() {
                 <div className="rounded-lg border border-border/60 p-3 flex items-center gap-2">
                   <Type className="h-4 w-4 text-primary shrink-0" />
                   <div>
-                    <p className="text-[10px] text-muted-foreground uppercase">TÃ­tulos</p>
-                    <p className="font-medium">{spec.design_system?.typography?.heading_font || "â€”"}</p>
+                    <p className="text-[10px] text-muted-foreground uppercase">Títulos</p>
+                    <p className="font-medium">{spec.design_system?.typography?.heading_font || "—"}</p>
                   </div>
                 </div>
                 <div className="rounded-lg border border-border/60 p-3 flex items-center gap-2">
                   <Type className="h-4 w-4 text-primary shrink-0" />
                   <div>
                     <p className="text-[10px] text-muted-foreground uppercase">Texto</p>
-                    <p className="font-medium">{spec.design_system?.typography?.body_font || "â€”"}</p>
+                    <p className="font-medium">{spec.design_system?.typography?.body_font || "—"}</p>
                   </div>
                 </div>
               </div>
               {(spec.design_system?.visual_style || spec.design_system?.layout_mood) && (
                 <p className="text-xs text-muted-foreground">
                   <span className="text-foreground font-medium">Estilo:</span> {spec.design_system?.visual_style}
-                  {spec.design_system?.layout_mood ? ` Â· mood ${spec.design_system.layout_mood}` : ""}
+                  {spec.design_system?.layout_mood ? ` · mood ${spec.design_system.layout_mood}` : ""}
                 </p>
               )}
             </Card>
@@ -629,14 +643,14 @@ export default function SiteProjectPage() {
                 <h2 className="font-display font-semibold">Estrutura</h2>
               </div>
               <div className="text-xs space-y-1.5 text-muted-foreground">
-                <p><span className="text-foreground font-medium">{sections.length}</span> seÃ§Ãµes Â· <span className="text-foreground font-medium">{nav.length}</span> itens de navegaÃ§Ã£o Â· <span className="text-foreground font-medium">{safeArr(contentBlock(spec, "services").items).length}</span> serviÃ§os sugeridos</p>
+                <p><span className="text-foreground font-medium">{sections.length}</span> seções · <span className="text-foreground font-medium">{nav.length}</span> itens de navegação · <span className="text-foreground font-medium">{safeArr(contentBlock(spec, "services").items).length}</span> serviços sugeridos</p>
                 <p className="flex flex-wrap gap-1 pt-1">
                   {sections.slice(0, 10).map((s) => (
                     <Badge key={s.id} variant="outline" className="text-[10px]">{s.type}</Badge>
                   ))}
                 </p>
                 {ctas.length > 0 && (
-                  <p className="pt-1"><span className="text-foreground font-medium">CTAs:</span> {ctas.map((c) => `${c.label} (${c.type})`).join(" Â· ")}</p>
+                  <p className="pt-1"><span className="text-foreground font-medium">CTAs:</span> {ctas.map((c) => `${c.label} (${c.type})`).join(" · ")}</p>
                 )}
                 {spec.seo?.title && (
                   <p className="pt-1"><span className="text-foreground font-medium">SEO:</span> {spec.seo.title}</p>
@@ -648,7 +662,7 @@ export default function SiteProjectPage() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <h2 className="font-display font-semibold">Preview</h2>
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">ConteÃºdo editÃ¡vel â€” publicaÃ§Ã£o virÃ¡ em fases futuras</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Conteúdo editável — publicação virá em fases futuras</span>
             </div>
             <SitePreview spec={project.spec as SiteSpec | Record<string, unknown> | null} />
           </div>

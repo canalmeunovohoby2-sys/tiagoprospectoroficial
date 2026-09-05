@@ -154,21 +154,23 @@ export async function saveGeneratedSite(
 }
 
 // Invoca a Edge Function edit-site com a spec atual e uma instrução livre.
+export type AiEditMode = "edit" | "question" | "clarify" | "chat";
 export async function editSiteWithAI(
   spec: SiteSpec,
   instruction: string,
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null },
   conversation?: string[],
-): Promise<{ spec: SiteSpec; model: string; changed: boolean; reply?: string }> {
-  const { data, error } = await supabase.functions.invoke<{ spec: SiteSpec; model: string; changed?: boolean; reply?: string }>(
+  memory?: string[],
+): Promise<{ spec: SiteSpec; model: string; changed: boolean; reply?: string; mode?: AiEditMode }> {
+  const { data, error } = await supabase.functions.invoke<{ spec: SiteSpec; model: string; changed?: boolean; reply?: string; mode?: AiEditMode }>(
     "edit-site",
-    { body: { spec, instruction, context, conversation: conversation ?? [] } },
+    { body: { spec, instruction, context, conversation: conversation ?? [], memory: memory ?? [] } },
   );
   if (error) throw error;
   if (!data?.spec || typeof data.spec !== "object") {
     throw new Error("A IA não retornou uma especificação válida.");
   }
-  return { spec: data.spec, model: data.model ?? "gemini-2.5-flash", changed: data.changed !== false, reply: data.reply };
+  return { spec: data.spec, model: data.model ?? "gemini-2.5-flash", changed: data.changed !== false, reply: data.reply, mode: data.mode };
 }
 
 export interface PersistedChatMsg {

@@ -69,6 +69,8 @@ console.log(`[smoke] model=${data.model}`);
   console.log(`[smoke] motion=${JSON.stringify(motion)}`);
   console.log(`[smoke] design_system_keys=${JSON.stringify(Object.keys(ds))}`);
   console.log(`[smoke] header_variant=${ds.header_variant} footer=${ds.footer_style} gallery=${ds.gallery_variant} button=${ds.button_style}`);
+  console.log(`[smoke] colors=${JSON.stringify(ds.colors)}`);
+  console.log(`[smoke] fonts=${JSON.stringify(ds.typography)}`);
   console.log(`[smoke] sections=${JSON.stringify((spec?.sections as unknown[] ?? []).map((s) => (s as Record<string, unknown>).type))}`);
 console.log(`[smoke] hero_image=${JSON.stringify(((spec?.content as Record<string, unknown> ?? {}).hero as Record<string, unknown> ?? {}).image)}`);
 console.log(`[smoke] gallery_items=${JSON.stringify((((spec?.content as Record<string, unknown> ?? {}).gallery as Record<string, unknown> ?? {}).items as unknown[] ?? []).length)}`);

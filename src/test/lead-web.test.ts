@@ -10,11 +10,11 @@ const TAVILY_ITEMS = [
   { title: "Cobasi Loja Guarulhos", url: "https://www.cobasi.com.br/lojas/cobasi-guarulhos", description: "loja" },
 ];
 const FIRECRAWL_ITEMS = [
-  { title: "Pet Care Banho e Tosa | Contato", url: "https://petcareguarulhos.com.br/contato", description: "telefone e endereÃ§o em Guarulhos" },
+  { title: "Pet Care Banho e Tosa | Contato", url: "https://petcareguarulhos.com.br/contato", description: "telefone e endereço em Guarulhos" },
 ];
 
 describe("lead-web (Tavily + Firecrawl)", () => {
-  it("normalizaÃ§Ã£o Tavily/Firecrawl: bloqueia agregadores e valida URL", () => {
+  it("normalização Tavily/Firecrawl: bloqueia agregadores e valida URL", () => {
     const items = normalizeItemList([...TAVILY_ITEMS], "tavily");
     const urls = items.map((i) => i.url);
     expect(urls).toContain("https://petcareguarulhos.com.br");
@@ -30,18 +30,18 @@ describe("lead-web (Tavily + Firecrawl)", () => {
     expect(match?.evidence).toBeTruthy();
   });
 
-  it("matchLeadWebsite nÃ£o retorna site quando nÃ£o hÃ¡ sinal (sem invenÃ§Ã£o)", () => {
-    const items = normalizeItemList([{ title: "NotÃ­cias da cidade", url: "https://jornal.com.br/guarulhos", description: "notÃ­cias" }], "tavily");
+  it("matchLeadWebsite não retorna site quando não há sinal (sem invenção)", () => {
+    const items = normalizeItemList([{ title: "Notícias da cidade", url: "https://jornal.com.br/guarulhos", description: "notícias" }], "tavily");
     const match = matchLeadWebsite("Pet Care Banho e Tosa", items);
     expect(match).toBeNull();
   });
 
-  it("validaÃ§Ã£o geogrÃ¡fica textual", () => {
+  it("validação geográfica textual", () => {
     expect(textMentionsGeo("Atendemos em Guarulhos, SP. Telefone...", "Guarulhos", "SP")).toBe(true);
     expect(textMentionsGeo("Atendemos em todo o Brasil", "Suzano", "SP")).toBe(false);
   });
 
-  it("extraÃ§Ã£o de contatos sÃ³ aceita quando a pÃ¡gina confirma cidade/estado", () => {
+  it("extração de contatos só aceita quando a página confirma cidade/estado", () => {
     const pageOk = "Localizada em Guarulhos/SP. Telefone (11) 912345678, WhatsApp (11) 912345678, instagram.com/petcareguarulhos";
     const cOk = extractContactsFromMarkdown(pageOk, "Guarulhos", "SP");
     expect(cOk.geoConfirmed).toBe(true);
@@ -65,14 +65,14 @@ describe("lead-web (Tavily + Firecrawl)", () => {
     expect(web.firecrawl.length).toBeGreaterThan(0);
   });
 
-  it("fallback: ambas falham sem lanÃ§ar", async () => {
+  it("fallback: ambas falham sem lançar", async () => {
     const call = vi.fn(async () => ({ ok: false }));
     const web = await runWebSources({ query: "x", call });
     expect(web.tavily.length).toBe(0);
     expect(web.firecrawl.length).toBe(0);
   });
 
-  it("enriquecimento OSM + web: atribui site e mantÃ©m lead (sem criar duplicado)", async () => {
+  it("enriquecimento OSM + web: atribui site e mantém lead (sem criar duplicado)", async () => {
     const leads = [{ name: "Pet Care Banho e Tosa", city: "Guarulhos", state: "SP", phone: null, website: null, has_website: false, score_reasons: ["Fonte: OSM"] }];
     const web = { tavily: normalizeItemList(TAVILY_ITEMS, "tavily"), firecrawl: normalizeItemList(FIRECRAWL_ITEMS, "firecrawl") };
     const scrape = vi.fn(async () => "Pet Care Banho e Tosa, Guarulhos/SP, tel (11) 912345678");
@@ -85,21 +85,21 @@ describe("lead-web (Tavily + Firecrawl)", () => {
     expect(scrape).toHaveBeenCalledTimes(1);
   });
 
-  it("sem itens web â†’ leads inalterados (nenhuma invenÃ§Ã£o)", async () => {
+  it("sem itens web â†’ leads inalterados (nenhuma invenção)", async () => {
     const leads = [{ name: "X", city: "Suzano", state: "SP", website: null, has_website: false }];
     const { leads: out, summary } = await enrichLeadsWithWeb({ leads: [...leads], web: { tavily: [], firecrawl: [] }, city: "Suzano", state: "SP" });
     expect(out[0].website).toBeNull();
     expect(summary.websitesEnriched).toBe(0);
   });
 
-  it("ordem/quantidade preservada (ranking nÃ£o destruÃ­do)", async () => {
+  it("ordem/quantidade preservada (ranking não destruído)", async () => {
     const leads = [
       { name: "Um", city: "Suzano", state: "SP", website: null },
       { name: "Dois", city: "Suzano", state: "SP", website: null },
-      { name: "TrÃªs", city: "Suzano", state: "SP", website: null },
+      { name: "Três", city: "Suzano", state: "SP", website: null },
     ];
     const web = { tavily: normalizeItemList(TAVILY_ITEMS, "tavily"), firecrawl: [] };
     const { leads: out } = await enrichLeadsWithWeb({ leads: [...leads], web, city: "Suzano", state: "SP" });
-    expect(out.map((l) => l.name)).toEqual(["Um", "Dois", "TrÃªs"]);
+    expect(out.map((l) => l.name)).toEqual(["Um", "Dois", "Três"]);
   });
 });

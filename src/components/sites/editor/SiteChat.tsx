@@ -1,5 +1,5 @@
-import { useState, useRef, type ChangeEvent, type ReactNode } from "react";
-import { Sparkles, RotateCcw, Loader2, Mic, Paperclip, Send, X, CircleDot } from "lucide-react";
+import { useState, useRef, useEffect, useCallback, type ChangeEvent, type ReactNode } from "react";
+import { Sparkles, RotateCcw, Loader2, Mic, Paperclip, Send, X, CircleDot, ArrowDown } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 
@@ -52,8 +52,53 @@ export function SiteChat({ messages, running, error, canUndo, dirty, onApply, on
   const [instruction, setInstruction] = useState("");
   const [attachment, setAttachment] = useState<{ dataUrl: string; label: string } | null>(null);
   const [listening, setListening] = useState(false);
+  const [nearBottom, setNearBottom] = useState(true);
+  const [showJump, setShowJump] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const recRef = useRef<{ stop: () => void } | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const atBottomRef = useRef(true);
+
+  const isNearBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  }, []);
+
+  // Rolagem automática: acompanha o fim quando o usuário já está no fim;
+  // NÃO rouba o scroll quando o usuário está lendo histórico.
+  useEffect(() => {
+    if (nearBottom && scrollRef.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight });
+    }
+  }, [messages.length, running, nearBottom]);
+
+  useEffect(() => {
+    setNearBottom(isNearBottom());
+  }, [messages.length, running, isNearBottom]);
+
+  function handleScroll() {
+    const near = isNearBottom();
+    atBottomRef.current = near;
+    setNearBottom(near);
+    setShowJump(!near);
+  }
+
+  function jumpToEnd() {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    setNearBottom(true);
+    setShowJump(false);
+  }
+
+  function handleKeyScroll(e: React.KeyboardEvent) {
+    if (e.key === "PageDown") {
+      const el = scrollRef.current;
+      if (el) {
+        el.scrollTop = Math.min(el.scrollHeight, el.scrollTop + el.clientHeight * 0.8);
+        setNearBottom(isNearBottom());
+      }
+    }
+  }
 
   async function handleFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -120,8 +165,8 @@ export function SiteChat({ messages, running, error, canUndo, dirty, onApply, on
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-2xl border border-primary/25 bg-gradient-to-b from-primary/[0.06] to-transparent p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-primary/25 bg-gradient-to-b from-primary/[0.06] to-transparent p-3">
+      <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
         <p className="flex items-center gap-2 text-sm font-semibold">
           <Sparkles className="h-4 w-4 text-primary" /> Construtor com IA
         </p>
@@ -138,71 +183,81 @@ export function SiteChat({ messages, running, error, canUndo, dirty, onApply, on
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {messages.length === 0 && (
-          <p className="text-xs text-muted-foreground px-1 pt-1">
-            Fale como você quer o site — ex.: <em>“deixa o hero mais sofisticado”</em>, <em>“agora mais escuro”</em>, <em>“troca essa imagem”</em>, <em>“volta”</em>. Anexos e voz também funcionam.
-          </p>
-        )}
-        {messages.map((m, i) => (
-          <div key={i} className={`max-w-[94%] rounded-2xl px-3 py-2 text-[12.5px] leading-relaxed shadow-sm ${m.role === "user" ? "ml-auto bg-primary/15 border border-primary/25" : "bg-card border border-border/60"}`}>
-            {m.image && m.image.startsWith("data:image") && <img src={m.image} alt="anexo" className="mb-1.5 max-h-28 rounded-lg border border-border/60 object-cover" />}
-            {m.fileLabel && !(m.image && m.image.startsWith("data:image")) && <p className="mb-1 text-[11px] text-muted-foreground">📎 {m.fileLabel}</p>}
-            <p className="whitespace-pre-wrap">{renderText(m.text)}</p>
-          </div>
-        ))}
-        {running && (
-          <div className="inline-flex items-center gap-1.5 rounded-2xl border border-border/60 bg-card px-3 py-2 text-[12.5px] text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin text-primary" /> editando o site…
-          </div>
+      <div className="relative min-h-0 flex-1">
+        <div ref={scrollRef} onScroll={handleScroll} onKeyDown={handleKeyScroll} tabIndex={0} role="log" aria-live="polite" className="h-full space-y-2 overflow-y-auto overflow-x-hidden pr-1 outline-none [scrollbar-width:thin] [scrollbar-color:rgb(148_163_184/0.4)_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300/70">
+          {messages.length === 0 && (
+            <p className="text-xs text-muted-foreground px-1 pt-1">
+              Converse com o seu diretor de criação: peça mudanças (<em>“deixa o hero mais sofisticado”</em>, <em>“agora mais escuro”</em>, <em>“troca essa imagem”</em>) ou tire dúvidas (<em>“o que dá pra melhorar?”</em>, <em>“como está o site?”</em>). Anexos e voz também funcionam.
+            </p>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={`max-w-[94%] rounded-2xl px-3 py-2 text-[12.5px] leading-relaxed shadow-sm ${m.role === "user" ? "ml-auto bg-primary/15 border border-primary/25" : "bg-card border border-border/60"}`}>
+              {m.image && m.image.startsWith("data:image") && <img src={m.image} alt="anexo" className="mb-1.5 max-h-28 rounded-lg border border-border/60 object-cover" />}
+              {m.fileLabel && !(m.image && m.image.startsWith("data:image")) && <p className="mb-1 text-[11px] text-muted-foreground">📎 {m.fileLabel}</p>}
+              <p className="whitespace-pre-wrap">{renderText(m.text)}</p>
+            </div>
+          ))}
+          {running && (
+            <div className="inline-flex items-center gap-1.5 rounded-2xl border border-border/60 bg-card px-3 py-2 text-[12.5px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin text-primary" /> editando o site…
+            </div>
+          )}
+        </div>
+
+        {showJump && (
+          <button type="button" onClick={jumpToEnd} className="absolute bottom-3 right-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-lg transition-colors hover:text-foreground hover:border-primary/50" title="Ir para as mensagens recentes">
+            <ArrowDown className="h-4 w-4" />
+          </button>
         )}
       </div>
 
-      {error && (
-        <p className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-[11px] text-destructive">{error}</p>
-      )}
+      <div className="relative flex flex-col">
+        {error && (
+          <p className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-[11px] text-destructive">{error}</p>
+        )}
 
-      {attachment && (
-        <div className="mt-2 flex items-center gap-2 rounded-md border border-border/70 bg-card px-2 py-1.5 text-xs text-muted-foreground">
-          {attachment.dataUrl.startsWith("data:image") ? <img src={attachment.dataUrl} alt="anexo" className="h-10 w-10 rounded object-cover" /> : <span>📎</span>}
-          <span className="flex-1 truncate">{attachment.label || "Anexo"}</span>
-          <button type="button" onClick={() => setAttachment(null)} className="text-muted-foreground hover:text-destructive"><X className="h-3.5 w-3.5" /></button>
-        </div>
-      )}
+        {attachment && (
+          <div className="mb-2 flex items-center gap-2 rounded-md border border-border/70 bg-card px-2 py-1.5 text-xs text-muted-foreground">
+            {attachment.dataUrl.startsWith("data:image") ? <img src={attachment.dataUrl} alt="anexo" className="h-10 w-10 rounded object-cover" /> : <span>📎</span>}
+            <span className="flex-1 truncate">{attachment.label || "Anexo"}</span>
+            <button type="button" onClick={() => setAttachment(null)} className="text-muted-foreground hover:text-destructive"><X className="h-3.5 w-3.5" /></button>
+          </div>
+        )}
 
-      <div className="mt-2 space-y-2">
-        <Textarea
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-          placeholder="Deixa o hero mais sofisticado…"
-          rows={2}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          className="text-sm"
-        />
-        <div className="flex items-center gap-1.5">
-          <input ref={fileRef} type="file" accept="image/*,.pdf,.txt,.doc,.docx" className="hidden" onChange={handleFile} />
-          <button type="button" onClick={() => fileRef.current?.click()} title="Anexar foto ou arquivo" className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors">
-            <Paperclip className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={toggleMic}
-            title={listening ? "Parar gravação" : "Gravar com voz"}
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${listening ? "animate-pulse border-red-400/70 bg-red-500/10 text-red-500" : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"}`}
-          >
-            <Mic className="h-4 w-4" />
-          </button>
-          <Button size="sm" className="h-8 flex-1" disabled={running || (!instruction.trim() && !attachment)} onClick={send}>
-            {running ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
-            Aplicar
-          </Button>
+        <div className="space-y-2">
+          <Textarea
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            placeholder="Deixa o hero mais sofisticado…"
+            rows={2}
+            className="max-h-36 min-h-[2.5rem] text-sm"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+          <div className="flex items-center gap-1.5">
+            <input ref={fileRef} type="file" accept="image/*,.pdf,.txt,.doc,.docx" className="hidden" onChange={handleFile} />
+            <button type="button" onClick={() => fileRef.current?.click()} title="Anexar foto ou arquivo" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors">
+              <Paperclip className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={toggleMic}
+              title={listening ? "Parar gravação" : "Gravar com voz"}
+              className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors ${listening ? "animate-pulse border-red-400/70 bg-red-500/10 text-red-500" : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"}`}
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+            <Button size="sm" className="h-8 flex-1" disabled={running || (!instruction.trim() && !attachment)} onClick={send}>
+              {running ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+              Enviar
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground">Anexos ficam nesta conversa (sessão) como referência. Voz usa o reconhecimento do navegador.</p>
         </div>
-        <p className="text-[10px] text-muted-foreground">Anexos ficam nesta conversa (sessão) como referência. Voz usa o reconhecimento do navegador.</p>
       </div>
     </div>
   );
