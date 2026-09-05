@@ -3,6 +3,7 @@
 import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
 import { chromium, type Browser, type Page } from "playwright";
 
 export interface BrowserInspection {
@@ -51,7 +52,6 @@ export class BrowserSession {
   constructor(workspaceRoot: string) {
     this.root = resolve(workspaceRoot);
     // Screenshots sempre em diretório temporário (nunca no workspace do projeto).
-    const { tmpdir } = require("node:os") as typeof import("node:os");
     this.screenshotDir = process.env.PROSPECTOR_SHOTS && process.env.PROSPECTOR_SHOTS.trim()
       ? resolve(process.env.PROSPECTOR_SHOTS)
       : join(tmpdir(), "prospector-shots");

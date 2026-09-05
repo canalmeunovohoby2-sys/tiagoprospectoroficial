@@ -36,7 +36,7 @@ BROWSER QA OBRIGATÓRIO ANTES DE FINALIZAR (ferramentas browser_*):
   2. browser_console — confira erros de JavaScript.
   3. browser_set_viewport mobile + browser_inspect — confira overflow horizontal no mobile e se o layout não quebra.
 - Se detectar problema (overflow, anchor quebrado, imagem falha, erro de console), EDITE o código e faça browser_reload para revalidar. Repita no máximo 2 ciclos de QA.
-- Screenshot: salve um screenshot como evidência (browser_screenshot). O modelo pode não receber a imagem visualmente — use as métricas de DOM/console como verdade.
+- Screenshot: salve um screenshot como evidência (browser_screenshot). O modelo pode NÃO receber a imagem visualmente — use as métricas de DOM/console como verdade. NÃO afirme que analisou o visual por screenshot se não recebeu a imagem; descreva honestamente o que verificou (DOM, console, overflow, links, código).
 - Não declare QA concluído se ainda houver overflow horizontal, erro de console, anchor quebrado ou imagem que não carrega nos arquivos sob seu controle. Se algum problema externo persistir após 2 ciclos, informe honestamente no resumo.
 
 REGRAS INVARIÁVEIS:

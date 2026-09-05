@@ -7,7 +7,7 @@ import { BrowserSession, type BrowserInspection } from "./browser-session";
 export const DESKTOP_VIEWPORT = { width: 1366, height: 768 };
 export const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-export function buildBrowserTools(getSession: () => BrowserSession | null) {
+export function buildBrowserTools(getSession: () => BrowserSession | null, onScreenshot?: (path: string) => void) {
   const session = (): BrowserSession => {
     const s = getSession();
     if (!s) throw new Error("BrowserSession não disponível neste contexto.");
@@ -81,11 +81,15 @@ export function buildBrowserTools(getSession: () => BrowserSession | null) {
 
   const screenshot = createTool({
     name: "browser_screenshot",
-    description: "Captura screenshot da página atual e retorna o caminho do arquivo. Para QA de layout/visual.",
+    description:
+      "Captura screenshot da página atual (desktop ou o viewport ativo). Retorna o caminho e, quando o modelo suporta visão, a imagem é anexada automaticamente para análise visual real no próximo passo.",
     inputSchema: z.object({ name: z.string().optional().describe("nome do arquivo") }),
     async execute(input) {
       const s = session();
       const file = await s.screenshot(input.name || "site");
+      if (onScreenshot) {
+        try { onScreenshot(file); } catch { /* não bloqueia */ }
+      }
       return `Screenshot salvo em ${file}`;
     },
   });

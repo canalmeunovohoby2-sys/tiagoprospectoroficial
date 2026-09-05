@@ -62,6 +62,15 @@ Evidência (repetibilidade): a mesma academia gerada várias vezes retorna sempr
 (qualidade consistente, aparência distinta). Sem o gate, execuções podiam omitir
 imagens por completo.
 
+## Visão (5.22)
+
+O runtime detecta a capacidade multimodal real do provider/modelo ativo (`src/vision.ts`):
+
+- **Suporta imagem** (allowlist: gpt-4o, gemini-*, claude-3.x/4, pixtral, qwen-vl, llama-3.2 vision; ou override `PROSPECTOR_VISION=1` + `PROSPECTOR_VISION_MODEL`): o `browser_screenshot` registra a imagem e o hook `beforeModel` injeta `ImageContent` (base64) no próximo request do Agent Loop → o modelo analisa o screenshot de verdade.
+- **Não suporta** (ex.: DeepSeek): o screenshot NÃO é enviado e o sistema **não finge** análise visual — o agente usa DOM/métricas/console/Quality Gate e descreve honestamente o que verificou.
+
+Captura real → base64 validada por E2E (`scripts/e2e-screenshot-dataurl.ts`). Qualidade estrutural segue garantida pelo Quality Gate.
+
 ## Segurança
 
 - Cada projeto tem um diretório isolado (`sha256(projectId)`), criado em `tmp` ou em `PROSPECTOR_WORKSPACES`.

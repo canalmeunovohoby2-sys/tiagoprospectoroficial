@@ -9,6 +9,7 @@ import { buildBrowserTools } from "./browser-tools";
 import { BrowserSession } from "./browser-session";
 import { readWorkspace, type FileMap } from "./workspace";
 import { GENERATION_SYSTEM_PROMPT } from "./generation-prompt";
+import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision";
 
 export interface AgentRunOutcome {
   ok: boolean;
@@ -57,6 +58,9 @@ REGRAS DE TRABALHO:
 7. Ao terminar, resuma em pt-BR, de forma natural, o que foi feito (reply) — sem expor chain-of-thought.
 8. Se uma tool falhar, analise o erro e tente corrigir antes de desistir.
 
+HONESTIDADE DE VERIFICAÇÃO:
+- Só diga que "viu" o site se recebeu um screenshot como imagem no contexto. Se o modelo atual não suporta imagem, NÃO afirme que analisou o visual por screenshot — descreva o que verificou de fato (browser DOM, métricas, console, links, código). Não invente análise visual que não aconteceu.
+
 BROWSER QA (ferramentas browser_*):
 - Você possui ferramentas de navegador real (browser_open, browser_inspect, browser_console, browser_links, browser_screenshot, browser_set_viewport, browser_reload) que abrem o SITE RENDERIZADO do workspace.
 - Use-as quando a tarefa envolver validar o resultado visual/estrutural (geração completa, "deixa o site perfeito", responsividade mobile, overflow, contraste, links quebrados, console). NÃO use para mudanças triviais de texto.
@@ -73,6 +77,8 @@ export class ProspectorSiteAgent {
   private beforeFiles: FileMap = {};
   private conversationStarted = false;
   private browserSession: BrowserSession | null = null;
+  private vision: VisionConfig;
+  private pendingScreenshotPath: string | null = null;
 
   constructor(options: ProspectorAgentOptions) {
     this.options = options;
@@ -90,6 +96,7 @@ export class ProspectorSiteAgent {
 
     this.beforeFiles = { ...(options.initialFiles ?? {}) };
     const systemPrompt = options.systemPrompt ?? (options.mode === "generate" ? GENERATION_SYSTEM_PROMPT : SYSTEM_PROMPT);
+    this.vision = resolveVisionCapability({ provider: options.providerId, model: options.modelId });
 
     // Browser tools: compartilham UMA sessão Playwright por agente (lazy).
     let browserTools: ReturnType<typeof buildBrowserTools> = [];
@@ -97,8 +104,29 @@ export class ProspectorSiteAgent {
       browserTools = buildBrowserTools(() => {
         if (!this.browserSession) this.browserSession = new BrowserSession(options.workspaceRoot);
         return this.browserSession;
+      }, (path) => {
+        // screenshot capturado pelo agente → tenta disponibilizar ao modelo se houver visão.
+        this.pendingScreenshotPath = path;
       });
     }
+
+    // Hook antes do modelo: se houver visão real e um screenshot pendente,
+    // anexa a imagem como mensagem de usuário (ImageContent) ao próximo request.
+    const beforeModel = async (input: { messages?: unknown[]; systemPrompt?: string }) => {
+      if (!this.vision.supported || !this.pendingScreenshotPath) return input;
+      const img = await imageToDataUrl(this.pendingScreenshotPath);
+      this.pendingScreenshotPath = null; // consome o screenshot
+      if (!img) return input;
+      const messages = Array.isArray(input?.messages) ? [...(input.messages as unknown[])] : [];
+      messages.push({
+        role: "user",
+        content: [
+          { type: "text", text: "Aqui está o screenshot da página atual do site. Analise visualmente (composição, hierarquia, contraste, espaçamento, imagens, primeira dobra) e use-o como evidência real. Se houver problema, corrija o código." },
+          { type: "image", data: img.data, mediaType: img.mediaType },
+        ],
+      });
+      return { ...input, messages };
+    };
 
     this.agent = new (Agent as unknown as new (cfg: Record<string, unknown>) => unknown)({
       providerId: options.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
@@ -108,6 +136,7 @@ export class ProspectorSiteAgent {
       systemPrompt,
       tools: [...tools, ...browserTools, complete],
       maxIterations: options.maxIterations ?? 40,
+      hooks: { beforeModel },
     });
   }
 
@@ -197,6 +226,12 @@ export class ProspectorSiteAgent {
   resetSession(): void {
     this.conversationStarted = false;
     this.beforeFiles = {};
+    this.pendingScreenshotPath = null;
+  }
+
+  /** Capacidade de visão resolvida (provider/modelo). */
+  get visionCapability(): VisionConfig {
+    return this.vision;
   }
 }
 
