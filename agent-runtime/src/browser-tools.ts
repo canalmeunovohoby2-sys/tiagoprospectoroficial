@@ -3,15 +3,33 @@
 import { z } from "zod";
 import { createTool } from "@cline/sdk";
 import { BrowserSession, type BrowserInspection } from "./browser-session";
+import { visualReviewWithGemini, formatVisualReview, type VisualReviewResult } from "./vision-gemini";
 
 export const DESKTOP_VIEWPORT = { width: 1366, height: 768 };
 export const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-export function buildBrowserTools(getSession: () => BrowserSession | null, onScreenshot?: (path: string) => void) {
+export interface BrowserToolOptions {
+  context?: string;
+  projectId?: string;
+}
+
+export function buildBrowserTools(
+  getSession: () => BrowserSession | null,
+  onScreenshot?: (path: string) => void,
+  options?: BrowserToolOptions,
+) {
   const session = (): BrowserSession => {
     const s = getSession();
     if (!s) throw new Error("BrowserSession não disponível neste contexto.");
     return s;
+  };
+
+  // Captura screenshot + retorna caminho; usado pela tool visual_review.
+  const capture = async (name: string): Promise<string> => {
+    const s = session();
+    const file = await s.screenshot(name);
+    if (onScreenshot) { try { onScreenshot(file); } catch { /* noop */ } }
+    return file;
   };
 
   const open = createTool({
@@ -82,15 +100,40 @@ export function buildBrowserTools(getSession: () => BrowserSession | null, onScr
   const screenshot = createTool({
     name: "browser_screenshot",
     description:
-      "Captura screenshot da página atual (desktop ou o viewport ativo). Retorna o caminho e, quando o modelo suporta visão, a imagem é anexada automaticamente para análise visual real no próximo passo.",
+      "Captura screenshot da página atual (desktop ou o viewport ativo) e retorna o caminho. Para análise visual real use visual_review (que envia o screenshot ao Gemini).",
     inputSchema: z.object({ name: z.string().optional().describe("nome do arquivo") }),
     async execute(input) {
-      const s = session();
-      const file = await s.screenshot(input.name || "site");
-      if (onScreenshot) {
-        try { onScreenshot(file); } catch { /* não bloqueia */ }
-      }
+      const file = await capture(input.name || "site");
       return `Screenshot salvo em ${file}`;
+    },
+  });
+
+  const visualReview = createTool({
+    name: "visual_review",
+    description:
+      "ENVIA o screenshot da página atual para o Gemini (analisador visual especializado) e retorna um DIAGNÓSTICO estruturado de problemas visuais reais (composição, hierarquia, contraste, imagens, espaçamento, primeira dobra). Use DEPOIS de abrir o site e antes de finalizar uma geração/redesign, ou após uma correção para confirmar melhora. DeepSeek continua decidindo e editando; esta tool é só o 'olho'.",
+    inputSchema: z.object({
+      viewport: z.enum(["desktop", "mobile"]).optional().describe("captura neste viewport (default: o atual)"),
+      purpose: z.string().optional().describe("objetivo da análise (ex.: 'geração inicial QA', 'confirmar correção do hero')"),
+    }),
+    async execute(input) {
+      const s = session();
+      if (input.viewport) {
+        const vp = input.viewport === "mobile" ? MOBILE_VIEWPORT : DESKTOP_VIEWPORT;
+        await s.setViewport(vp.width, vp.height);
+      }
+      const name = `qa-${input.viewport ?? "atual"}-${Date.now()}`;
+      const file = await capture(name);
+      const insp = await s.inspectCurrent();
+      const ctx = `${options?.context ?? ""} Viewport capturado: ${insp.viewport.width}x${insp.viewport.height}.`;
+      const result: VisualReviewResult = await visualReviewWithGemini({
+        screenshotPath: file,
+        viewport: insp.viewport,
+        context: ctx,
+        purpose: input.purpose ?? "avaliar qualidade visual do site",
+        projectId: options?.projectId,
+      });
+      return formatVisualReview(result);
     },
   });
 
@@ -118,7 +161,7 @@ export function buildBrowserTools(getSession: () => BrowserSession | null, onScr
     },
   });
 
-  return [open, inspect, consoleTool, links, screenshot, setViewport, reload];
+  return [open, inspect, consoleTool, links, screenshot, setViewport, reload, visualReview];
 }
 
 export type { BrowserInspection };

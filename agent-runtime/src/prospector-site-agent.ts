@@ -107,6 +107,12 @@ export class ProspectorSiteAgent {
       }, (path) => {
         // screenshot capturado pelo agente → tenta disponibilizar ao modelo se houver visão.
         this.pendingScreenshotPath = path;
+      }, {
+        context: [
+          options.business?.name && `Empresa: ${options.business.name}`,
+          options.business?.segment && `Segmento: ${options.business.segment}`,
+          options.business?.city && `Cidade: ${options.business.city}/${options.business.state}`,
+        ].filter(Boolean).join(" · "),
       });
     }
 

@@ -71,6 +71,23 @@ O runtime detecta a capacidade multimodal real do provider/modelo ativo (`src/vi
 
 Captura real → base64 validada por E2E (`scripts/e2e-screenshot-dataurl.ts`). Qualidade estrutural segue garantida pelo Quality Gate.
 
+## Gemini Vision como analisador visual (5.23)
+
+DeepSeek continua sendo o executor do site. O **Gemini** é usado SOMENTE como
+analisador visual de screenshots, via edge function `gemini-vision` (chave
+`GEMINI_API_KEY` no Supabase; nunca no frontend):
+
+1. `Cline/DeepSeek` constrói/edita o código.
+2. `browser_screenshot` captura a página real.
+3. Tool `visual_review` envia o screenshot ao `gemini-vision` (modelo
+   `gemini-3.6-flash`; configurável via secret `GEMINI_VISION_MODEL`).
+4. Gemini devolve diagnóstico estruturado JSON (issues: severidade/área/descrição/fix).
+5. O diagnóstico volta ao Agent Loop como tool result → DeepSeek decide e edita.
+6. Novo screenshot + `visual_review` revalidam a correção (máx. ~2 ciclos no prompt).
+
+Honestidade: se o Gemini falhar/503 ou não receber a imagem, a tool devolve
+"VISUAL REVIEW NÃO EXECUTADO" e o agente informa honestamente.
+
 ## Segurança
 
 - Cada projeto tem um diretório isolado (`sha256(projectId)`), criado em `tmp` ou em `PROSPECTOR_WORKSPACES`.
