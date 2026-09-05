@@ -63,7 +63,15 @@ Sua função: devolver a ESPECIFICAÇÃO COMPLETA atualizada em JSON válido, to
   },
   "calls_to_action": [ { "label": string, "type": "whatsapp|tel|scroll|link", "value": string } ],
   "seo": { "title": string, "description": string, "keywords": string[] }
-}`;
+}
+
+# FORMATO DA RESPOSTA (OBRIGATÓRIO)
+Responda APENAS com JSON exatamente neste formato:
+{ "reply": "mensagem curta em pt-BR (máx. 3 frases) para o usuário, como um assistente de projetos: explique o que você decidiu e mudou; se nada precisar mudar, converse/oriente normalmente.",
+  "spec": { ...a SPEC COMPLETA (atualizada se houver mudança; IDÊNTICA à entrada se não houver mudança)... } }
+- Se a mensagem do usuário for apenas pergunta/orientação ("o que posso melhorar?", "como fica?", "explica"), devolva spec idêntica e use "reply" para responder.
+- Se houver mudança, aplique tudo o que decidiu dentro de "spec" e resuma em "reply".
+- Nunca omita chaves; preserve o restante da spec intacto.`;
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -278,15 +286,18 @@ Devolva a spec COMPLETA atualizada conforme a instrução.`;
       throw e;
     }
 
-    const parsed = extractJson(raw);
-    if (!parsed || Object.keys(parsed).length === 0) {
+    const parsedOuter = extractJson(raw);
+    if (!parsedOuter || Object.keys(parsedOuter).length === 0) {
       return new Response(
         JSON.stringify({ error: "A IA retornou JSON inválido ou vazio.", raw: raw.slice(0, 800) }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
+    const reply = typeof parsedOuter.reply === "string" ? parsedOuter.reply.slice(0, 1200) : "";
+    // Wrapper { reply, spec } — caso o modelo retorne a spec direto (compat), usa o próprio objeto.
+    const specPayload = parsedOuter.spec && isObj(parsedOuter.spec) ? parsedOuter.spec : parsedOuter;
 
-    const merged = deepMerge(original, parsed) as Record<string, unknown>;
+    const merged = deepMerge(original, specPayload) as Record<string, unknown>;
     const protectedSpec = protectFactual(original, merged, instruction);
     attachImagesIfRequested(protectedSpec, images, instruction);
     const spec = normalizeResult(protectedSpec);
@@ -297,9 +308,10 @@ Devolva a spec COMPLETA atualizada conforme a instrução.`;
     }
 
     const changed = JSON.stringify(spec) !== JSON.stringify(original);
-    return new Response(JSON.stringify({ spec, model: usedModel, status: "ok", changed }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ spec, model: usedModel, status: "ok", changed, reply }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   } catch (e) {
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "erro inesperado" }), {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -498,10 +498,14 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
     serviceItems.length > 0 ? (
       <section id="services" style={{ backgroundColor: "var(--sp-background)" }}>
         <div className="mx-auto px-6 py-[var(--sp-py-section)]" style={{ maxWidth: "var(--sp-maxw)" }}>
-          <div className="mb-10 space-y-3 text-center">
-            <span className="inline-flex items-center justify-center">{eyebrow("Serviços")}</span>
-            {heading(blockText(services, "title") || "Serviços")}
-            {blockText(services, "subtitle") && <p className="mx-auto max-w-xl" style={{ color: "var(--sp-muted)" }}>{textRich(blockText(services, "subtitle"))}</p>}
+        <div className="mb-12 space-y-3">
+            <div className="flex flex-wrap items-end justify-between gap-6">
+              <div className="max-w-2xl space-y-3">
+                {eyebrow("Serviços")}
+                {heading(blockText(services, "title") || "Serviços")}
+              </div>
+              {blockText(services, "subtitle") && <p className="max-w-sm text-left" style={{ color: "var(--sp-muted)" }}>{textRich(blockText(services, "subtitle"))}</p>}
+            </div>
           </div>
           <div className={`grid gap-5 ${cardStyle === "editorial" ? "sm:grid-cols-2" : serviceItems.length >= 4 ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 lg:grid-cols-3"}`}>
             {serviceItems.map((item, i) => {
@@ -789,18 +793,45 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
     const light = isLightFooter;
     const fg = light ? "var(--sp-on-surface)" : "var(--sp-on-primary)";
     const mu = light ? "var(--sp-muted)" : "color-mix(in srgb, var(--sp-on-primary) 75%, transparent)";
-    const centered = footerStyle === "centered";
+    const hasNav = nav.length > 0;
+    const hasContactData = contactPhone || contactWa || contactAddress;
     return (
       <footer style={{ backgroundColor: light ? "var(--sp-surface)" : "var(--sp-secondary)", borderTop: light ? "1px solid var(--sp-border)" : "none", color: fg }}>
-        <div className={`mx-auto px-6 py-10 ${centered ? "text-center" : ""}`} style={{ maxWidth: "var(--sp-maxw)" }}>
-          <div className={`${centered ? "" : "sm:flex sm:items-center sm:justify-between"} gap-6 space-y-4 sm:space-y-0`}>
-            <div className="space-y-1">
-              <p className="font-bold" style={{ fontFamily: "var(--sp-heading-font)", color: light ? "var(--sp-primary)" : fg }}>{name}</p>
-              {blockText(footer, "tagline") && <p className="text-xs" style={{ color: mu }}>{textRich(blockText(footer, "tagline"))}</p>}
+        <div className="mx-auto px-6 py-14" style={{ maxWidth: "var(--sp-maxw)" }}>
+          <div className={`grid gap-10 ${hasNav || hasContactData ? "sm:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr]" : ""}`}>
+            <div className="space-y-3">
+              <p className="text-lg font-bold" style={{ fontFamily: "var(--sp-heading-font)", color: light ? "var(--sp-primary)" : fg }}>{name}</p>
+              {blockText(footer, "tagline") && <p className="text-sm" style={{ color: mu }}>{textRich(blockText(footer, "tagline"))}</p>}
+              {waLink && (
+                <a href={waLink} target="_blank" rel="noreferrer" className="mt-1 inline-flex rounded-full px-5 py-2 text-sm font-semibold" style={{ backgroundColor: "var(--sp-cta)", color: "var(--sp-on-primary)" }}>Falar no WhatsApp</a>
+              )}
             </div>
-            <p className="text-xs" style={{ color: mu }}>
-              © {new Date().getFullYear()} {name} · {segmentLabel}
-            </p>
+            {hasNav && (
+              <div>
+                <p className="mb-3 text-[11px] uppercase tracking-[0.18em]" style={{ color: mu }}>Navegação</p>
+                <ul className="space-y-2 text-sm">
+                  {nav.slice(0, 6).map((item) => (
+                    <li key={str(item.anchor)}>
+                      <a href={`#${str(item.anchor)}`} className="hover:opacity-75 transition-opacity" style={{ color: fg }}>{str(item.label) || str(item.anchor)}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {hasContactData && (
+              <div>
+                <p className="mb-3 text-[11px] uppercase tracking-[0.18em]" style={{ color: mu }}>Contato</p>
+                <ul className="space-y-2 text-sm" style={{ color: fg }}>
+                  {contactPhone && <li>{contactPhone}</li>}
+                  {contactWa && <li>{contactWa}</li>}
+                  {contactAddress && <li className="break-words">{textRich(contactAddress)}</li>}
+                </ul>
+              </div>
+            )}
+          </div>
+          <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t pt-6 text-xs" style={{ borderColor: light ? "var(--sp-border)" : "color-mix(in srgb, var(--sp-on-primary) 15%, transparent)", color: mu }}>
+            <p>© {new Date().getFullYear()} {name} · {segmentLabel}</p>
+            {isLightFooter && <p>Site de demonstração do Prospector — conteúdo editável.</p>}
           </div>
         </div>
       </footer>

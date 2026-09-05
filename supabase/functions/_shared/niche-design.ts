@@ -148,6 +148,27 @@ const byKeyword: Array<{ keywords: string[]; profile: NicheDesign }> = [
       interactionNotes: "Transições suaves; preview de serviços com hover refinado.",
     },
   },
+  {
+    keywords: ["pet shop", "pet shops", "petshop", "petshops", "pet", "banho e tosa", "veterinaria", "veterinária", "pets"],
+    profile: {
+      cluster: "pet_care",
+      objectives: ["gerar contato/agendamento de banho, tosa e consultas", "transmitir cuidado e confiança com os pets", "destacar serviços e ambiente"],
+      visualConcept: "Vivo, acolhedor e profissional — cores alegres porém sóbrias, fotos reais de cães/gatos em cuidado, sem infantilizar.",
+      layoutArchetype: "service_focused",
+      heroComposition: "split",
+      recommendedSections: ["hero", "trust", "services", "features", "process", "about", "cta", "contact"],
+      typographyDirection: "Sans contemporânea e arredondada nos títulos + corpo legível; escala amigável e clara.",
+      colorDirection: "Neutros quentes com verde/azul de confiança e 1 destaque vibrante (laranja/amarelo) só para CTA.",
+      imageStrategy: "Fotografias reais de animais: cachorro no banho, gato no colo, tosa, veterinário cuidando, produtos pet. NUNCA imagens de escritório/call center/corporativo.",
+      tone: "Cuidadoso, próximo e profissional; foco no bem-estar do pet.",
+      cta: "Agendar banho e tosa",
+      navStyle: "minimal",
+      density: "airy",
+      decorative: "medium",
+      radius: "large",
+      interactionNotes: "Cards de serviço com hover elevado; botão de agendamento em destaque.",
+    },
+  },
 ];
 
 const FALLBACK: NicheDesign = {

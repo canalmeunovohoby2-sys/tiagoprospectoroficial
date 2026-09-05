@@ -304,6 +304,44 @@ export type Database = {
         }
         Relationships: []
       }
+      site_chat_messages: {
+        Row: {
+          attachment: Json | null
+          created_at: string
+          id: string
+          project_id: string
+          role: string
+          text: string
+          user_id: string
+        }
+        Insert: {
+          attachment?: Json | null
+          created_at?: string
+          id?: string
+          project_id: string
+          role: string
+          text?: string
+          user_id: string
+        }
+        Update: {
+          attachment?: Json | null
+          created_at?: string
+          id?: string
+          project_id?: string
+          role?: string
+          text?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_chat_messages_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "site_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       site_projects: {
         Row: {
           ai_model: string | null

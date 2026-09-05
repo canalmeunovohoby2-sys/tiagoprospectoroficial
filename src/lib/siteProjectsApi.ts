@@ -131,8 +131,8 @@ export async function editSiteWithAI(
   instruction: string,
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null },
   conversation?: string[],
-): Promise<{ spec: SiteSpec; model: string; changed: boolean }> {
-  const { data, error } = await supabase.functions.invoke<{ spec: SiteSpec; model: string; changed?: boolean }>(
+): Promise<{ spec: SiteSpec; model: string; changed: boolean; reply?: string }> {
+  const { data, error } = await supabase.functions.invoke<{ spec: SiteSpec; model: string; changed?: boolean; reply?: string }>(
     "edit-site",
     { body: { spec, instruction, context, conversation: conversation ?? [] } },
   );
@@ -140,7 +140,43 @@ export async function editSiteWithAI(
   if (!data?.spec || typeof data.spec !== "object") {
     throw new Error("A IA não retornou uma especificação válida.");
   }
-  return { spec: data.spec, model: data.model ?? "gemini-2.5-flash", changed: data.changed !== false };
+  return { spec: data.spec, model: data.model ?? "gemini-2.5-flash", changed: data.changed !== false, reply: data.reply };
+}
+
+export interface PersistedChatMsg {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  attachment: { label?: string; type?: string } | null;
+  created_at: string;
+}
+
+export async function loadSiteChatMessages(projectId: string): Promise<PersistedChatMsg[]> {
+  const { data, error } = await supabase
+    .from("site_chat_messages")
+    .select("id,role,text,attachment,created_at")
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => ({
+    id: String(r.id),
+    role: r.role as "user" | "assistant",
+    text: String(r.text ?? ""),
+    attachment: r.attachment && typeof r.attachment === "object" ? (r.attachment as { label?: string; type?: string }) : null,
+    created_at: String(r.created_at ?? ""),
+  }));
+}
+
+export async function appendSiteChatMessages(projectId: string, userId: string, messages: Array<{ role: "user" | "assistant"; text: string; label?: string; type?: string }>): Promise<void> {
+  if (messages.length === 0) return;
+  const rows = messages.map((m) => ({
+    project_id: projectId,
+    user_id: userId,
+    role: m.role,
+    text: m.text.slice(0, 4000),
+    attachment: m.label ? { label: m.label.slice(0, 200), type: m.type ?? "file" } : null,
+  }));
+  const { error } = await supabase.from("site_chat_messages").insert(rows);
+  if (error) throw new Error(error.message);
 }
 
 export async function deleteSiteProject(id: string): Promise<void> {

@@ -62,6 +62,13 @@ const IMAGE_PLAN: Record<string, Omit<ImageNeeds, "cluster">> = {
     galleryCount: 4,
     orientation: "landscape",
   },
+  pet_care: {
+    imageDriven: true,
+    heroQuery: "dog grooming pet care bath",
+    secondaryQuery: "dog happy pet veterinary",
+    galleryCount: 5,
+    orientation: "landscape",
+  },
   beleza: {
     imageDriven: true,
     heroQuery: "hair salon elegant interior",
