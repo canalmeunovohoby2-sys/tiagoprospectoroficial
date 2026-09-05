@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon } from "lucide-react";
+import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon, Code2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,7 @@ import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, 
 import {
   fetchSiteProject, generateSiteSpec, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
-  createSiteVersion,
+  createSiteVersion, invokeAgentExecute,
 } from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
@@ -110,6 +110,9 @@ export default function SiteProjectPage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [pendingSummary, setPendingSummary] = useState<string | undefined>(undefined);
   const [agentStep, setAgentStep] = useState<number | null>(null);
+  const [codePrompt, setCodePrompt] = useState("");
+  const [codeWorking, setCodeWorking] = useState(false);
+  const [codeOpen, setCodeOpen] = useState(false);
 
   // Avança por fases reais do ciclo do agente enquanto a IA trabalha.
   function runAgentProgress(steps: AgentProgress[], intervalMs = 1600) {
@@ -441,6 +444,58 @@ export default function SiteProjectPage() {
     }
   }
 
+  // Code-first: o agente opera sobre os ARQUIVOS reais (generated_code) do projeto.
+  async function runCodeEdit(instruction: string) {
+    if (!project) return;
+    setCodeWorking(true);
+    setGenError(null);
+    try {
+      // Workspace atual: usa o código persistido ou materializa do rascunho.
+      const existing = (project.generated_code as Record<string, string> | null) ?? {};
+      const hasFiles = Object.keys(existing).length > 0;
+      const baseFiles = hasFiles ? existing : materializeProjectFiles(draftSpec);
+      const cContent = (draftSpec.content ?? {}) as Record<string, unknown>;
+      const cContact = (cContent.contact ?? {}) as Record<string, unknown>;
+      const res = await invokeAgentExecute({
+        instruction,
+        files: baseFiles,
+        context: {
+          name: project.company_name || project.name,
+          segment: project.segment,
+          city: project.city,
+          state: project.state,
+          phone: typeof cContact.phone === "string" ? cContact.phone : null,
+          whatsapp: typeof cContact.whatsapp === "string" ? cContact.whatsapp : null,
+          address: typeof cContact.address === "string" ? cContact.address : null,
+        },
+        memory: designMemory(),
+      });
+      if (res.status === "error") {
+        toast.error(res.reply || (res.errors ?? []).join("; ") || "O agente não conseguiu concluir no código.");
+        setGenError(res.reply || (res.errors ?? []).join("; "));
+        return;
+      }
+      if (res.changed && res.files) {
+        // Atualiza spec derivada (se o agente mexeu em site.json) e salva arquivos.
+        const derivedSpec = res.spec ? normalizeSpec(res.spec as SiteSpec | Record<string, unknown> | null) : draftSpec;
+        await updateProjectSpec(project.id, derivedSpec, res.files);
+        if (user?.id) await createSiteVersion(project.id, user.id, derivedSpec, `Edição no código: ${instruction}`).catch(() => {});
+        setDraftSpec(derivedSpec);
+        setDirty(false);
+        setPendingSummary(undefined);
+        toast.success(res.reply || `Arquivos atualizados (${(res.touched ?? []).length}).`);
+        await load();
+      } else {
+        toast.info(res.reply || "Nenhuma alteração foi necessária nos arquivos.");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao editar o código");
+      setGenError(e instanceof Error ? e.message : "Erro ao editar o código");
+    } finally {
+      setCodeWorking(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-6 lg:p-8 max-w-7xl mx-auto flex items-center justify-center py-24 text-muted-foreground gap-2">
@@ -644,6 +699,33 @@ export default function SiteProjectPage() {
               <span className="text-[10px] text-muted-foreground uppercase tracking-wide">O que você conversar aparece aqui — só salva quando você clicar em Salvar</span>
             </div>
             <SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />
+            <div className="mt-3 rounded-xl border border-border/70 bg-card/60 p-3">
+              <button type="button" onClick={() => setCodeOpen((v) => !v)} className="flex w-full items-center justify-between gap-2 text-left">
+                <span className="flex items-center gap-2 text-sm font-semibold">
+                  <Code2 className="h-4 w-4 text-primary" /> Trabalhar no código do site
+                </span>
+                <span className="text-xs text-muted-foreground">{codeOpen ? "ocultar" : "mostrar"}</span>
+              </button>
+              {codeOpen && (
+                <div className="mt-2 space-y-2">
+                  <p className="text-[11px] text-muted-foreground">O agente de código lê e edita os arquivos reais (HTML/CSS/JS) do projeto, valida e salva. Use para mudanças que o construtor visual não alcança (animações, detalhes de CSS, componentes).</p>
+                  <textarea
+                    value={codePrompt}
+                    onChange={(e) => setCodePrompt(e.target.value)}
+                    placeholder="Ex.: deixa os cards de serviços com um efeito hover de elevação e um gradiente sutil no topo; anima o hero com entrada suave…"
+                    rows={3}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/60"
+                  />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button size="sm" disabled={codeWorking || !codePrompt.trim()} onClick={() => { runCodeEdit(codePrompt); setCodePrompt(""); }}>
+                      {codeWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Code2 className="h-3.5 w-3.5 mr-1" />}
+                      Executar no código
+                    </Button>
+                    <span className="text-[11px] text-muted-foreground">Salva uma nova versão quando altera arquivos.</span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       ) : (

@@ -177,9 +177,40 @@ export async function editSiteWithAI(
   return { spec: data.spec, model: data.model ?? "deepseek-chat", changed: data.changed !== false, reply: data.reply, mode: data.mode };
 }
 
+export interface AgentExecuteResult {
+  status: "ok" | "error";
+  reply?: string;
+  errors?: string[];
+  logs?: string[];
+  changed?: boolean;
+  touched?: string[];
+  files?: Record<string, string>;
+  spec?: Record<string, unknown> | null;
+  model?: string;
+}
+
+// Code-first: invoca o agent-execute que opera sobre os ARQUIVOS reais do projeto.
+export async function invokeAgentExecute(input: {
+  instruction: string;
+  files: Record<string, string>;
+  context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null };
+  memory?: string[];
+}): Promise<AgentExecuteResult> {
+  const { data, error } = await supabase.functions.invoke<AgentExecuteResult>("agent-execute", {
+    body: {
+      instruction: input.instruction,
+      files: input.files,
+      context: input.context,
+      memory: input.memory ?? [],
+      runtime: "static",
+    },
+  });
+  if (error) throw new Error(friendlyAiError(error));
+  return data ?? { status: "error", errors: ["Resposta vazia do agente de código."] };
+}
+
 export interface PersistedChatMsg {
-  id: string;
-  role: "user" | "assistant";
+  id: string;  role: "user" | "assistant";
   text: string;
   attachment: { label?: string; type?: string } | null;
   created_at: string;
