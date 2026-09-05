@@ -193,8 +193,15 @@ export interface AgentExecuteResult {
 }
 
 // Code-first: invoca o agent-execute que opera sobre os ARQUIVOS reais do projeto.
-// O fallback (edge) NÃO materializa anexos reais — se houver anexo e cair aqui,
-// retornamos erro honesto para não fingir uso do arquivo.
+// O fallback (edge) opera sobre o MAPA de arquivos (texto) — anexos são
+// convertidos em arquivos reais no workspace (assets/<nome> com o data URL),
+// para que o agente os leia/usar mesmo sem o runtime Node.
+function slugName(label: string, idx: number, mime: string): string {
+  const clean = (label || `anexo-${idx + 1}`).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const ext = mime.includes("jpeg") || mime.includes("jpg") ? "jpg" : mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : mime.includes("gif") ? "gif" : mime.includes("svg") ? "svg" : mime.includes("pdf") ? "pdf" : mime.includes("json") ? "json" : "txt";
+  return `assets/${(clean.split(".")[0] || `anexo-${idx + 1}`).slice(0, 40)}-${idx + 1}.${ext}`;
+}
+
 export async function invokeAgentExecute(input: {
   instruction: string;
   files: Record<string, string>;
@@ -202,20 +209,46 @@ export async function invokeAgentExecute(input: {
   memory?: string[];
   attachments?: ChatAttachmentInput[];
 }): Promise<AgentExecuteResult> {
-  if (input.attachments && input.attachments.length > 0) {
-    return { status: "error", runtime: "edge-fallback", errors: ["Anexos exigem o Cline Agent Runtime (Node). Configure VITE_AGENT_RUNTIME_URL para usar arquivos anexados."] };
+  // Anexos → arquivos reais no workspace (mapa), para o agente ler/usar.
+  let files = { ...(input.files ?? {}) };
+  let attachHint = "";
+  const attachments = input.attachments ?? [];
+  if (attachments.length) {
+    const materialized: string[] = [];
+    const rejected: string[] = [];
+    attachments.forEach((att, i) => {
+      const dataUrl = typeof att?.dataUrl === "string" ? att.dataUrl : "";
+      const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(dataUrl);
+      const mime = (att?.mediaType || (m ? m[1] : "")) || "application/octet-stream";
+      if (!m || !/^image\/(png|jpe?g|webp|gif|svg)|^text\/(plain|markdown)|^application\/(json|pdf)/i.test(mime)) {
+        rejected.push(att?.name || `anexo ${i + 1}`);
+        return;
+      }
+      const approx = Math.round((m[3].length * 3) / 4);
+      if (approx === 0 || approx > 2_200_000) { rejected.push(att?.name || `anexo ${i + 1}`); return; }
+      const path = slugName(att?.name ?? "", i, mime);
+      files[path] = dataUrl;
+      materialized.push(`${path} (${mime})`);
+    });
+    attachHint = materialized.length
+      ? `\nANEXOS (arquivos reais no workspace — leia com read_file e use; para imagem embuta <img src="data:..."> inline no HTML):\n${materialized.map((m) => `- ${m}`).join("\n")}`
+      : "";
+    if (rejected.length) attachHint += `\nAnexos rejeitados (tipo/tamanho): ${rejected.join(", ")}`;
   }
+  const instruction = `${input.instruction}${attachHint}`;
+
   const { data, error } = await supabase.functions.invoke<AgentExecuteResult>("agent-execute", {
     body: {
-      instruction: input.instruction,
-      files: input.files,
+      instruction,
+      files,
       context: input.context,
       memory: input.memory ?? [],
       runtime: "static",
     },
   });
   if (error) throw new Error(friendlyAiError(error));
-  return data ?? { status: "error", errors: ["Resposta vazia do agente de código."] };
+  const result = data ?? { status: "error", errors: ["Resposta vazia do agente de código."] };
+  return result.files ? result : { ...result, files };
 }
 
 // Invoca o ProspectorSiteAgent (Cline SDK). Prefere o runtime Node local
