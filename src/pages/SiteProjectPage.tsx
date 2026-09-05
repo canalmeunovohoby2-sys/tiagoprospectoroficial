@@ -11,7 +11,7 @@ import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, 
 import {
   fetchSiteProject, generateSiteSpec, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
-  createSiteVersion, invokeAgentExecute,
+  createSiteVersion, invokeAgentExecute, invokeProspectorAgent,
 } from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
@@ -493,9 +493,10 @@ export default function SiteProjectPage() {
       const baseFiles = hasFiles ? existing : materializeProjectFiles(draftSpec);
       const cContent = (draftSpec.content ?? {}) as Record<string, unknown>;
       const cContact = (cContent.contact ?? {}) as Record<string, unknown>;
-      const res = await invokeAgentExecute({
+      const res = await invokeProspectorAgent({
         instruction,
         files: baseFiles,
+        projectId: project.id,
         context: {
           name: project.company_name || project.name,
           segment: project.segment,
@@ -746,13 +747,13 @@ export default function SiteProjectPage() {
             <div className="mt-3 rounded-xl border border-border/70 bg-card/60 p-3">
               <button type="button" onClick={() => setCodeOpen((v) => !v)} className="flex w-full items-center justify-between gap-2 text-left">
                 <span className="flex items-center gap-2 text-sm font-semibold">
-                  <Code2 className="h-4 w-4 text-primary" /> Trabalhar no código do site
+                  <Code2 className="h-4 w-4 text-primary" /> Agente de código (Cline)
                 </span>
                 <span className="text-xs text-muted-foreground">{codeOpen ? "ocultar" : "mostrar"}</span>
               </button>
               {codeOpen && (
                 <div className="mt-2 space-y-2">
-                  <p className="text-[11px] text-muted-foreground">O agente de código lê e edita os arquivos reais (HTML/CSS/JS) do projeto, valida e salva. Use para mudanças que o construtor visual não alcança (animações, detalhes de CSS, componentes).</p>
+                  <p className="text-[11px] text-muted-foreground">O agente (motor Cline + DeepSeek) lê, planeja e edita os arquivos reais do projeto — HTML, CSS e JS — com validação e refinamento. Ideal para mudanças que o construtor visual não alcança (animações, composições, detalhes de CSS).</p>
                   <textarea
                     value={codePrompt}
                     onChange={(e) => setCodePrompt(e.target.value)}

@@ -209,6 +209,45 @@ export async function invokeAgentExecute(input: {
   return data ?? { status: "error", errors: ["Resposta vazia do agente de código."] };
 }
 
+// Invoca o ProspectorSiteAgent (Cline SDK). Prefere o runtime Node local
+// (VITE_AGENT_RUNTIME_URL); se não estiver disponível, faz fallback para a
+// edge function agent-execute (mesmo contrato, infraestrutura atual).
+export async function invokeProspectorAgent(input: {
+  instruction: string;
+  files: Record<string, string>;
+  projectId?: string;
+  context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null };
+  memory?: string[];
+}): Promise<AgentExecuteResult> {
+  const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
+  if (runtimeUrl) {
+    try {
+      const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instruction: input.instruction,
+          files: input.files,
+          projectId: input.projectId,
+          context: input.context,
+          memory: input.memory ?? [],
+        }),
+        signal: AbortSignal.timeout(180_000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as AgentExecuteResult & { error?: string };
+        if (data.error) return { status: "error", errors: [data.error] };
+        return data;
+      }
+      // runtime respondeu com erro → reporta para o usuário entender
+      return { status: "error", errors: [`Runtime do agente indisponível (HTTP ${res.status}).`] };
+    } catch {
+      // conexão recusada → fallback para a edge function
+    }
+  }
+  return invokeAgentExecute(input);
+}
+
 export interface PersistedChatMsg {
   id: string;  role: "user" | "assistant";
   text: string;

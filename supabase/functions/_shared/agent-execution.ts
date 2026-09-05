@@ -179,12 +179,17 @@ export class StaticProjectRuntime implements ProjectExecutionRuntime {
     }
 
     const cssPath = findFile("site.css");
-    if (!cssPath) errors.push("site.css não encontrado.");
-    else if (!balancedCss(files[cssPath])) errors.push("site.css com chaves/parenteses desbalanceados.");
+    const htmlContent = htmlPath ? (files[htmlPath] ?? "") : "";
+    const hasInlineStyle = /<style[\s\S]*<\/style>/i.test(htmlContent);
+    const cssReferenced = /<link[^>]*href=["'][^"']*site\.css["']/i.test(htmlContent);
+    if (cssPath && !balancedCss(files[cssPath])) errors.push("site.css com chaves/parenteses desbalanceados.");
+    else if (!cssPath && cssReferenced) errors.push("site.css referenciado no HTML mas ausente no workspace.");
+    else if (!cssPath && !hasInlineStyle) errors.push("Nenhum estilo encontrado — inclua <style> no index.html ou src/site.css.");
 
     const jsPath = findFile("main.js") ?? findFile("main.ts");
-    if (!jsPath) errors.push("main.js não encontrado.");
-    else if (!isBalancedJs(files[jsPath])) errors.push("main.js com chaves/parenteses desbalanceados (possível erro de sintaxe).");
+    const jsReferenced = /<script[^>]*src=["'][^"']*main\.(js|ts)["']/i.test(htmlContent);
+    if (jsPath && !isBalancedJs(files[jsPath])) errors.push("main.js com chaves/parenteses desbalanceados (possível erro de sintaxe).");
+    else if (!jsPath && jsReferenced) errors.push("main.js referenciado no HTML mas ausente no workspace.");
 
     // Segredos em QUALQUER arquivo
     for (const p of paths) {

@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Agent runtime (Node separado) — deps instaladas localmente
+agent-runtime/node_modules/
+agent-runtime/.env
