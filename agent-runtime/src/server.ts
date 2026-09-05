@@ -11,6 +11,7 @@ import type { BusinessContext } from "./tools";
 import { assertGenerationQuality } from "./generation-gate";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction";
 import { materializeAttachments, type ChatAttachment } from "./attachments";
+import { researchBusiness, formatResearch, type ResearchOutcome } from "./research";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -112,7 +113,7 @@ export function startServer(port = PORT, host = HOST) {
         // ANEXOS (5.26) na geração: materializa no workspace (ex.: logo/foto real do cliente).
         const attachResult = materializeAttachments(resolveWorkspaceRoot(projectId), (body.attachments ?? []) as ChatAttachment[]);
         const genAttachBlock = attachResult.attachments.length || attachResult.errors.length
-          ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace — use se fizerem sentido para o site):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nPara usar uma imagem: LEIA o data URL com read_file e embuta inline (<img src="data:...">) para funcionar no preview/export.\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
+          ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace — use se fizerem sentido para o site):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nPara usar uma imagem do usuário: referencie o arquivo real (<img src="assets/<nome>"> ou background url). O preview embute o asset automaticamente; NÃO embuta o data URL gigante inline.\nReutilizar a MESMA foto do usuário em vários pontos é ESPERADO e permitido quando fizer sentido.\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
           : "";
 
         const activity: Array<{ phase: string; detail: string }> = [];
@@ -160,19 +161,28 @@ export function startServer(port = PORT, host = HOST) {
           ? `\nInformações adicionais do briefing (use o que for real; não invente o resto):\n${JSON.stringify(briefing).slice(0, 2000)}`
           : "";
 
-        const mission = `Crie do zero o site deste negócio, seguindo o fluxo da sua instrução de sistema (analisar → direcionar → estruturar → criar código real → auto-revisar → corrigir → finalizar).
+        // PESQUISA WEB (5.26): referências/tendências do segmento antes da missão.
+        // Best-effort — se não houver chave configurada, segue sem pesquisa.
+        let research: ResearchOutcome | null = null;
+        try {
+          research = await researchBusiness({ businessName: business.name, segment: business.segment, city: business.city });
+        } catch { research = null; }
+        const researchBlock = research && research.ok && research.snippets.length
+          ? `\nPESQUISA WEB DE REFERÊNCIA (5.26) — use para decidir a direção (tendências, técnicas, o que líderes do nicho fazem). NÃO copie sites/layouts/textos encontrados; crie algo próprio:\n${formatResearch(research)}`
+          : "";
+
+        const mission = `Crie do zero o site deste negócio, seguindo o fluxo da sua instrução de sistema (analisar → pesquisar quando necessário → direcionar → estruturar → criar código real → auto-revisar → corrigir → finalizar).
 
 CONTEXTO REAL DO NEGÓCIO:
 ${ctxLines || "(apenas nome de arquivo/nenhum dado além do projeto)"}
 ${extra}
 ${genAttachBlock}
-
+${researchBlock}
 ${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
 
-IMPORTANTE: a "Direção criativa sugerida" é um PONTO DE PARTIDA. Adapte-a ao que encontrar no negócio — cada site deve ter identidade e arquitetura próprias (não copie o mesmo layout para todos). Use imagens contextuais reais.`;
+IMPORTANTE: a "Direção criativa sugerida" é apenas um PONTO DE PARTIDA entre muitas direções possíveis — combine-a com a pesquisa e com o que encontrar no negócio. Cada site deve ter identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS (nunca copie o mesmo layout de outros projetos). Você tem liberdade para escolher o layout e a direção visual. Use imagens contextuais reais.`;
 
         const outcome = await agent.runTask(mission, { continueSession: !!existingGen });
-
         // ===== QUALITY GATE PÓS-GERAÇÃO (5.21) =====
         // A qualidade passa a ser consequência do processo: se a primeira versão
         // estiver tecnicamente deficiente (sem imagens em segmento visual, sem
@@ -288,7 +298,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         const attachments = (body.attachments ?? []) as ChatAttachment[];
         const attachResult = materializeAttachments(resolveWorkspaceRoot(projectId), attachments);
         const attachBlock = attachResult.attachments.length || attachResult.errors.length
-          ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace — você pode ler/usar):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nPara usar uma imagem no site: LEIA o arquivo com read_file (ele contém um data URL) e embuta inline no HTML como <img src="data:..."> — isso garante que funcione no preview/export sem servidor.\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
+          ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace — você pode ler/usar):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nPara usar uma imagem do usuário no site: referencie o arquivo real — <img src="assets/<nome>"> ou background url(...). O preview do produto embute o asset automaticamente; NÃO embuta o data URL gigante inline (deixa o HTML enorme e quebra edições futuras).\nReutilizar a MESMA foto do usuário em vários pontos (hero + cards + sobre) é ESPERADO e permitido quando o usuário pedir.\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
           : "";
 
         const outcome = await agent.runTask(`${memoryBlock}${attachBlock}${instruction}`, { continueSession: resume });

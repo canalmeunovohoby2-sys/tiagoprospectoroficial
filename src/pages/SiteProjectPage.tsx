@@ -504,6 +504,17 @@ export default function SiteProjectPage() {
             return;
           }
         }
+        if (!agentErr && agentRes && agentRes.status === "error" && (agentRes.errors?.length ?? 0) > 0 && !agentRes.changed) {
+          // O agente reportou BLOQUEIO real sem alterar nada (ex.: falhou ao
+          // encontrar o trecho/arquivo). Honestidade: NÃO cair no fallback que
+          // "responde que fez" sem ter feito — informa o bloqueio ao usuário.
+          const reason = agentRes.errors!.slice(0, 3).join("; ");
+          pushReply(`⚠ Não consegui concluir essa alteração: ${reason}\nNada foi modificado no site. Me diga o que deseja de outro jeito (ou confira o nome/imagem exatos) que eu tento novamente.`, agentRes.activity);
+          stopProgress();
+          setAgentStep(null);
+          setAiRunning(false);
+          return;
+        }
         if (agentErr || !agentRes || !agentRes.files || !Object.keys(agentRes.files).length) {
           // Sem evidência de mudança → fallback para o fluxo spec (edit-site).
         }

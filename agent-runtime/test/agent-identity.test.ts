@@ -18,6 +18,10 @@ describe("Agent Identity central (5.27) — profissional permanente", () => {
     expect(id).toContain("evidência");
     expect(id).toContain("continue trabalhando");
     expect(id).toContain("verificações reais");
+    // Imagens do usuário (assets/) podem e devem ser reutilizadas quando pedido.
+    expect(id).toContain("imagens do usuário");
+    expect(id).toContain("assets/");
+    expect(id).toContain("reutilize o mesmo arquivo");
   });
 
   it("prompt de edição usa a identidade central (sem prompt local duplicado)", () => {

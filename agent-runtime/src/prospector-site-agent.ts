@@ -12,6 +12,7 @@ import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vi
 import { decideFinishBlock } from "./completion-guard";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity";
 import { computeWorkEvidence, type WorkEventLike } from "./work-evidence";
+import { researchEnabled, runSearchQuery } from "./research";
 
 export interface AgentRunOutcome {
   ok: boolean;
@@ -42,6 +43,10 @@ export interface ProspectorAgentOptions {
   mode?: "edit" | "generate";
   /** habilita browser tools (Playwright) — browser real para QA do site. */
   enableBrowser?: boolean;
+  /** habilita a tool web_search (quando houver chave de pesquisa configurada). */
+  enableResearch?: boolean;
+  /** pesquisa web de referência executada antes da missão (só quando disponível). */
+  research?: ResearchOutcome | null;
 }
 
 export class ProspectorSiteAgent {
@@ -96,6 +101,24 @@ export class ProspectorSiteAgent {
       });
     }
 
+    // web_search (5.26): pesquisa externa de referência/tendências — opcional e
+    // disponível apenas quando há chave configurada (nunca bloqueia o trabalho).
+    const researchTools: unknown[] = [];
+    if (options.enableResearch !== false && researchEnabled()) {
+      researchTools.push(createTool({
+        name: "web_search",
+        description:
+          "Pesquisa na web por referências, tendências e técnicas de design do segmento (ex.: 'melhores sites de restaurante premium 2026', 'tendências web design gastronomia'). Use quando a pesquisa agregar valor à direção criativa ou à copy. NUNCA copie sites/layouts/textos encontrados — use apenas como referência para criar algo próprio e contextualizado.",
+        inputSchema: z.object({ query: z.string().describe("consulta curta e específica (máx. ~60 palavras)") }),
+        async execute(input) {
+          const r = await runSearchQuery(input.query);
+          return r.ok
+            ? JSON.stringify({ ok: true, query: input.query, results: r.results })
+            : JSON.stringify({ ok: false, error: r.error ?? "web_search indisponível" });
+        },
+      }));
+    }
+
     // Hook antes do modelo: se houver visão real e um screenshot pendente,
     // anexa a imagem como mensagem de usuário (ImageContent) ao próximo request.
     const beforeModel = async (input: { messages?: unknown[]; systemPrompt?: string }) => {
@@ -143,7 +166,7 @@ export class ProspectorSiteAgent {
       apiKey: options.apiKey ?? process.env.DEEPSEEK_API_KEY ?? process.env.PROSPECTOR_API_KEY,
       baseUrl: options.baseUrl ?? process.env.PROSPECTOR_BASE_URL ?? "https://api.deepseek.com",
       systemPrompt,
-      tools: [...tools, ...browserTools, complete],
+      tools: [...tools, ...browserTools, ...researchTools, complete],
       maxIterations: options.maxIterations ?? 40,
       hooks: { beforeModel, beforeTool },
     });

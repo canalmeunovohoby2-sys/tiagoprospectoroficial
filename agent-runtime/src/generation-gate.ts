@@ -43,8 +43,11 @@ export function assertGenerationQuality(
   }
 
   // ANTI-REPETIÇÃO DE IMAGEM (5.27): a MESMA url usada várias vezes indica
-  // "as mesmas fotos" / preguiça visual.
-  const imgUrls = [...html.matchAll(/src=["']([^"']+)["']/gi)].map((m) => m[1]).filter((u) => u && !u.startsWith("data:") && !u.startsWith("data:image"));
+  // "as mesmas fotos" / preguiça visual. Isenta refs a assets/ (assets do
+  // USUÁRIO, ex.: logo/foto anexada) — repetir a foto do cliente é esperado.
+  const imgUrls = [...html.matchAll(/src=["']([^"']+)["']/gi)]
+    .map((m) => m[1])
+    .filter((u) => u && !u.startsWith("data:") && !u.startsWith("data:image") && !/^(\.\/)?assets\//i.test(u));
   const urlCount = new Map<string, number>();
   for (const u of imgUrls) urlCount.set(u, (urlCount.get(u) ?? 0) + 1);
   const dup = [...urlCount.entries()].filter(([, c]) => c > 1);

@@ -74,4 +74,12 @@ describe("Generation Quality Gate (5.21)", () => {
     expect(r.ok).toBe(false);
     expect(r.issues.some((i) => i.toLowerCase().includes("mesma imagem") || i.toLowerCase().includes("repetid"))).toBe(true);
   });
+
+  it("NÃO reprova repetição de foto do USUÁRIO (assets/) — reuso esperado", () => {
+    const sameAsset = `<img src="assets/cliente-foto.png" alt="a"/><img src="assets/cliente-foto.png" alt="b"/><img src="assets/cliente-foto.png" alt="c"/>`;
+    const files = base(sameAsset, "@media{}");
+    const r = assertGenerationQuality(files, { segment: "Academias", name: "Academia Corpo Forte", businessHas: () => true });
+    const dupIssue = r.issues.find((i) => i.toLowerCase().includes("mesma imagem") || i.toLowerCase().includes("pouca variedade"));
+    expect(dupIssue).toBeUndefined();
+  });
 });

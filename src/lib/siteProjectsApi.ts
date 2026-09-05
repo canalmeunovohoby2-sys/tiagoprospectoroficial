@@ -210,7 +210,7 @@ export async function invokeAgentExecute(input: {
   attachments?: ChatAttachmentInput[];
 }): Promise<AgentExecuteResult> {
   // Anexos → arquivos reais no workspace (mapa), para o agente ler/usar.
-  let files = { ...(input.files ?? {}) };
+  const files = { ...(input.files ?? {}) };
   let attachHint = "";
   const attachments = input.attachments ?? [];
   if (attachments.length) {
@@ -231,7 +231,7 @@ export async function invokeAgentExecute(input: {
       materialized.push(`${path} (${mime})`);
     });
     attachHint = materialized.length
-      ? `\nANEXOS (arquivos reais no workspace — leia com read_file e use; para imagem embuta <img src="data:..."> inline no HTML):\n${materialized.map((m) => `- ${m}`).join("\n")}`
+      ? `\nANEXOS (arquivos reais no workspace — leia com read_file e use):\n${materialized.map((m) => `- ${m}`).join("\n")}\nPara usar uma imagem do usuário no site: referencie o arquivo real (<img src="assets/<nome>"> ou background url) — o preview do produto embute automaticamente; NÃO embuta o data URL gigante inline.\nReutilizar a MESMA foto do usuário em vários pontos é ESPERADO quando o usuário pedir.`
       : "";
     if (rejected.length) attachHint += `\nAnexos rejeitados (tipo/tamanho): ${rejected.join(", ")}`;
   }
@@ -320,7 +320,10 @@ ${ctxLines || "(poucos dados — não invente o resto)"}
 ${extra}
 
 REGRA DE DIRECÃO (aplique a SKILL de Design Contextual Adaptativo):
-- Defina a identidade visual sob medida: psicologia das cores do segmento, tipografia Google Fonts expressiva, imagens reais contextualizadas (Unsplash, 3+ DISTINTAS, coerentes com o negócio — NUNCA repita a mesma imagem e NUNCA use imagem de outro segmento).
+- Você é o cérebro criativo: defina a identidade sob medida (paleta, tipografia, layout, composição, imagens, interações) para ESTE negócio — cada site deve ser distinto, nunca o mesmo template de outro projeto.
+- Use o bloco PESQUISA WEB DE REFERÊNCIA (se presente) para tendências e referências do nicho — inspire-se sem copiar.
+- Google Maps (embed, só com endereço real), Google Fonts, ícones e recursos externos são permitidos quando fizerem sentido.
+- Psicologia das cores do segmento, tipografia Google Fonts expressiva, imagens reais contextualizadas (Unsplash, 3+ DISTINTAS, coerentes com o negócio — NUNCA repita a mesma imagem e NUNCA use imagem de outro segmento).
 - Aplique a SKILL de Efeitos/Motion: glassmorphism no header/cards quando couber, glow/bordas sutis, botões com hover, cards com elevação, microinterações e transições — sem exagerar.
 - Use arquitetura de conversão com ritmo: header/nav, hero de alto impacto (headline + CTA principal + secundário), seções variadas (valor/diferenciais, serviços/ambientes, como funciona, prova apenas com dados reais, CTA final), footer profissional completo.
 - Responsividade total (mobile/tablet/desktop) sem overflow.

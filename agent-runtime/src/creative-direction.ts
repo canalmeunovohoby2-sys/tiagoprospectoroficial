@@ -202,16 +202,18 @@ export function buildCreativeBrief(businessName: string, segment: string): Creat
 }
 
 // Texto enxuto do brief para injetar na missão (sem expor raciocínio excessivo).
+// Aviso (5.26): é PONTO DE PARTIDA — nunca um template; a direção final vem da
+// decisão contextual do agente (pesquisa + negócio).
 export function formatCreativeBrief(brief: CreativeBrief): string {
   const arch = brief.architecture.map((a, i) => `${i + 1}. ${a}`).join("\n   ");
   const queries = Object.entries(brief.imageQueries).map(([role, q]) => `   - ${role}: "${q}"`).join("\n");
-  return `DIREÇÃO CRIATIVA SUGERIDA (adaptável ao que você encontrar no negócio):
+  return `DIREÇÃO CRIATIVA SUGERIDA (ponto de partida, NÃO um template — a direção final é sua, baseada na pesquisa e no negócio):
 - Posicionamento: ${brief.position}
 - Sensação: ${brief.sensation}
-- Arquétipo visual: ${brief.archetype}
-- Paleta: ${brief.paletteHint}
-- Tipografia: ${brief.typeHint}
-- Hero: ${brief.heroStrategy}
+- Arquétipo visual (referência de linguagem): ${brief.archetype}
+- Paleta possível (várias direções servem — escolha a que melhor traduz ESTE negócio): ${brief.paletteHint}
+- Tipografia possível (idem): ${brief.typeHint}
+- Hero (direção de impacto, adaptável): ${brief.heroStrategy}
 - Arquiteturas possíveis (escolha 1 e refine para ESTE negócio — não copie literalmente):
    ${arch}
 - Imagens contextuais (busque/us referências nesta direção; nunca use imagens de outro segmento):

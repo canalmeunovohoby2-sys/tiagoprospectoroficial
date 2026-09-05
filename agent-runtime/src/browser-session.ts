@@ -1,5 +1,8 @@
 // Browser session (5.20) — servidor estático local seguro por workspace +
 // Playwright. Serve APENAS o root do workspace autorizado (sem traversal).
+// (5.28) Arquivos de imagem cujo conteúdo é um DATA URL (anexos do usuário em
+// assets/) são servidos como bytes decodificados — permite o Cline referenciar
+// <img src="assets/foto.png"> no browser QA de verdade.
 import { createServer } from "node:http";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
@@ -62,6 +65,20 @@ export class BrowserSession {
     return idx >= 0 ? MIME[path.slice(idx).toLowerCase()] ?? "application/octet-stream" : "application/octet-stream";
   }
 
+  // Anexos de imagem do usuário são gravados no workspace como DATA URL (texto).
+  // Ao servir assets/*.png|jpg|webp|gif com conteúdo "data:image/...;base64,...",
+  // decodifica para bytes reais para o navegador renderizar (browser QA do Cline).
+  private decodeDataUrlAsset(content: Buffer, path: string): Buffer | null {
+    const mime = this.mimeOf(path);
+    if (!/^image\/(png|jpe?g|webp|gif)$/i.test(mime)) return null;
+    const text = content.toString("utf8");
+    const m = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/s.exec(text.trim());
+    if (!m) return null;
+    const bytes = Buffer.from(m[2].replace(/\s+/g, ""), "base64");
+    if (bytes.length === 0 || bytes.length > 4_000_000) return null;
+    return bytes;
+  }
+
   // Inicia servidor estático servindo apenas o workspace root.
   async startServer(): Promise<string> {
     if (this.server && this.currentPort) return `http://127.0.0.1:${this.currentPort}/`;
@@ -79,6 +96,13 @@ export class BrowserSession {
         const file = existsSync(target) && statSync(target).isFile() ? target : join(target, "index.html");
         if (!existsSync(file)) { res.writeHead(404); res.end("not found"); return; }
         const content = readFileSync(file);
+        const decoded = this.decodeDataUrlAsset(content, file);
+        if (decoded) {
+          const imgMime = this.mimeOf(file);
+          res.writeHead(200, { "Content-Type": imgMime, "Cache-Control": "no-store" });
+          res.end(decoded);
+          return;
+        }
         res.writeHead(200, { "Content-Type": this.mimeOf(file), "Cache-Control": "no-store" });
         res.end(content);
       } catch {

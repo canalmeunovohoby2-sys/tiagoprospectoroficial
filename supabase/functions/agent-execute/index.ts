@@ -41,6 +41,8 @@ MODO DE TRABALHO (obrigatório):
    - site.json deve continuar JSON válido.
    - main.js deve continuar com JS válido (chaves balanceadas).
    - Trabalhe até a instrução estar de fato atendida; não faça só uma alteração simbólica.
+   - IMAGENS DO USUÁRIO ficam em assets/<arquivo> (o conteúdo é um data URL guardado no próprio arquivo). Para usá-las, referencie o CAMINHO: <img src="assets/x.png"> ou background url(...) — o preview do produto embute o asset sozinho. NÃO copie data URLs gigantes inline no HTML.
+   - Repetir a MESMA foto do usuário em vários pontos (hero + cards + sobre) é ESPERADO e permitido quando o usuário pedir. A regra de imagens distintas vale para banco de imagens, não para anexos do cliente.
 
 RESPOSTA (JSON obrigatório, sem markdown):
 {
@@ -62,7 +64,13 @@ REGRAS DE ENTREGA:
 - Se o arquivo for muito grande, NÃO precisa reescrevê-lo inteiro: localize o trecho
   exato (ex.: fechamento de uma seção, a classe do hero) e use "edit". Você pode usar
   "edit" múltiplas vezes no mesmo arquivo em uma mesma resposta.
-- Antes de decidir, leia os arquivos fornecidos no bloco CONTEÚDO ATUAL.`;
+ - Antes de decidir, leia os arquivos fornecidos no bloco CONTEÚDO ATUAL.
+
+LIBERDADE CRIATIVA E INICIATIVA (5.26):
+- Você é o cérebro criativo e decisor. Não espere instruções detalhando cada decisão de design.
+- Na geração, defina paleta, tipografia, layout, composição, imagens e efeitos SOB MEDIDA para ESTE negócio. Cada site deve ter identidade e arquitetura próprias — nunca repita o mesmo layout/paleta/efeitos de outro projeto.
+- Use o bloco PESQUISA WEB DE REFERÊNCIA (quando presente) para tendências e referências do nicho — inspire-se, NUNCA copie sites/layouts/textos.
+- Google Maps (embed, só com endereço real), Google Fonts, ícones e imagens contextuais são permitidos quando fizerem sentido.`;
 
 interface AgentOp {
   type: "write" | "edit" | "delete" | "rename";
@@ -133,6 +141,7 @@ function buildAgentPrompt(input: {
   filesList: string;
   filesContent: string;
   buildErrors: string[];
+  researchBlock?: string;
 }): string {
   const errBlock = input.buildErrors.length
     ? `\nERROS DA VALIDAÇÃO ANTERIOR (corrija NA PRÓXIMA rodada de operações):\n- ${input.buildErrors.join("\n- ")}\n`
@@ -143,6 +152,7 @@ ${input.memoryBlock ? `MEMÓRIA DE DECISÕES (preserve):\n${input.memoryBlock}\n
 INSTRUÇÃO DO USUÁRIO:
 "${input.instruction}"
 ${errBlock}
+${input.researchBlock ?? ""}
 ARQUIVOS DO PROJETO:
 ${input.filesList}
 
@@ -164,11 +174,87 @@ function summarizeContent(files: WorkspaceMap, company: string): string {
   for (const name of names) if (!ordered.includes(name)) ordered.push(name);
   for (const name of ordered.slice(0, 6)) {
     const content = files[name] ?? "";
+    // Data URIs gigantes (fotos do usuário embutidas) consomem o orçamento do
+    // resumo e escondem o restante do arquivo. Compacta antes de cortar: o
+    // agente não precisa re-emitir o blob — deve referenciar assets/<arquivo>.
+    const safe = compactDataUris(content);
     const max = name.endsWith("site.json") ? 12000 : name.endsWith(".css") ? 14000 : name.endsWith("index.html") ? 50000 : 14000;
-    excerpts.push(`\n##### FILE: ${name} (${content.length} chars) #####\n${content.slice(0, max)}${content.length > max ? "\n…(truncado)" : ""}`);
+    excerpts.push(`\n##### FILE: ${name} (${content.length} chars) #####\n${safe.slice(0, max)}${safe.length > max ? "\n…(truncado)" : ""}`);
   }
   void company;
   return excerpts.join("\n");
+}
+
+// Substitui data URIs longos por um marcador curto (mantém a estrutura legível).
+function compactDataUris(content: string): string {
+  return content.replace(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi, (m) => `data:[${Math.round((m.length * 3) / 4)} bytes de imagem embutida]`);
+}
+
+// PESQUISA WEB (5.26) — referências/tendências do segmento antes da geração.
+// Best-effort: usa as secrets TAVILY_API_KEY_01..08 (mesmo padrão do provider
+// pool); sem chaves ou com falha, a geração segue sem pesquisa (honesto).
+const TAVILY_ENDPOINT = "https://api.tavily.com/search";
+
+function edgeTavilyKeys(): string[] {
+  const keys: string[] = [];
+  for (let i = 1; i <= 8; i++) {
+    const label = `TAVILY_API_KEY_${String(i).padStart(2, "0")}`;
+    const k = Deno.env.get(label) ?? Deno.env.get(`TAVILY_API_KEY_${i}`);
+    if (k && !keys.includes(k)) keys.push(k);
+  }
+  const single = Deno.env.get("TAVILY_API_KEY");
+  if (single && !keys.includes(single)) keys.push(single);
+  return keys;
+}
+
+async function edgeSearchOnce(query: string, key: string): Promise<Array<{ title: string; url: string; description: string }>> {
+  const res = await fetch(TAVILY_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ query: query.slice(0, 400), max_results: 5, search_depth: "basic" }),
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (res.status !== 200) return [];
+  const data = (await res.json().catch(() => null)) as { results?: Array<{ title?: string; url?: string; content?: string }> } | null;
+  if (!data || !Array.isArray(data.results)) return [];
+  return data.results
+    .filter((r) => typeof r?.url === "string")
+    .slice(0, 5)
+    .map((r) => ({
+      title: String(r.title ?? "").slice(0, 160),
+      url: String(r.url ?? "").slice(0, 300),
+      description: String(r.content ?? "").slice(0, 400),
+    }));
+}
+
+// Retorna um bloco enxuto de referências ou "" (nunca lança).
+async function edgeResearchBlock(opts: { name?: string; segment?: string; city?: string }): Promise<string> {
+  const keys = edgeTavilyKeys();
+  if (keys.length === 0) return "";
+  const seg = opts.segment || "negócio local";
+  const place = opts.city ? ` ${opts.city}` : "";
+  const queries = [
+    `melhores sites de ${seg}${place} referência visual`,
+    `tendências de design para ${seg}${place}`,
+  ];
+  const lines: string[] = [];
+  for (const q of queries) {
+    for (const key of keys) {
+      try {
+        const results = await edgeSearchOnce(q, key);
+        if (!results.length) continue;
+        lines.push(`Queries: "${q}"`);
+        for (const r of results.slice(0, 4)) {
+          lines.push(`- ${r.title || r.url}`);
+          if (r.description) lines.push(`  ${r.description.slice(0, 180)}`);
+        }
+        break;
+      } catch { /* tenta próxima chave/query */ }
+    }
+  }
+  if (!lines.length) return "";
+  const body = lines.join("\n");
+  return `\nPESQUISA WEB DE REFERÊNCIA (5.26) — use para decidir a direção criativa (tendências, técnicas, o que líderes do nicho fazem). NÃO copie sites/layouts/textos; crie algo próprio e contextualizado:\n${body.length > 2200 ? body.slice(0, 2200) + "\n…(truncado)" : body}`;
 }
 
 Deno.serve(async (req) => {
@@ -202,6 +288,19 @@ Deno.serve(async (req) => {
     const filesContent = summarizeContent(files, companyName);
     const memoryBlock = memory.join("\n- ");
 
+    // Geração (workspace sem index.html): pesquisa referências antes da missão.
+    const isGenerate = Object.keys(files).length === 0 || !listFiles(files).some((p) => p.endsWith("index.html"));
+    let researchBlock = "";
+    if (isGenerate) {
+      try {
+        researchBlock = await edgeResearchBlock({
+          name: String(context.name ?? context.company_name ?? ""),
+          segment: String(context.segment ?? ""),
+          city: String(context.city ?? ""),
+        });
+      } catch { researchBlock = ""; }
+    }
+
     let current = files;
     let lastOps: AgentOp[] = [];
     let lastReply = "";
@@ -221,6 +320,7 @@ Deno.serve(async (req) => {
         filesList: listFiles(current).map((p, i) => `  ${i + 1}. ${p} (${(current[p] ?? "").length} chars)`).join("\n"),
         filesContent: summarizeContent(current, companyName),
         buildErrors: firstRound ? (emptyOpsNudge ? ["VOCÊ RESPONDEU QUE FEZ A MUDANÇA MAS DEVOLVEU ZERO OPERATIONS. ISSO É ENTREGA INCOMPLETA — devolva write/edit reais agora."] : []) : buildResult.errors,
+        researchBlock,
       });
       firstRound = false;
 
