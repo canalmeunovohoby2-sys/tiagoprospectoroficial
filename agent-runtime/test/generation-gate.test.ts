@@ -52,4 +52,18 @@ describe("Generation Quality Gate (5.21)", () => {
     expect(VISUAL_SEGMENTS).toContain("academia");
     expect(VISUAL_SEGMENTS).toContain("restaurante");
   });
+
+  it("detecta grade genérica de muitos cards (anti 'cards empilhados')", () => {
+    const manyCards = Array.from({ length: 8 }, (_, i) => `<div class="card"><h3>Item ${i}</h3><p>texto</p></div>`).join("");
+    const files = base(`<img src="a.jpg" alt=""/>${manyCards}`, "@media{}");
+    const r = assertGenerationQuality(files, { segment: "Academias", name: "Academia X", businessHas: () => true });
+    expect(r.issues.some((i) => i.toLowerCase().includes("cards empilhados") || i.toLowerCase().includes("muitos cards"))).toBe(true);
+  });
+
+  it("cards em quantidade moderada e com composição variada não reprovam", () => {
+    const cards = Array.from({ length: 3 }, (_, i) => `<div class="card-${i}"><img src="a${i}.jpg" alt=""/><h3>Item ${i}</h3></div>`).join("");
+    const files = base(`<div class="grid-split"><div>texto editorial longo aqui</div>${cards}</div><div class="media">texto e imagem</div>`, "@media{}");
+    const r = assertGenerationQuality(files, { segment: "Academias", name: "Academia Corpo Forte", businessHas: () => true });
+    expect(r.ok).toBe(true);
+  });
 });

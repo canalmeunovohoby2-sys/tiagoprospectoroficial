@@ -9,6 +9,7 @@ import { ProspectorSiteAgent } from "./prospector-site-agent";
 import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot } from "./workspace";
 import type { BusinessContext } from "./tools";
 import { assertGenerationQuality } from "./generation-gate";
+import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -156,7 +157,11 @@ export function startServer(port = PORT, host = HOST) {
 
 CONTEXTO REAL DO NEGÓCIO:
 ${ctxLines || "(apenas nome de arquivo/nenhum dado além do projeto)"}
-${extra}`;
+${extra}
+
+${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
+
+IMPORTANTE: a "Direção criativa sugerida" é um PONTO DE PARTIDA. Adapte-a ao que encontrar no negócio — cada site deve ter identidade e arquitetura próprias (não copie o mesmo layout para todos). Use imagens contextuais reais.`;
 
         const outcome = await agent.runTask(mission, { continueSession: !!existingGen });
 

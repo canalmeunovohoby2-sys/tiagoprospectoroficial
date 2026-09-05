@@ -63,6 +63,25 @@ export function assertGenerationQuality(
   // Hero
   if (!/hero|class="[^"]*intro|class="[^"]*top/i.test(html)) issues.push("Sem seção hero clara no topo.");
 
+  // Anti-template visual: grade genérica de cards em excesso (ex.: 6+ cards iguais
+  // numa só seção) indica "cards empilhados" sem composição/ritmo.
+  const cardMatch = html.match(/class="[^"]*\bcard\b[^"]*"/gi) ?? [];
+  if (cardMatch.length >= 6) {
+    issues.push("Muitos cards com a mesma classe/genérica numa página (parece 'cards empilhados'). Varie a composição: use listas editoriais, divisões assimétricas, imagens+texto, números/timeline — cards só quando ajudam o design.");
+  }
+  // Sinal de PDF/apresentação: 3+ seções consecutivas só com título+texto simples.
+  const sections = html.match(/<section[^>]*>[\s\S]*?<\/section>/gi) ?? [];
+  let textOnlyRuns = 0;
+  let maxRun = 0;
+  for (const sec of sections) {
+    const hasLayout = /<img|<ul|<table|<figure|grid|class="[^"]*(split|cols|grid|media|list)/i.test(sec);
+    if (!hasLayout) { textOnlyRuns++; maxRun = Math.max(maxRun, textOnlyRuns); }
+    else textOnlyRuns = 0;
+  }
+  if (sections.length >= 4 && maxRun >= 3) {
+    issues.push("Várias seções seguidas só com texto (sem composição) — parece PDF/apresentação. Varie layout entre seções.");
+  }
+
   // Nome da empresa visível
   const name = (opts.name ?? "").trim();
   if (name && name.length > 2 && !html.includes(name)) issues.push(`O nome da empresa ("${name}") não aparece no HTML.`);
