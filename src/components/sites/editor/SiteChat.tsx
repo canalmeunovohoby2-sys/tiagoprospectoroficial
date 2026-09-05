@@ -49,7 +49,7 @@ function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> 
   });
 }
 
-export function SiteChat({ messages, running, error, canUndo, dirty, onApply, onRevert }: SiteChatProps) {
+export function SiteChat({ messages, running, error, canUndo, dirty, runningLabel, onApply, onRevert }: SiteChatProps) {
   const [instruction, setInstruction] = useState("");
   const [attachment, setAttachment] = useState<{ dataUrl: string; label: string } | null>(null);
   const [listening, setListening] = useState(false);
