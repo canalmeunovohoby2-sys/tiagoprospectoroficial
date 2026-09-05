@@ -130,10 +130,11 @@ export async function editSiteWithAI(
   spec: SiteSpec,
   instruction: string,
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null },
+  conversation?: string[],
 ): Promise<{ spec: SiteSpec; model: string; changed: boolean }> {
   const { data, error } = await supabase.functions.invoke<{ spec: SiteSpec; model: string; changed?: boolean }>(
     "edit-site",
-    { body: { spec, instruction, context } },
+    { body: { spec, instruction, context, conversation: conversation ?? [] } },
   );
   if (error) throw error;
   if (!data?.spec || typeof data.spec !== "object") {

@@ -61,3 +61,45 @@ export async function runFirecrawlSearch(query: string, limit: number): Promise<
   if (!pool.ok) { const failure = pool as PoolFailure; return { provider: "firecrawl", results: [], error: { code: failure.code, message: failure.message, attemptedKeys: failure.attemptedKeys } }; }
   return { provider: "firecrawl", keyIndex: pool.keyIndex, results: pool.value };
 }
+
+// Abre uma página (scrape) e devolve o conteúdo em texto/markdown.
+export async function runFirecrawlScrape(url: string): Promise<{
+  provider: "firecrawl";
+  kind: "scrape";
+  keyIndex?: string;
+  content: string | null;
+  error?: { code: string; message: string; attemptedKeys: string[] };
+}> {
+  const execute = async (apiKey: string): Promise<PoolExecuteResult<string>> => {
+    try {
+      const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
+      });
+      if (res.status !== 200) {
+        return { ok: false, statusCode: res.status, errorCode: `HTTP_${res.status}` };
+      }
+      const data = await res.json().catch(() => null);
+      if (!data || typeof data !== "object") {
+        return { ok: false, statusCode: 200, errorCode: "INVALID_RESPONSE" };
+      }
+      const raw = data as Record<string, unknown>;
+      const item = raw.data && typeof raw.data === "object" ? (raw.data as Record<string, unknown>) : raw;
+      const md = typeof item.markdown === "string" ? item.markdown : typeof item.content === "string" ? item.content : "";
+      if (!md || md.trim().length < 40) {
+        return { ok: false, statusCode: 200, errorCode: "EMPTY_CONTENT" };
+      }
+      return { ok: true, value: md, statusCode: 200 };
+    } catch {
+      return { ok: false, errorCode: "NETWORK" };
+    }
+  };
+
+  const pool = await runWithKeyPool({ provider: "firecrawl", execute });
+  if (!pool.ok) {
+    const failure = pool as PoolFailure;
+    return { provider: "firecrawl", kind: "scrape", content: null, error: { code: failure.code, message: failure.message, attemptedKeys: failure.attemptedKeys } };
+  }
+  return { provider: "firecrawl", kind: "scrape", keyIndex: pool.keyIndex, content: pool.value };
+}

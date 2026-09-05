@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from "react";
-import { ChevronDown, ArrowUp, ArrowDown, Plus, Trash2, Palette, Type, LayoutGrid, MousePointerClick, AlignLeft, Sparkles, RotateCcw, Loader2, AlertTriangle } from "lucide-react";
+import { useState, useRef, type ChangeEvent, type ReactNode } from "react";
+import { ChevronDown, ArrowUp, ArrowDown, Plus, Trash2, Palette, Type, LayoutGrid, MousePointerClick, AlignLeft, Sparkles, RotateCcw, Loader2, AlertTriangle, Mic, Paperclip, Send, X } from "lucide-react";
 import type { SiteSpec, SiteCta } from "@/data/siteProjects";
 import { normalizeSpec } from "@/data/siteProjects";
 import { Input } from "@/components/ui/input";
@@ -161,11 +161,20 @@ function Panel({ title, icon, children, defaultOpen = true }: { title: string; i
 
 /* ---------- Editor principal ---------- */
 
+export interface ChatMsg {
+  role: "user" | "assistant";
+  text: string;
+  image?: string;
+  fileLabel?: string;
+}
+
 export interface AiPanelProps {
   running: boolean;
   error: string | null;
   proposed: boolean;
-  onApply: (instruction: string) => void;
+  messages?: ChatMsg[];
+  canUndo?: boolean;
+  onApply: (instruction: string, attachment?: { dataUrl: string; label: string }) => void;
   onRevert: () => void;
 }
 
@@ -177,6 +186,96 @@ export interface SiteEditorProps {
 
 export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
   const [aiInstruction, setAiInstruction] = useState("");
+  const [aiAttachment, setAiAttachment] = useState<{ dataUrl: string; label: string } | null>(null);
+  const [listening, setListening] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const recRef = useRef<{ stop: () => void } | null>(null);
+
+  const chatMsgs = aiPanel?.messages ?? [];
+
+  function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> {
+    return new Promise((resolve, reject) => {
+      if (!file.type.startsWith("image/")) {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ dataUrl: String(reader.result), label: file.name });
+        reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
+        reader.readAsDataURL(file);
+        return;
+      }
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1024;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { URL.revokeObjectURL(url); reject(new Error("Canvas indisponível")); return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        resolve({ dataUrl: canvas.toDataURL("image/jpeg", 0.82), label: file.name });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Imagem inválida")); };
+      img.src = url;
+    });
+  }
+
+  async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      setAiAttachment(await fileToDataUrl(file));
+    } catch (err) {
+      setAiAttachment({ dataUrl: "", label: file.name });
+    }
+  }
+
+  function toggleMic() {
+    const SR = (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition
+      ?? (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
+    if (!SR) {
+      if (aiPanel) { /* informa de forma silenciosa */ }
+      return;
+    }
+    if (recRef.current) {
+      recRef.current.stop();
+      recRef.current = null;
+      setListening(false);
+      return;
+    }
+    try {
+      const Rec = SR as new () => { lang: string; interimResults: boolean; onresult: (ev: unknown) => void; onend: () => void; onerror: () => void; start: () => void; stop: () => void };
+      const rec = new Rec();
+      rec.lang = "pt-BR";
+      rec.interimResults = false;
+      rec.onresult = (ev: unknown) => {
+        const results = (ev as { results?: ArrayLike<ArrayLike<{ transcript?: string }>> }).results;
+        if (results) {
+          const text = Array.from(results).map((r) => r[0]?.transcript ?? "").join(" ");
+          setAiInstruction((prev) => (prev ? `${prev} ${text}` : text).trim());
+        }
+      };
+      rec.onend = () => { recRef.current = null; setListening(false); };
+      rec.onerror = () => { recRef.current = null; setListening(false); };
+      rec.start();
+      recRef.current = rec;
+      setListening(true);
+    } catch {
+      setListening(false);
+    }
+  }
+
+  function handleAiSend() {
+    if (!aiPanel || aiPanel.running) return;
+    const value = aiInstruction.trim();
+    if (!value && !aiAttachment) return;
+    aiPanel.onApply(value || "Aplique a alteração considerando o anexo.", aiAttachment ?? undefined);
+    setAiInstruction("");
+    setAiAttachment(null);
+  }
+
   const design = spec.design_system ?? {};
   const colors = design.colors ?? {};
   const colorValue = (k: string) => str(colors[k]) || DEFAULT_COLORS[k] || "";
@@ -201,46 +300,84 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
             <p className="flex items-center gap-2 text-sm font-semibold">
               <Sparkles className="h-4 w-4 text-primary" /> Editar com IA
             </p>
-            {aiPanel.running && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" /> Editando…
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {aiPanel.canUndo && !aiPanel.running && (
+                <button type="button" onClick={aiPanel.onRevert} className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors" title="Volta para antes da última alteração">
+                  <RotateCcw className="h-3 w-3" /> Desfazer
+                </button>
+              )}
+              {aiPanel.running && (
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Editando…
+                </span>
+              )}
+            </div>
           </div>
-          <TextAreaInput
-            value={aiInstruction}
-            onChange={setAiInstruction}
-            placeholder="Ex.: Deixe o hero mais sofisticado. / Troque as cores para tons elegantes mantendo a cor primária. / Melhore os textos dos serviços."
-            rows={2}
-          />
-          {aiPanel.proposed && !aiPanel.running && (
-            <div className="flex items-center justify-between gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/5 px-2.5 py-1.5">
-              <span className="text-[11px] text-emerald-600 font-medium">IA propôs alterações — ainda não salvas</span>
-              <button type="button" onClick={aiPanel.onRevert} className="inline-flex items-center gap-1 text-[11px] text-foreground hover:text-destructive transition-colors">
-                <RotateCcw className="h-3 w-3" /> Reverter
-              </button>
+
+          {chatMsgs.length > 0 && (
+            <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+              {chatMsgs.map((m, i) => (
+                <div key={i} className={`max-w-[92%] rounded-xl px-3 py-2 text-[12.5px] leading-relaxed ${m.role === "user" ? "ml-auto bg-primary/12 border border-primary/20" : "bg-card border border-border/60"}`}>
+                  {m.image && m.image.startsWith("data:image") && (
+                    <img src={m.image} alt="anexo" className="mb-1.5 max-h-28 rounded-lg border border-border/60 object-cover" />
+                  )}
+                  {m.fileLabel && !(m.image && m.image.startsWith("data:image")) && <p className="mb-1 text-[11px] text-muted-foreground">📎 {m.fileLabel}</p>}
+                  <p className="whitespace-pre-wrap">{m.text}</p>
+                </div>
+              ))}
+              {aiPanel.running && (
+                <div className="max-w-[70%] rounded-xl px-3 py-2 text-[12.5px] bg-card border border-border/60 inline-flex items-center gap-1.5">
+                  <Loader2 className="h-3 w-3 animate-spin text-primary" /> editando o site…
+                </div>
+              )}
             </div>
           )}
+
           {aiPanel.error && (
             <p className="flex items-start gap-1.5 text-[11px] text-destructive rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5">
               <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
               <span>{aiPanel.error}</span>
             </p>
           )}
-          <Button
-            size="sm"
-            className="w-full h-9"
-            disabled={aiPanel.running || !aiInstruction.trim()}
-            onClick={() => {
-              const value = aiInstruction.trim();
-              if (!value) return;
-              setAiInstruction("");
-              aiPanel.onApply(value);
-            }}
-          >
-            {aiPanel.running ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Sparkles className="h-3.5 w-3.5 mr-1" />}
-            Aplicar alteração
-          </Button>
+
+          {aiAttachment && (
+            <div className="flex items-center gap-2 rounded-md border border-border/70 bg-card px-2 py-1.5 text-xs text-muted-foreground">
+              {aiAttachment.dataUrl.startsWith("data:image") ? (
+                <img src={aiAttachment.dataUrl} alt="anexo" className="h-10 w-10 rounded object-cover" />
+              ) : (
+                <span>📎</span>
+              )}
+              <span className="flex-1 truncate">{aiAttachment.label || "Anexo"}</span>
+              <button type="button" onClick={() => setAiAttachment(null)} className="text-muted-foreground hover:text-destructive"><X className="h-3.5 w-3.5" /></button>
+            </div>
+          )}
+
+          <TextAreaInput
+            value={aiInstruction}
+            onChange={setAiInstruction}
+            placeholder="Ex.: Deixe o hero mais sofisticado. / Deixe mais escuro. / Troca o botão para WhatsApp. / Volta para antes da última alteração."
+            rows={2}
+          />
+
+          <div className="flex items-center gap-1.5">
+            <input ref={fileRef} type="file" accept="image/*,.pdf,.txt,.doc,.docx" className="hidden" onChange={handleFileChange} />
+            <button type="button" onClick={() => fileRef.current?.click()} title="Anexar foto ou arquivo" className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors">
+              <Paperclip className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={toggleMic}
+              title={listening ? "Parar gravação" : "Gravar com voz"}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${listening ? "border-red-400/70 bg-red-500/10 text-red-500 animate-pulse" : "border-border text-muted-foreground hover:text-foreground hover:border-primary/50"}`}
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+            <Button size="sm" className="h-8 flex-1" disabled={aiPanel.running || (!aiInstruction.trim() && !aiAttachment)} onClick={handleAiSend}>
+              {aiPanel.running ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}
+              Enviar
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground">Anexos ficam visíveis nesta conversa (apenas na sessão) e são tratados como referência. Gravação de voz usa o reconhecimento de fala do navegador.</p>
         </div>
       )}
 

@@ -1,5 +1,8 @@
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { generateText, AiError, extractJson } from "../_shared/ai.ts";
+import { getNicheDesign } from "../_shared/niche-design.ts";
+import { qualityIssues, ensureBaseContent } from "../_shared/site-quality.ts";
+import { getImageNeeds, type SiteAsset, type ImageNeeds } from "../_shared/image-assets.ts";
 
 interface LeadInput {
   name?: string | null;
@@ -79,9 +82,14 @@ Depois produza o JSON final.
   },
   "pages": { "home": true, "services": boolean, "contact": boolean },
   "navigation": [ { "label": string, "anchor": "hero|about|services|testimonials|contact" } ],
-  "sections": [ { "id": string, "type": "hero|about|services|testimonials|cta|contact", "order": number } ],
+  "sections": [ { "id": string, "type": "hero|about|services|features|trust|numbers|process|faq|testimonials|cta|contact", "order": number } ],
   "content": {
-    "hero": { "title": string, "subtitle": string, "primary_cta": string|null, "primary_cta_type": "whatsapp|tel|scroll|link", "primary_cta_value": string|null, "secondary_cta": string|null, "image": null },
+    "hero": { "title": string, "subtitle": string, "primary_cta": string|null, "primary_cta_type": "whatsapp|tel|scroll|link", "primary_cta_value": string|null, "secondary_cta": string|null, "image": null, "image_note": string|null },
+    "trust": { "title": string|null, "items": [ { "text": string } ] },
+    "features": { "title": string, "items": [ { "title": string, "description": string, "icon": string|null } ] },
+    "numbers": { "title": string|null, "items": [ { "value": string, "label": string } ] },
+    "process": { "title": string, "steps": [ { "title": string, "description": string } ] },
+    "faq": { "title": string, "items": [ { "question": string, "answer": string } ] },
     "about": { "title": string, "body": string },
     "services": { "title": string, "subtitle": string|null, "items": [ { "title": string, "description": string, "icon": string|null } ] },
     "testimonials": { "title": string, "items": [] },
@@ -92,6 +100,15 @@ Depois produza o JSON final.
   "calls_to_action": [ { "label": string, "type": "whatsapp|tel|scroll|link", "value": string } ],
   "seo": { "title": string, "description": string, "keywords": string[] }
 }
+
+# ESTRUTURA RICA (NÃO aceite hero+3 cards+footer como solução automática)
+- Monte o site com a densidade que o segmento comporta: além das seções centrais, use quando fizer sentido: trust (indicadores/garantias), features (diferenciais), numbers (somente com números REAIS — se não houver, omita), process (etapas), faq (perguntas e respostas típicas), testimonials (somente com depoimento real — normalmente deixe items vazio), about, cta, contact.
+- Cada seção precisa de função comercial ou narrativa. Nada de seção decorativa vazia.
+- numbers: se o lead não tiver números reais, NÃO crie a seção numbers.
+- faq: escreva perguntas típicas do segmento com respostas genéricas e seguras (editáveis), sem inventar fatos específicos da empresa.
+- trust: itens de garantia/benefício seguros e genéricos (ex.: "Atendimento humanizado") — nunca fatos inventados.
+- process: descreva etapas de trabalho genéricas e editáveis, sem prometer prazos/números.
+- Evite seções duplicadas e conteúdo repetido.
 
 # ARQUITETURAS DE PÁGINA (escolha UMA com justificativa; NÃO invente ordem aleatória)
 - A — institucional com serviços: Nav > Hero (centered/split) > Sobre > Serviços > Depoimentos? > CTA > Contato > Footer.
@@ -186,6 +203,7 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
     .filter((x) => x.type.length > 0);
 
   const contentRaw = asRecord(raw.content);
+  const content = ensureBaseContent(contentRaw);
 
   const ctas = asArray(raw.calls_to_action)
     .map((c) => {
@@ -253,15 +271,7 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
       })
       .filter((x): x is { label: string; anchor: string } => x !== null),
     sections,
-    content: {
-      hero: asRecord(contentRaw.hero),
-      about: asRecord(contentRaw.about),
-      services: asRecord(contentRaw.services),
-      testimonials: asRecord(contentRaw.testimonials),
-      cta: asRecord(contentRaw.cta),
-      contact: asRecord(contentRaw.contact),
-      footer: asRecord(contentRaw.footer),
-    },
+    content,
     calls_to_action: ctas,
     seo: {
       title: s(seo.title) || `${name}${segment ? " | " + segment : ""}`,
@@ -269,6 +279,40 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
       keywords: asStringArray(seo.keywords),
     },
   };
+}
+
+async function callImagesFunction(query: string, count: number, orientation: string): Promise<SiteAsset[]> {
+  const baseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  if (!baseUrl || !anonKey) return [];
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 14_000);
+  try {
+    const res = await fetch(`${baseUrl}/functions/v1/get-images`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}`, apikey: anonKey },
+      body: JSON.stringify({ query, count, orientation }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => null);
+    return Array.isArray((data as { assets?: unknown })?.assets) ? ((data as { assets: SiteAsset[] }).assets) : [];
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Busca assets por nicho (hero + galeria). Falha silenciosa → site segue sem imagens.
+async function fetchAssetsForNiche(needs: ImageNeeds): Promise<{ hero: SiteAsset | null; extras: SiteAsset[] }> {
+  const [heroList, extraList] = await Promise.allSettled([
+    callImagesFunction(needs.heroQuery, 4, needs.orientation),
+    callImagesFunction(needs.secondaryQuery, Math.max(3, needs.galleryCount), needs.orientation),
+  ]);
+  const hero = heroList.status === "fulfilled" ? (heroList.value[0] ?? null) : null;
+  const extras = (extraList.status === "fulfilled" ? extraList.value : []).filter((a) => a.url !== hero?.url);
+  return { hero, extras };
 }
 
 Deno.serve(async (req) => {
@@ -302,46 +346,129 @@ Deno.serve(async (req) => {
         : null,
     ].filter(Boolean).join("\n");
 
-    const user = `DADOS REAIS DISPONÍVEIS (só use estes; o que não existir fica null):
+    const userBase = `DADOS REAIS DISPONÍVEIS (só use estes; o que não existir fica null):
 ${businessFacts || "Nenhum dado factual além do nome."}
+`;
 
-Gere a especificação JSON do site.`;
+    const niche = getNicheDesign(lead.segment || lead.category || "");
+    const imageNeeds = getImageNeeds(lead.segment || lead.category || "");
+    const assets = await fetchAssetsForNiche(imageNeeds);
+    const assetsAvailable = !!(assets.hero || assets.extras.length > 0);
+    const assetBrief = [
+      assets.hero
+        ? `ASSET HERO (imagem ilustrativa fornecida — use SOMENTE esta URL em content.hero.image como objeto { url, alt, source, isIllustrative }): ${assets.hero.url}  (alt: ${assets.hero.alt || "Ambiente do negócio"})`
+        : "",
+      assets.extras.length
+        ? `ASSETS DE GALERIA (ilustrativos fornecidos; se incluir a seção gallery, use SOMENTE estas URLs em content.gallery.items): ${assets.extras.map((a) => a.url).join(" | ")}`
+        : "",
+    ].filter(Boolean).join("\n");
+
+    const attachAssets = (obj: Record<string, unknown>): void => {
+      const content = ensureBaseContent(obj.content as Record<string, unknown> | undefined);
+      obj.content = content;
+      if (assets.hero) {
+        const hero = content.hero && typeof content.hero === "object" ? content.hero as Record<string, unknown> : (content.hero = {});
+        hero.image = { url: assets.hero.url, alt: assets.hero.alt || "Ambiente do negócio", source: "unsplash", sourceUrl: assets.hero.sourceUrl ?? null, isIllustrative: true };
+        hero.image_note = "Imagem ilustrativa de referência — não é foto real do negócio.";
+      }
+      if (assets.extras.length >= 2) {
+        const gallery = content.gallery && typeof content.gallery === "object" ? content.gallery as Record<string, unknown> : (content.gallery = {});
+        gallery.title = typeof gallery.title === "string" && gallery.title ? gallery.title : "Ambiente e inspiração";
+        gallery.items = assets.extras.slice(0, imageNeeds.galleryCount).map((a) => ({
+          image: { url: a.url, alt: a.alt || "Ambiente", source: "unsplash", isIllustrative: true },
+          alt: a.alt || "Ambiente",
+        }));
+        const sections = Array.isArray(obj.sections) ? obj.sections as Array<Record<string, unknown>> : (obj.sections = []);
+        if (!sections.some((x) => x.type === "gallery")) {
+          sections.push({ id: "gallery", type: "gallery", order: sections.length + 1 });
+        }
+      }
+    };
 
     let raw = "";
     let usedModel = "gemini-2.5-flash";
-    try {
-      const result = await generateText({
-        system: SYSTEM_PROMPT,
-        user,
-        temperature: 0.9,
-        json: true,
-        maxOutputTokens: 4500,
-      });
-      raw = result.text;
-      usedModel = result.model;
-    } catch (e) {
-      if (e instanceof AiError) {
+    let finalSpec: Record<string, unknown> | null = null;
+    let lastIssues: string[] = [];
+
+    // Até 2 tentativas: a 2ª é usada quando o quality gate reprova a 1ª.
+    for (let attempt = 0; attempt < 2 && !finalSpec; attempt++) {
+      const correction = attempt > 0 && lastIssues.length > 0
+        ? `\n\nQUALITY GATE — problemas detectados na tentativa anterior. Corrija TODOS ao reescrever a spec completa:
+- ${lastIssues.join("\n- ")}
+Mantenha a direção de design por nicho e NUNCA invente dados.`
+        : "";
+      const user = `${userBase}
+
+DIRETRIZ DE DESIGN POR NICHO (siga como diretor de arte):
+Conceito visual: ${niche.visualConcept}
+Objetivos comerciais: ${niche.objectives.join("; ")}
+Layout: ${niche.layoutArchetype} · hero ${niche.heroComposition} · navegação ${niche.navStyle} · densidade ${niche.density}
+Tipografia: ${niche.typographyDirection}
+Cores: ${niche.colorDirection}
+Imagens: ${niche.imageStrategy}
+Tom de comunicação: ${niche.tone}
+CTA principal recomendado: "${niche.cta}"
+Seções recomendadas para considerar (escolha com função): ${niche.recommendedSections.join(", ")}
+Microinterações: ${niche.interactionNotes}
+${assetBrief}${correction}
+
+Gere a especificação JSON completa do site.`;
+
+      try {
+        const result = await generateText({
+          system: SYSTEM_PROMPT,
+          user,
+          temperature: 0.9,
+          json: true,
+          maxOutputTokens: 5000,
+        });
+        raw = result.text;
+        usedModel = result.model;
+      } catch (e) {
+        if (e instanceof AiError) {
+          return new Response(
+            JSON.stringify({ error: e.message, kind: e.kind, detail: e.detail }),
+            { status: e.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        throw e;
+      }
+
+      const parsed = extractJson(raw);
+      if (!parsed || Object.keys(parsed).length === 0) {
+        if (attempt === 0) {
+          lastIssues = ["JSON inválido ou vazio na resposta"];
+          continue;
+        }
         return new Response(
-          JSON.stringify({ error: e.message, kind: e.kind, detail: e.detail }),
-          { status: e.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          JSON.stringify({ error: "A IA retornou JSON inválido ou vazio.", raw: raw.slice(0, 800) }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
-      throw e;
+
+      const normalized = normalizeSpec(parsed, lead);
+      attachAssets(normalized);
+      lastIssues = qualityIssues(normalized as Parameters<typeof qualityIssues>[0], {
+        imageDriven: assetsAvailable && imageNeeds.imageDriven,
+      });
+      if (lastIssues.length > 0 && attempt === 0) {
+        // Quality gate reprovou — regenera uma vez com as correções apontadas.
+        continue;
+      }
+      finalSpec = normalized;
     }
 
-    const parsed = extractJson(raw);
-    if (!parsed || Object.keys(parsed).length === 0) {
+    if (!finalSpec) {
       return new Response(
-        JSON.stringify({ error: "A IA retornou JSON inválido ou vazio.", raw: raw.slice(0, 800) }),
+        JSON.stringify({ error: "Qualidade insuficiente após regeneração.", issues: lastIssues }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    const spec = normalizeSpec(parsed, lead);
-
-    return new Response(JSON.stringify({ spec, model: usedModel, status: "ok" }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ spec: finalSpec, model: usedModel, status: "ok", quality_issues: lastIssues }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   } catch (e) {
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "erro inesperado" }), {
       status: 500,

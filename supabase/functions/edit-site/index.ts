@@ -144,9 +144,18 @@ Deno.serve(async (req) => {
       context.state && `Estado: ${context.state}`,
     ].filter(Boolean).join("\n");
 
+    // Histórico recente da conversa (opcional) — ajuda a entender referências
+    // como "agora", "essa seção", "a cor anterior". NUNCA inclui dados factuais.
+    const conversation = Array.isArray(body?.conversation)
+      ? (body.conversation as unknown[]).filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(-6).map((x) => x.slice(0, 1200))
+      : [];
+    const conversationBlock = conversation.length > 0
+      ? `\nÚLTIMAS INSTRUÇÕES DA CONVERSA (referências como "agora", "essa seção", "antes" se aplicam a elas):\n- ${conversation.join("\n- ")}\n`
+      : "";
+
     const userPrompt = `CONTEXTO DO PROJETO:
 ${ctxLines || "(sem contexto adicional)"}
-
+${conversationBlock}
 INSTRUÇÃO DO USUÁRIO:
 "${instruction}"
 

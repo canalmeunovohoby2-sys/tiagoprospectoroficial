@@ -2,9 +2,48 @@
 // Returns only verified public data. No mock, no invented fields.
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { runWebSources, enrichLeadsWithWeb } from "../_shared/lead-web.ts";
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const GOOGLE_KEY_LOADED = typeof GOOGLE_KEY === "string" && GOOGLE_KEY.trim().length > 0;
+
+// Chamada interna às edge functions search-tavily / search-firecrawl (que usam
+// o Provider Key Pool com failover sequencial). Falhas nunca derrubam a busca.
+async function callWebFunction(
+  provider: "tavily" | "firecrawl",
+  payload: { query?: string; url?: string; limit?: number },
+): Promise<{ ok: boolean; results?: unknown[]; content?: string | null }> {
+  const baseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+  const fnName = provider === "tavily" ? "search-tavily" : "search-firecrawl";
+  if (!baseUrl || !anonKey) return { ok: false };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15_000);
+  try {
+    const res = await fetch(`${baseUrl}/functions/v1/${fnName}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}`, apikey: anonKey },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) return { ok: false };
+    const data = await res.json().catch(() => null);
+    if (!data || typeof data !== "object") return { ok: false };
+    if (payload.url) {
+      return { ok: true, content: typeof (data as { content?: unknown }).content === "string" ? (data as { content: string }).content : null };
+    }
+    return { ok: true, results: Array.isArray((data as { results?: unknown }).results) ? (data as { results: unknown[] }).results : [] };
+  } catch {
+    return { ok: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function scrapePageContent(url: string): Promise<string | null> {
+  const result = await callWebFunction("firecrawl", { url });
+  return result.ok ? (result.content ?? null) : null;
+}
 
 const SOURCE_LABELS = {
   googleNew: "google_places_new",
@@ -2734,6 +2773,47 @@ Deno.serve(async (req) => {
 
 
 
+
+    // ─── Fontes web complementares (Tavily + Firecrawl) ─────────────────────
+    // Google continua opcional; a busca funciona por OSM/Overpass + enriquecimento
+    // web. Este bloco nunca cria nem remove leads — apenas adiciona website e
+    // contato reais quando há evidência (match por nome/domínio e scrape com
+    // confirmação geográfica). Falha de qualquer fonte não derruba a busca.
+    const webDiag: Record<string, unknown> = { enabled: true };
+    if (leads.length > 0) {
+      try {
+        const webQuery = `${city} ${segment}`.trim();
+        const web = await runWebSources({ query: webQuery, limit: 8, call: callWebFunction });
+        webDiag.tavily_raw = web.tavily.length;
+        webDiag.firecrawl_raw = web.firecrawl.length;
+        if (web.tavily.length + web.firecrawl.length > 0) {
+          const enriched = await enrichLeadsWithWeb({
+            leads: leads as unknown as Parameters<typeof enrichLeadsWithWeb>[0]["leads"],
+            web,
+            city,
+            state,
+            maxScrape: 2,
+            scrape: scrapePageContent,
+          });
+          leads = enriched.leads as unknown as PublicLead[];
+          webDiag.websites_enriched = enriched.summary.websitesEnriched;
+          webDiag.scrape_attempted = enriched.summary.scrapeAttempted;
+          webDiag.contacts_applied = enriched.summary.contactsApplied;
+          for (const l of enriched.leads) {
+            const ext = l.external_id;
+            if (typeof ext === "string") {
+              const auditItem = perLeadAudit.get(ext);
+              if (auditItem) perLeadAudit.set(ext, { ...auditItem, web_enriched: true });
+            }
+          }
+        }
+      } catch (e) {
+        webDiag.error = e instanceof Error ? e.message : "web_error";
+      }
+    } else {
+      webDiag.enabled = false;
+    }
+    diagnostics.web_sources = webDiag;
 
     // Intelligent priority sort — internal Lead Score, never excludes leads.
     if (leads.length > 0) {

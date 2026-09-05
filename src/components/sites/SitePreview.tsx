@@ -6,7 +6,7 @@ interface SitePreviewProps {
   spec: SiteSpec | Record<string, unknown> | null;
 }
 
-const KNOWN_TYPES = ["hero", "about", "services", "testimonials", "cta", "contact"] as const;
+const KNOWN_TYPES = ["hero", "trust", "features", "numbers", "process", "faq", "gallery", "about", "services", "testimonials", "cta", "contact"] as const;
 type SectionType = (typeof KNOWN_TYPES)[number];
 
 const HEX_RE = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -58,6 +58,34 @@ function waDigits(v: string): string {
   const d = v.replace(/\D/g, "");
   if (d.startsWith("55")) return d;
   return d.length >= 10 && d.length <= 11 ? `55${d}` : d;
+}
+
+// Aceita string legada ou objeto de asset { url, alt }.
+function resolveImg(v: unknown): { url: string; alt: string } | null {
+  if (typeof v === "string" && v.trim() && /^https?:\/\//i.test(v.trim())) return { url: v.trim(), alt: "" };
+  if (v && typeof v === "object") {
+    const r = v as Record<string, unknown>;
+    if (typeof r.url === "string" && /^https?:\/\//i.test(r.url)) {
+      return { url: r.url, alt: typeof r.alt === "string" ? r.alt : "" };
+    }
+  }
+  return null;
+}
+
+function Picture({ src, alt, ratio = "16 / 9", eager = false, className = "" }: { src: string; alt: string; ratio?: string; eager?: boolean; className?: string }) {
+  return (
+    <div className={`relative overflow-hidden ${className}`} style={{ aspectRatio: ratio, backgroundColor: "color-mix(in srgb, var(--sp-muted) 15%, transparent)" }}>
+      <img
+        src={src}
+        alt={alt || ""}
+        loading={eager ? "eager" : "lazy"}
+        className="h-full w-full object-cover"
+        onError={(e) => {
+          (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+        }}
+      />
+    </div>
+  );
 }
 
 type Tokens = Record<string, string>;
@@ -178,6 +206,42 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
     }
   }, [headingFont, bodyFont]);
 
+  // Microinterações: reveal suave das seções ao entrar no viewport.
+  useEffect(() => {
+    if (!document.getElementById("sp-anim")) {
+      const style = document.createElement("style");
+      style.id = "sp-anim";
+      style.textContent = `
+        .sp-root section[id]{opacity:0;transform:translateY(14px);transition:opacity .55s ease,transform .55s ease}
+        .sp-root section[id].sp-in{opacity:1;transform:none}
+        @media (prefers-reduced-motion: reduce){.sp-root section[id]{opacity:1 !important;transform:none !important;transition:none}}
+      `;
+      document.head.appendChild(style);
+    }
+    const secs = Array.from(document.querySelectorAll<HTMLElement>(".sp-root section[id]"));
+    if (!("IntersectionObserver" in window)) {
+      secs.forEach((s) => s.classList.add("sp-in"));
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            (entry.target as HTMLElement).classList.add("sp-in");
+            io.unobserve(entry.target);
+          }
+        }
+      },
+      { threshold: 0.06, rootMargin: "0px 0px -5% 0px" },
+    );
+    secs.forEach((s) => {
+      const rect = s.getBoundingClientRect();
+      if (rect.top < window.innerHeight * 0.9) s.classList.add("sp-in");
+      io.observe(s);
+    });
+    return () => io.disconnect();
+  }, [spec]);
+
   const activeSections = useMemo<SectionType[]>(() => {
     const out: SectionType[] = [];
     for (const s of sections) {
@@ -185,7 +249,7 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
       if ((KNOWN_TYPES as readonly string[]).includes(t) && !out.includes(t as SectionType)) out.push(t as SectionType);
     }
     if (out.length === 0) {
-      for (const t of ["hero", "about", "services", "testimonials", "cta", "contact"] as SectionType[]) {
+      for (const t of ["hero", "trust", "features", "numbers", "process", "faq", "gallery", "about", "services", "testimonials", "cta", "contact"] as SectionType[]) {
         if (Object.keys(contentBlock(spec, t)).length > 0) out.push(t);
       }
     }
@@ -245,6 +309,8 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
   };
 
   const showContactBlock = contactPhone || contactWa || contactAddress || contactHours.length > 0;
+  const heroImg = resolveImg(hero.image);
+  const heroImgNote = typeof hero.image_note === "string" ? hero.image_note : "";
 
   const renderSidePanel = () => {
     if (showContactBlock || serviceItems.length > 0) {
@@ -324,6 +390,12 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
                   <a href="#contato" className="rounded-full border px-7 py-3 font-semibold" style={{ borderColor: "color-mix(in srgb, var(--sp-on-primary) 35%, transparent)", color: "var(--sp-on-primary)" }}>{str(hero.secondary_cta)}</a>
                 )}
               </div>
+              {heroImg && (
+                <div className="pt-6">
+                  <Picture src={heroImg.url} alt={heroImg.alt} ratio="21 / 9" eager className="rounded-2xl ring-1 ring-white/15 shadow-2xl" />
+                  {heroImgNote && <p className="mt-2 text-[11px]" style={{ color: "color-mix(in srgb, var(--sp-on-primary) 70%, transparent)" }}>{textRich(heroImgNote)}</p>}
+                </div>
+              )}
             </div>
           </div>
         </section>
@@ -346,7 +418,16 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
                 {str(hero.secondary_cta) && btn(str(hero.secondary_cta), "#contato", "ghost")}
               </div>
             </div>
-            <div>{renderSidePanel()}</div>
+            <div>
+              {heroImg ? (
+                <div className="space-y-3">
+                  <Picture src={heroImg.url} alt={heroImg.alt} ratio="4 / 3" eager className="rounded-[calc(var(--sp-radius)*1.2)] shadow-[0_30px_70px_-30px_rgba(16,24,40,.35)]" />
+                  {heroImgNote && <p className="text-[11px]" style={{ color: "var(--sp-muted)" }}>{textRich(heroImgNote)}</p>}
+                </div>
+              ) : (
+                renderSidePanel()
+              )}
+            </div>
           </div>
         </section>
       );
@@ -370,10 +451,16 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
               {!heroBtnLabel && waLink && btn("Falar agora", waLink)}
               {str(hero.secondary_cta) && btn(str(hero.secondary_cta), "#contato", "ghost")}
             </div>
+            {heroImg && (
+              <div className={editorial ? "mt-14" : "mx-auto mt-12 max-w-3xl"}>
+                <Picture src={heroImg.url} alt={heroImg.alt} ratio="16 / 8" eager className="rounded-[calc(var(--sp-radius)*1.2)] shadow-[0_30px_70px_-30px_rgba(16,24,40,.3)]" />
+                {heroImgNote && <p className="mt-2 text-center text-[11px]" style={{ color: "var(--sp-muted)" }}>{textRich(heroImgNote)}</p>}
+              </div>
+            )}
           </div>
         </div>
-      </section>
-    );
+        </section>
+      );
   };
 
   const renderAbout = () =>
@@ -432,6 +519,128 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
         </div>
       </section>
     ) : null;
+
+  const renderTrust = () => {
+    const trust = contentBlock(spec, "trust");
+    const items = safeArr(trust.items).map((i) => str(i.text)).filter(Boolean);
+    if (!sectionHas("trust") || items.length === 0) return null;
+    return (
+      <section id="trust" style={{ backgroundColor: "var(--sp-background)" }}>
+        <div className="mx-auto px-6 py-8" style={{ maxWidth: "var(--sp-maxw)" }}>
+          <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
+            {items.map((t, i) => (
+              <span key={i} className="inline-flex items-center gap-2 text-sm" style={{ color: "var(--sp-muted)" }}>
+                <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: "var(--sp-primary)" }} />
+                {textRich(t)}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderFeatures = () => {
+    const features = contentBlock(spec, "features");
+    const items = safeArr(features.items).filter((i) => !!str(i.title));
+    if (!sectionHas("features") || items.length === 0) return null;
+    const columns = items.length >= 4 ? "sm:grid-cols-2 lg:grid-cols-4" : items.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2";
+    return (
+      <section id="features" style={{ backgroundColor: "var(--sp-background)" }}>
+        <div className="mx-auto px-6 py-[var(--sp-py-section)]" style={{ maxWidth: "var(--sp-maxw)" }}>
+          <div className="mb-10 max-w-2xl space-y-3">
+            {eyebrow("Diferenciais")}
+            {heading(blockText(features, "title") || "Por que nos escolher")}
+          </div>
+          <div className={`grid gap-px overflow-hidden rounded-2xl border ${columns}`} style={{ borderColor: "var(--sp-border)", backgroundColor: "var(--sp-border)" }}>
+            {items.map((item, i) => (
+              <div key={i} className="group p-7 transition-colors hover:bg-primary/5" style={{ backgroundColor: "var(--sp-surface)" }}>
+                <div className="mb-4 flex items-baseline justify-between">
+                  <span className="text-sm font-bold" style={{ color: "var(--sp-primary)" }}>{str(item.icon) || `0${i + 1}`}</span>
+                </div>
+                <h3 className="mb-2 font-semibold leading-snug" style={{ fontFamily: "var(--sp-heading-font)", color: "var(--sp-on-surface)" }}>{str(item.title)}</h3>
+                {str(item.description) && <p className="text-sm leading-relaxed" style={{ color: "var(--sp-muted)" }}>{textRich(str(item.description))}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderNumbers = () => {
+    const numbers = contentBlock(spec, "numbers");
+    const items = safeArr(numbers.items).filter((i) => !!str(i.value));
+    if (!sectionHas("numbers") || items.length === 0) return null;
+    return (
+      <section id="numbers" style={{ backgroundColor: "var(--sp-secondary)", color: "var(--sp-on-primary)" }}>
+        <div className="mx-auto px-6 py-14" style={{ maxWidth: "var(--sp-maxw)" }}>
+          {blockText(numbers, "title") && (
+            <p className="mb-8 text-center text-xs uppercase tracking-[0.2em]" style={{ color: "color-mix(in srgb, var(--sp-on-primary) 80%, transparent)" }}>{textRich(blockText(numbers, "title"))}</p>
+          )}
+          <div className="grid grid-cols-2 gap-8 sm:grid-cols-4">
+            {items.map((item, i) => (
+              <div key={i} className="text-center">
+                <p className="text-3xl sm:text-4xl font-bold" style={{ fontFamily: "var(--sp-heading-font)" }}>{str(item.value)}</p>
+                <p className="mt-1 text-xs" style={{ color: "color-mix(in srgb, var(--sp-on-primary) 75%, transparent)" }}>{str(item.label)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderProcess = () => {
+    const process = contentBlock(spec, "process");
+    const steps = safeArr(process.steps).filter((i) => !!str(i.title));
+    if (!sectionHas("process") || steps.length === 0) return null;
+    return (
+      <section id="process" style={{ backgroundColor: "var(--sp-surface)" }}>
+        <div className="mx-auto px-6 py-[var(--sp-py-section)]" style={{ maxWidth: "var(--sp-maxw)" }}>
+          <div className="mb-12 max-w-2xl space-y-3">
+            {eyebrow("Como funciona")}
+            {heading(blockText(process, "title") || "Nosso processo")}
+          </div>
+          <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-3">
+            {steps.map((step, i) => (
+              <div key={i} className="relative border-t-2 pt-6" style={{ borderColor: i === 0 ? "var(--sp-primary)" : "var(--sp-border)" }}>
+                <span className="mb-3 inline-block text-3xl font-bold" style={{ fontFamily: "var(--sp-heading-font)", color: "var(--sp-primary)", opacity: 0.9 }}>{String(i + 1).padStart(2, "0")}</span>
+                <h3 className="mb-2 font-semibold" style={{ fontFamily: "var(--sp-heading-font)" }}>{str(step.title)}</h3>
+                {str(step.description) && <p className="text-sm leading-relaxed" style={{ color: "var(--sp-muted)" }}>{textRich(str(step.description))}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderFaq = () => {
+    const faq = contentBlock(spec, "faq");
+    const items = safeArr(faq.items).filter((i) => !!str(i.question));
+    if (!sectionHas("faq") || items.length === 0) return null;
+    return (
+      <section id="faq" style={{ backgroundColor: "var(--sp-background)" }}>
+        <div className="mx-auto max-w-3xl px-6 py-[var(--sp-py-section)]" style={{ maxWidth: "var(--sp-maxw)" }}>
+          <div className="mb-10 space-y-3 text-center">
+            {heading(blockText(faq, "title") || "Perguntas frequentes")}
+          </div>
+          <div className="space-y-3">
+            {items.map((item, i) => (
+              <details key={i} className="group rounded-xl border px-5 py-4" style={{ borderColor: "var(--sp-border)", backgroundColor: "var(--sp-surface)" }}>
+                <summary className="flex cursor-pointer items-center justify-between gap-4 font-medium [&::-webkit-details-marker]:hidden" style={{ color: "var(--sp-on-surface)" }}>
+                  {str(item.question)}
+                  <span className="text-lg leading-none text-[var(--sp-primary)] transition-transform group-open:rotate-45">+</span>
+                </summary>
+                {str(item.answer) && <p className="mt-3 text-sm leading-relaxed" style={{ color: "var(--sp-muted)" }}>{textRich(str(item.answer))}</p>}
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  };
 
   const renderTestimonials = () =>
     testimonialItems.length > 0 ? (
@@ -538,6 +747,27 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
       </section>
     ) : null;
 
+  const renderGallery = () => {
+    const gallery = contentBlock(spec, "gallery");
+    const items = safeArr(gallery.items)
+      .map((it) => resolveImg(it.image ?? it.url ?? it))
+      .filter((x): x is { url: string; alt: string } => !!x);
+    if (!sectionHas("gallery") || items.length === 0) return null;
+    return (
+      <section id="gallery" style={{ backgroundColor: "var(--sp-surface)" }}>
+        <div className="mx-auto px-6 py-[var(--sp-py-section)]" style={{ maxWidth: "var(--sp-maxw)" }}>
+          {blockText(gallery, "title") && <div className="mb-9 text-center">{heading(blockText(gallery, "title"))}</div>}
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+            {items.slice(0, 6).map((img, i) => (
+              <Picture key={i} src={img.url} alt={img.alt || ""} ratio="4 / 3" className="rounded-[calc(var(--sp-radius)*0.9)] shadow-sm" />
+            ))}
+          </div>
+          <p className="mt-3 text-center text-[11px]" style={{ color: "var(--sp-muted)" }}>Imagens ilustrativas de referência (não são fotos do negócio).</p>
+        </div>
+      </section>
+    );
+  };
+
   const renderFooter = () => {
     const light = isLightFooter;
     const fg = light ? "var(--sp-on-surface)" : "var(--sp-on-primary)";
@@ -572,7 +802,7 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
 
       <div className="rounded-2xl border border-border/60 overflow-hidden bg-[var(--sp-background)] shadow-[0_0_0_1px_hsl(0_0%_0%/0.04)]">
         <div
-          className={`mx-auto ${viewport === "mobile" ? "max-w-[400px]" : "max-w-full"} transition-all duration-300`}
+          className={`sp-root mx-auto ${viewport === "mobile" ? "max-w-[400px]" : "max-w-full"} transition-all duration-300`}
           style={{ ...(tokens as React.CSSProperties), backgroundColor: "var(--sp-background)", color: "var(--sp-on-surface)", fontFamily: "var(--sp-body-font)", fontSize: "var(--sp-body-size)" }}
         >
           {/* Header / nav */}
@@ -593,9 +823,15 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
           </header>
 
           {renderHero()}
+          {renderTrust()}
           {sectionHas("about") && renderAbout()}
           {sectionHas("services") && renderServices()}
+          {renderFeatures()}
+          {renderNumbers()}
+          {renderProcess()}
           {sectionHas("testimonials") && renderTestimonials()}
+          {renderGallery()}
+          {renderFaq()}
           {sectionHas("cta") && renderCta()}
           {renderContact()}
           {renderFooter()}

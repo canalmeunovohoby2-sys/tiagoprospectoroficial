@@ -15,6 +15,56 @@ import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteEditor } from "@/components/sites/editor/SiteEditor";
 import { supabase } from "@/integrations/supabase/client";
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+  image?: string; // dataURL exibido apenas na sessão (sem storage nesta fase)
+  fileLabel?: string;
+}
+
+function describeChanges(before: SiteSpec | null, after: SiteSpec | null): string {
+  if (!before || !after) return "";
+  const areas: Array<[keyof SiteSpec, string]> = [
+    ["design_system", "Visual (cores/tipografia)"],
+    ["content", "Conteúdo/textos"],
+    ["sections", "Seções"],
+    ["calls_to_action", "Botões/CTAs"],
+    ["navigation", "Navegação"],
+    ["seo", "SEO"],
+  ];
+  const changed = areas.filter(([k]) => JSON.stringify(before[k]) !== JSON.stringify(after[k])).map(([, label]) => label);
+  return changed.length > 0 ? changed.slice(0, 4).join(", ") + "." : "ajustes sutis aplicados.";
+}
+
+// Redimensiona e converte imagem para dataURL (mantém anexo leve, apenas na sessão).
+function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ dataUrl: String(reader.result), label: file.name });
+      reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
+      reader.readAsDataURL(file);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 1024;
+      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { URL.revokeObjectURL(url); reject(new Error("Canvas indisponível")); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve({ dataUrl: canvas.toDataURL("image/jpeg", 0.82), label: file.name });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Imagem inválida")); };
+    img.src = url;
+  });
+}
+
 export default function SiteProjectPage() {
   const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
@@ -30,8 +80,8 @@ export default function SiteProjectPage() {
   const [saving, setSaving] = useState(false);
   const [aiRunning, setAiRunning] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-  const [aiProposed, setAiProposed] = useState(false);
-  const [aiSnapshot, setAiSnapshot] = useState<SiteSpec | null>(null);
+  const [aiMessages, setAiMessages] = useState<ChatMessage[]>([]);
+  const [aiHistory, setAiHistory] = useState<SiteSpec[]>([]);
 
   async function load() {
     if (!id) return;
@@ -89,9 +139,9 @@ export default function SiteProjectPage() {
     if (!project) return;
     setDraftSpec(normalizeSpec(project.spec as SiteSpec | Record<string, unknown> | null));
     setDirty(false);
-    setAiProposed(false);
+    setAiMessages([]);
+    setAiHistory([]);
     setAiError(null);
-    setAiSnapshot(null);
     setEditMode(true);
   }
 
@@ -100,11 +150,18 @@ export default function SiteProjectPage() {
     setDirty(true);
   }
 
-  async function applyAiInstruction(instruction: string) {
+  const chatConversation = () =>
+    aiMessages
+      .filter((m) => m.role === "user")
+      .slice(-6)
+      .map((m) => (m.image || m.fileLabel ? `${m.text} (anexo: ${m.fileLabel ?? "imagem de referência"})` : m.text));
+
+  async function runAiInstruction(instruction: string, attachment?: { dataUrl: string; label: string }) {
     if (!project) return;
-    const snapshot = draftSpec;
+    setAiMessages((prev) => [...prev, { role: "user", text: instruction, image: attachment?.dataUrl, fileLabel: attachment?.label }]);
     setAiRunning(true);
     setAiError(null);
+    const snapshot = draftSpec;
     try {
       const ctx = {
         name: project.company_name || project.name,
@@ -112,43 +169,48 @@ export default function SiteProjectPage() {
         city: project.city,
         state: project.state,
       };
-      const res = await editSiteWithAI(draftSpec, instruction, ctx);
+      const res = await editSiteWithAI(draftSpec, instruction, ctx, chatConversation());
       if (!res.changed) {
-        setAiError("A IA não encontrou mudanças necessárias para essa instrução.");
+        setAiMessages((prev) => [...prev, { role: "assistant", text: "Não encontrei mudanças necessárias para essa instrução — nada foi alterado no preview." }]);
         return;
       }
       const protectedSpec = applyAiProtections(draftSpec, res.spec, instruction);
       if (specsEqual(draftSpec, protectedSpec)) {
-        setAiError("A IA não alterou nada relevante (dados factuais protegidos foram mantidos).");
+        setAiMessages((prev) => [...prev, { role: "assistant", text: "Não alterei nada relevante (dados factuais protegidos foram mantidos)." }]);
         return;
       }
-      setAiSnapshot(snapshot);
+      setAiHistory((prev) => [snapshot, ...prev].slice(0, 10));
       setDraftSpec(protectedSpec);
       setDirty(true);
-      setAiProposed(true);
+      const summary = describeChanges(snapshot, protectedSpec);
+      setAiMessages((prev) => [...prev, { role: "assistant", text: `Alteração aplicada: ${summary} Confira o preview — ainda não salvo.` }]);
     } catch (e) {
-      setAiError(e instanceof Error ? e.message : "Não foi possível aplicar a alteração. Sua spec atual foi preservada.");
+      const msg = e instanceof Error ? e.message : "Não foi possível aplicar a alteração. Sua spec atual foi preservada.";
+      setAiError(msg);
+      setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
     } finally {
       setAiRunning(false);
     }
   }
 
-  function revertAi() {
-    const savedSpec = project ? normalizeSpec(project.spec as SiteSpec | Record<string, unknown> | null) : null;
-    if (aiSnapshot) setDraftSpec(aiSnapshot);
-    setAiProposed(false);
+  async function undoAi() {
+    if (aiHistory.length === 0) return;
+    const prev = aiHistory[0];
+    setAiHistory((h) => h.slice(1));
+    setDraftSpec(prev);
     setAiError(null);
-    setAiSnapshot(null);
-    setDirty(aiSnapshot ? !specsEqual(aiSnapshot, savedSpec) : dirty);
+    const savedSpec = project ? normalizeSpec(project.spec as SiteSpec | Record<string, unknown> | null) : null;
+    setDirty(!specsEqual(prev, savedSpec));
+    setAiMessages((m) => [...m, { role: "assistant", text: "Desfeita a última alteração da IA." }]);
   }
 
   function exitEditing() {
     if (dirty && !window.confirm("Há alterações não salvas. Descartar e sair do editor?")) return;
     setEditMode(false);
     setDirty(false);
-    setAiProposed(false);
+    setAiMessages([]);
+    setAiHistory([]);
     setAiError(null);
-    setAiSnapshot(null);
   }
 
   async function saveEdits() {
@@ -281,9 +343,11 @@ export default function SiteProjectPage() {
                 aiPanel={{
                   running: aiRunning,
                   error: aiError,
-                  proposed: aiProposed,
-                  onApply: applyAiInstruction,
-                  onRevert: revertAi,
+                  proposed: aiHistory.length > 0 || dirty,
+                  messages: aiMessages,
+                  canUndo: aiHistory.length > 0,
+                  onApply: runAiInstruction,
+                  onRevert: undoAi,
                 }}
               />
             </div>
