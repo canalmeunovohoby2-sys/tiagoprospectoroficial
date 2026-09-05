@@ -11,7 +11,7 @@ import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, 
 import {
   fetchSiteProject, generateSiteSpec, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
-  createSiteVersion, invokeAgentExecute, invokeProspectorAgent, invokeProspectorGenerate,
+  createSiteVersion, invokeAgentExecute, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
 } from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
@@ -104,7 +104,7 @@ export default function SiteProjectPage() {
   const [aiRunning, setAiRunning] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiMessages, setAiMessages] = useState<ChatMessage[]>([]);
-  const [aiHistory, setAiHistory] = useState<SiteSpec[]>([]);
+  const [aiHistory, setAiHistory] = useState<Array<{ spec: SiteSpec; files?: Record<string, string> | null }>>([]);
   const [busyAction, setBusyAction] = useState<"pdf" | "zip" | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
@@ -126,11 +126,28 @@ export default function SiteProjectPage() {
     return () => clearInterval(timer);
   }
 
-  function handleRestoreFromVersion(spec: SiteSpec, version: { version_number: number }) {
-    setDraftSpec(normalizeSpec(spec));
-    setDirty(true);
-    setPendingSummary(`Restauração de v${version.version_number}`);
-    toast.info(`Versão v${version.version_number} restaurada como rascunho — revise e salve.`);
+  async function handleRestoreFromVersion(_spec: SiteSpec, version: { id: string; version_number: number; files?: Record<string, string> | null }) {
+    if (!project?.id) return;
+    try {
+      // Restaura de verdade no projeto (spec + workspace), sem tocar na publicação.
+      const restored = await restoreSiteVersion(project.id, version.id);
+      setDraftSpec(normalizeSpec(restored.spec));
+      if (restored.files && Object.keys(restored.files).length > 0) {
+        prevFilesRef.current = restored.files;
+        setDraftFiles(restored.files);
+      } else {
+        const fromSpec = materializeProjectFiles(restored.spec);
+        prevFilesRef.current = fromSpec;
+        setDraftFiles(fromSpec);
+      }
+      setPreviewNonce((n) => n + 1);
+      setDirty(false);
+      setPendingSummary(undefined);
+      toast.success(`Versão v${version.version_number} restaurada.`);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao restaurar versão");
+    }
   }
 
   const publicUrl = (): string | null => (project?.slug ? `${window.location.origin}/public/${project.slug}` : null);
@@ -442,15 +459,17 @@ export default function SiteProjectPage() {
 
         if (!agentErr && agentRes && agentRes.status === "ok") {
           if (agentRes.changed && agentRes.files) {
-            setAiHistory((prev) => [snapshot, ...prev].slice(0, 10));
+            setAiHistory((prev) => [{ spec: snapshot, files: draftFiles }, ...prev].slice(0, 10));
             const derivedSpec = agentRes.spec ? normalizeSpec(agentRes.spec as SiteSpec | Record<string, unknown> | null) : draftSpec;
+            // AUTOSAVE: só persiste com evidência real de alteração (files).
+            const saved = await persistAutosave(derivedSpec, agentRes.files, `Alteração via chat: ${instruction}`);
             setDraftSpec(derivedSpec);
-            setDirty(true);
             prevFilesRef.current = agentRes.files;
             setDraftFiles(agentRes.files);
             setPreviewNonce((n) => n + 1);
             const runtime = agentRes.runtime === "cline" ? "" : " (modo compatível)";
-            pushReply(agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`, agentRes.activity);
+            const savedNote = saved ? "\n\n✓ Alterações salvas automaticamente" : "\n\n(estado já era o mais recente — nenhuma versão duplicada)";
+            pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}`, agentRes.activity);
           } else {
             pushReply(agentRes.reply?.trim() || "Entendi! Não apliquei mudanças no código por enquanto.");
           }
@@ -500,16 +519,15 @@ export default function SiteProjectPage() {
         return;
       }
 
-      setAiHistory((prev) => [snapshot, ...prev].slice(0, 10));
-      setDraftSpec(protectedSpec);
-      setDirty(true);
-      // Live preview de código: re-materializa o rascunho editado para o preview
-      // refletir a alteração feita pelo chat (além das edições diretas do agente).
+      setAiHistory((prev) => [{ spec: snapshot, files: draftFiles }, ...prev].slice(0, 10));
+      const summary = describeChanges(snapshot, protectedSpec);
       const draftNow = materializeProjectFiles(protectedSpec);
+      const saved = await persistAutosave(protectedSpec, draftNow, summary);
+      setDraftSpec(protectedSpec);
+      // Live preview de código: reflete o rascunho editado (código materializado).
       setDraftFiles((prev) => (prev && Object.keys(prev).length > 0 ? draftNow : draftNow));
       setPreviewNonce((n) => n + 1);
-      const summary = describeChanges(snapshot, protectedSpec);
-      const msg = [res.reply?.trim(), `Alteração aplicada: ${summary} (ainda não salva).`].filter(Boolean).join(" ");
+      const msg = [res.reply?.trim(), summary, saved ? "✓ Alterações salvas automaticamente" : "(sem mudança real — nada duplicado)"].filter(Boolean).join(" ");
       pushReply(msg);
     } catch (e) {
       const msg = friendlyAiError(e);
@@ -524,13 +542,32 @@ export default function SiteProjectPage() {
 
   async function undoAi() {
     if (aiHistory.length === 0) return;
-    const prev = aiHistory[0];
+    const prevState = aiHistory[0] as { spec: SiteSpec; files?: Record<string, string> | null };
     setAiHistory((h) => h.slice(1));
-    setDraftSpec(prev);
+    setDraftSpec(prevState.spec);
     setAiError(null);
+    // Restaura o workspace real (arquivos) quando existia um snapshot de código.
+    let restoredFiles: Record<string, string>;
+    if (prevState.files && Object.keys(prevState.files).length > 0) {
+      restoredFiles = prevState.files;
+    } else {
+      restoredFiles = materializeProjectFiles(prevState.spec);
+    }
+    prevFilesRef.current = restoredFiles;
+    setDraftFiles(restoredFiles);
+    setPreviewNonce((n) => n + 1);
+    // Persiste a restauração real (draft), mantendo o histórico e as versões posteriores.
+    try {
+      if (project?.id) {
+        await updateProjectSpec(project.id, prevState.spec, restoredFiles);
+        setDirty(false);
+      }
+    } catch {
+      setDirty(true);
+    }
     const savedSpec = project ? normalizeSpec(project.spec as SiteSpec | Record<string, unknown> | null) : null;
-    setDirty(!specsEqual(prev, savedSpec));
-    setAiMessages((m) => [...m, { role: "assistant", text: "Desfeita a última alteração da IA." }]);
+    setDirty(!specsEqual(prevState.spec, savedSpec));
+    setAiMessages((m) => [...m, { role: "assistant", text: "↶ Voltei para o estado anterior (conteúdo e código restaurados e salvos no editor)." }]);
   }
 
   function exitEditing() {
@@ -542,6 +579,21 @@ export default function SiteProjectPage() {
     setAiError(null);
   }
 
+  // AUTOSAVE (5.24): persiste o estado REAL (spec + arquivos) e cria versão
+  // somente quando houve mudança real. Retorna true se salvou/criou versão.
+  async function persistAutosave(specToSave: SiteSpec, filesToSave: Record<string, string>, summary?: string): Promise<boolean> {
+    if (!project?.id) return false;
+    const hasFiles = filesToSave && Object.keys(filesToSave).length > 0;
+    await updateProjectSpec(project.id, specToSave, hasFiles ? filesToSave : undefined);
+    if (!user?.id) return false;
+    const created = await createSiteVersion(project.id, user.id, specToSave, summary, hasFiles ? filesToSave : undefined).catch(() => false);
+    if (created) {
+      setDirty(false);
+      setPendingSummary(undefined);
+    }
+    return created;
+  }
+
   async function saveEdits() {
     if (!project) return;
     setSaving(true);
@@ -549,13 +601,8 @@ export default function SiteProjectPage() {
     const summary = pendingSummary;
     try {
       const files = materializeProjectFiles(savedSpec);
-      await updateProjectSpec(project.id, savedSpec, files);
-      if (user?.id) {
-        await createSiteVersion(project.id, user.id, savedSpec, summary).catch(() => {});
-      }
-      toast.success("Alterações salvas");
-      setDirty(false);
-      setPendingSummary(undefined);
+      await persistAutosave(savedSpec, files, summary);
+      toast.success("✓ Alterações salvas");
       await load();
       if (project.id) {
         const fresh = await fetchSiteProject(project.id);

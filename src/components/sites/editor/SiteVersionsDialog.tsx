@@ -3,6 +3,7 @@ import { History, Loader2, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { listSiteVersions, type SiteVersion } from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
+import { LiveProjectPreview } from "@/components/sites/LiveProjectPreview";
 import type { SiteSpec } from "@/data/siteProjects";
 
 interface Props {
@@ -74,7 +75,9 @@ export function SiteVersionsDialog({ projectId, onClose, onRestore }: Props) {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-3 bg-muted/30">
-                <SitePreview spec={selected.spec as SiteSpec | Record<string, unknown> | null} bare />
+                {selected.files && Object.keys(selected.files).length > 0
+                  ? <LiveProjectPreview files={selected.files} />
+                  : <SitePreview spec={selected.spec as SiteSpec | Record<string, unknown> | null} bare />}
               </div>
             </>
           ) : (

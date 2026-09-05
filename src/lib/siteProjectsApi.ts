@@ -364,15 +364,20 @@ export interface SiteVersion {
   id: string;
   version_number: number;
   spec: SiteSpec;
+  files?: Record<string, string> | null;
   change_summary: string | null;
   created_at: string;
 }
 
 function versionRowToVersion(row: Record<string, unknown>): SiteVersion {
+  const rawFiles = row.files;
   return {
     id: String(row.id ?? ""),
     version_number: Number(row.version_number ?? 0),
     spec: (row.spec && typeof row.spec === "object" ? row.spec : {}) as SiteSpec,
+    files: rawFiles && typeof rawFiles === "object" && !Array.isArray(rawFiles)
+      ? (Object.fromEntries(Object.entries(rawFiles as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>)
+      : null,
     change_summary: row.change_summary ? String(row.change_summary) : null,
     created_at: String(row.created_at ?? ""),
   };
@@ -397,37 +402,106 @@ export function diffSummary(before: SiteSpec | null, after: SiteSpec): string {
 export async function listSiteVersions(projectId: string): Promise<SiteVersion[]> {
   const { data, error } = await supabase
     .from("site_project_versions")
-    .select("id,version_number,spec,change_summary,created_at")
+    .select("id,version_number,spec,files,change_summary,created_at")
+    .eq("project_id", projectId)
     .order("version_number", { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []).map((r) => versionRowToVersion(r as unknown as Record<string, unknown>));
 }
 
-// Cria uma versão apenas quando há alteração real em relação à última versão.
-export async function createSiteVersion(projectId: string, userId: string, spec: SiteSpec, summary?: string): Promise<boolean> {
+// AUTOSAVE (5.24): comparação pura de "houve mudança real?" para não criar
+// versões duplicadas. Mudança é detectada pelo workspace (files) quando existir.
+export function versionChanged(
+  lastVersion: { spec: SiteSpec; files?: Record<string, string> | null } | null,
+  spec: SiteSpec,
+  files?: Record<string, string> | null,
+): boolean {
+  const hasFiles = !!files && Object.keys(files).length > 0;
+  // Estado atual code-first com files.
+  if (hasFiles) {
+    // Última versão sem files (só spec) → primeira versão com código = mudança real.
+    if (!lastVersion?.files) return true;
+    return JSON.stringify(lastVersion.files) !== JSON.stringify(files);
+  }
+  // Estado atual sem files (projeto legado spec-only).
+  if (lastVersion?.files) return true; // perdeu o código? considera mudança
+  const prevSpec = lastVersion?.spec ?? null;
+  return !prevSpec || JSON.stringify(prevSpec) !== JSON.stringify(spec);
+}
+
+// Cria uma versão apenas quando há alteração REAL em relação à última versão.
+// A mudança é comparada pelo workspace (files) quando existir — senão pela spec.
+// Retorna true se criou; false se a alteração é idêntica à última (não duplica).
+export async function createSiteVersion(
+  projectId: string,
+  userId: string,
+  spec: SiteSpec,
+  summary?: string,
+  files?: Record<string, string>,
+): Promise<boolean> {
   const { data: last, error: lastErr } = await supabase
     .from("site_project_versions")
-    .select("version_number,spec")
+    .select("version_number,spec,files")
     .eq("project_id", projectId)
     .order("version_number", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (lastErr) throw new Error(lastErr.message);
 
-  const prev = last && last.spec && typeof last.spec === "object" ? (last.spec as SiteSpec) : null;
-  if (prev && JSON.stringify(prev) === JSON.stringify(spec)) return false; // sem alteração real
+  const hasFiles = !!files && Object.keys(files).length > 0;
+  const lastVersion = last ? {
+    spec: (last.spec && typeof last.spec === "object" ? last.spec as SiteSpec : {} as SiteSpec),
+    files: last.files && typeof last.files === "object" ? (last.files as Record<string, string>) : null,
+  } : null;
+  if (!versionChanged(lastVersion, spec, files)) return false; // sem mudança real → não duplica
 
   const nextNumber = last ? Number(last.version_number) + 1 : 1;
-  const changeSummary = summary || diffSummary(prev, spec);
+  let changeSummary = summary || diffSummary(lastVersion?.spec ?? null, spec);
+  if (hasFiles && changeSummary === "Versão inicial") changeSummary = "Alteração no código do site";
+  if (changeSummary === "Alterações no projeto") changeSummary = "Alteração no site";
+
   const { error } = await supabase.from("site_project_versions").insert({
     project_id: projectId,
     user_id: userId,
     version_number: nextNumber,
     spec: spec as unknown as Json,
+    files: hasFiles ? (files as unknown as Json) : null,
     change_summary: changeSummary.slice(0, 240),
   });
   if (error) throw new Error(error.message);
   return true;
+}
+
+// Restaura uma versão: aplica spec + workspace (files) no projeto (draft) sem
+// tocar na publicação. Devolve o estado restaurado para o front atualizar.
+export async function restoreSiteVersion(projectId: string, versionId: string): Promise<SiteVersion> {
+  const { data, error } = await supabase
+    .from("site_project_versions")
+    .select("id,version_number,spec,files,change_summary,created_at")
+    .eq("project_id", projectId)
+    .eq("id", versionId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Versão não encontrada para este projeto.");
+  const version = versionRowToVersion(data as unknown as Record<string, unknown>);
+
+  // Aplica no projeto (draft): spec + generated_code; NÃO mexe em published_*.
+  const payload: Record<string, unknown> = {
+    spec: version.spec as unknown as Json,
+    design_system: (version.spec.design_system ?? {}) as unknown as Json,
+    site_structure: {
+      pages: version.spec.pages ?? {},
+      sections: version.spec.sections ?? [],
+      navigation: version.spec.navigation ?? [],
+    } as unknown as Json,
+    content: (version.spec.content ?? {}) as unknown as Json,
+    calls_to_action: (version.spec.calls_to_action ?? []) as unknown as Json,
+    seo: (version.spec.seo ?? {}) as unknown as Json,
+    ...(version.files && Object.keys(version.files).length ? { generated_code: version.files as unknown as Json } : {}),
+  };
+  const { error: upErr } = await supabase.from("site_projects").update(payload).eq("id", projectId);
+  if (upErr) throw new Error(upErr.message);
+  return version;
 }
 
 export async function deleteSiteProject(id: string): Promise<void> {
