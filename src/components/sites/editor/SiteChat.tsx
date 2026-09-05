@@ -18,6 +18,7 @@ interface SiteChatProps {
   dirty: boolean;
   onApply: (instruction: string, attachment?: { dataUrl: string; label: string }) => void;
   onRevert: () => void;
+  runningLabel?: string;
 }
 
 function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> {
@@ -199,7 +200,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, onApply, on
           ))}
           {running && (
             <div className="inline-flex items-center gap-1.5 rounded-2xl border border-border/60 bg-card px-3 py-2 text-[12.5px] text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin text-primary" /> analisando, editando e refinando…
+              <Loader2 className="h-3 w-3 animate-spin text-primary" /> {runningLabel ?? "analisando, editando e refinando…"}
             </div>
           )}
         </div>

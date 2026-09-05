@@ -134,6 +134,7 @@ export async function saveGeneratedSite(
   projectId: string,
   spec: SiteSpec,
   model: string,
+  generatedFiles?: Record<string, string>,
 ): Promise<void> {
   const payload = {
     spec: spec as unknown as Json,
@@ -148,6 +149,9 @@ export async function saveGeneratedSite(
     seo: (spec.seo ?? {}) as unknown as Json,
     ai_model: model,
     status: "generated",
+    // Workspace do agente: arquivos reais do projeto (Vite), materializados a
+    // partir da spec. O ZIP/baixar projeto pode usar direto daqui.
+    ...(generatedFiles ? { generated_code: generatedFiles as unknown as Json } : {}),
   };
   const { error } = await supabase.from("site_projects").update(payload).eq("id", projectId);
   if (error) throw new Error(error.message);
@@ -322,7 +326,11 @@ export async function deleteSiteProject(id: string): Promise<void> {
 }
 
 // Persiste edições manuais mantendo os campos estruturados consistentes com a spec.
-export async function updateProjectSpec(projectId: string, spec: SiteSpec): Promise<void> {
+export async function updateProjectSpec(
+  projectId: string,
+  spec: SiteSpec,
+  generatedFiles?: Record<string, string>,
+): Promise<void> {
   const payload = {
     spec: spec as unknown as Json,
     design_system: (spec.design_system ?? {}) as unknown as Json,
@@ -334,6 +342,7 @@ export async function updateProjectSpec(projectId: string, spec: SiteSpec): Prom
     content: (spec.content ?? {}) as unknown as Json,
     calls_to_action: (spec.calls_to_action ?? []) as unknown as Json,
     seo: (spec.seo ?? {}) as unknown as Json,
+    ...(generatedFiles ? { generated_code: generatedFiles as unknown as Json } : {}),
   };
   const { error } = await supabase.from("site_projects").update(payload).eq("id", projectId);
   if (error) throw new Error(error.message);

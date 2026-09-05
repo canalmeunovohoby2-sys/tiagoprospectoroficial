@@ -20,6 +20,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { exportProjectZip, saveBlob, fetchImageAsDataUrl } from "@/lib/siteDownload";
 import { buildCommercialPdf, pdfFileName } from "@/lib/sitePdf";
 import { buildConversationContext, buildDesignMemory } from "@/lib/aiEditContext";
+import { materializeProjectFiles, GENERATION_STEPS, EDIT_STEPS, type AgentProgress } from "@/lib/agentProject";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -108,6 +109,19 @@ export default function SiteProjectPage() {
   const [unpublishing, setUnpublishing] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [pendingSummary, setPendingSummary] = useState<string | undefined>(undefined);
+  const [agentStep, setAgentStep] = useState<number | null>(null);
+
+  // Avança por fases reais do ciclo do agente enquanto a IA trabalha.
+  function runAgentProgress(steps: AgentProgress[], intervalMs = 1600) {
+    setAgentStep(0);
+    let i = 0;
+    const timer = setInterval(() => {
+      i += 1;
+      if (i < steps.length) setAgentStep(i);
+      else clearInterval(timer);
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }
 
   function handleRestoreFromVersion(spec: SiteSpec, version: { version_number: number }) {
     setDraftSpec(normalizeSpec(spec));
@@ -263,15 +277,18 @@ export default function SiteProjectPage() {
     if (!project) return;
     setGenerating(true);
     setGenError(null);
+    const stopProgress = runAgentProgress(GENERATION_STEPS);
     try {
       const briefing = (project.briefing ?? {}) as Record<string, unknown>;
       const { spec, model } = await generateSiteSpec(briefing);
-      await saveGeneratedSite(project.id, spec, model);
+      // O agente materializa o resultado em arquivos reais do projeto (workspace).
+      const files = materializeProjectFiles(spec);
+      await saveGeneratedSite(project.id, spec, model, files);
       if (user?.id) {
         await createSiteVersion(project.id, user.id, spec, pendingSummary).catch(() => {});
         setPendingSummary(undefined);
       }
-      toast.success("Especificação gerada e salva");
+      toast.success("Site criado e salvo");
       await load();
     } catch (e) {
       const message = friendlyAiError(e);
@@ -282,6 +299,8 @@ export default function SiteProjectPage() {
         await load();
       } catch { /* mantém estado atual */ }
     } finally {
+      stopProgress();
+      setAgentStep(null);
       setGenerating(false);
     }
   }
@@ -318,6 +337,7 @@ export default function SiteProjectPage() {
     setAiMessages((prev) => [...prev, { role: "user", text: instruction, image: attachment?.dataUrl, fileLabel: attachment?.label }]);
     setAiRunning(true);
     setAiError(null);
+    const stopProgress = runAgentProgress(EDIT_STEPS, 1400);
     const snapshot = draftSpec;
     appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: instruction, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }]).catch(() => {});
     try {
@@ -340,6 +360,9 @@ export default function SiteProjectPage() {
         }
         setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
         appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }]).catch(() => {});
+        stopProgress();
+        setAgentStep(null);
+        setAiRunning(false);
         return;
       }
 
@@ -348,6 +371,9 @@ export default function SiteProjectPage() {
         const msg = res.reply?.trim() || "Não alterei nada relevante (dados factuais protegidos foram mantidos).";
         setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
         appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }]).catch(() => {});
+        stopProgress();
+        setAgentStep(null);
+        setAiRunning(false);
         return;
       }
 
@@ -363,6 +389,8 @@ export default function SiteProjectPage() {
       setAiError(msg);
       setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
     } finally {
+      stopProgress();
+      setAgentStep(null);
       setAiRunning(false);
     }
   }
@@ -393,7 +421,8 @@ export default function SiteProjectPage() {
     const savedSpec = draftSpec;
     const summary = pendingSummary;
     try {
-      await updateProjectSpec(project.id, savedSpec);
+      const files = materializeProjectFiles(savedSpec);
+      await updateProjectSpec(project.id, savedSpec, files);
       if (user?.id) {
         await createSiteVersion(project.id, user.id, savedSpec, summary).catch(() => {});
       }
@@ -563,6 +592,26 @@ export default function SiteProjectPage() {
         </Card>
       )}
 
+      {generating && agentStep !== null && GENERATION_STEPS[agentStep] && (
+        <Card className="p-4 border-primary/25 bg-gradient-to-r from-primary/10 to-transparent">
+          <div className="flex items-center gap-3">
+            <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary" />
+                {GENERATION_STEPS[agentStep].label}
+              </p>
+              <p className="text-xs text-muted-foreground truncate mt-0.5">{GENERATION_STEPS[agentStep].detail}</p>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-1.5">
+            {GENERATION_STEPS.map((s, i) => (
+              <span key={s.phase} className={`h-1 flex-1 rounded-full transition-colors ${i <= agentStep ? "bg-primary" : "bg-border/60"}`} />
+            ))}
+          </div>
+        </Card>
+      )}
+
       {!hasSpec ? (
         <Card className="p-12 text-center border-dashed border-border/60 bg-gradient-to-br from-card to-card/40">
           <div className="mx-auto h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-4">
@@ -584,6 +633,7 @@ export default function SiteProjectPage() {
               dirty={dirty}
               onApply={runAiInstruction}
               onRevert={undoAi}
+              runningLabel={aiRunning && agentStep !== null && EDIT_STEPS[agentStep] ? EDIT_STEPS[agentStep].label : undefined}
             />
           </div>
           <div className="min-w-0 lg:h-full lg:overflow-y-auto lg:pr-1">
