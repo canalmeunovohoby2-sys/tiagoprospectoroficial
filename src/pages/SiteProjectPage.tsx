@@ -111,9 +111,6 @@ export default function SiteProjectPage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [pendingSummary, setPendingSummary] = useState<string | undefined>(undefined);
   const [agentStep, setAgentStep] = useState<number | null>(null);
-  const [codePrompt, setCodePrompt] = useState("");
-  const [codeWorking, setCodeWorking] = useState(false);
-  const [codeOpen, setCodeOpen] = useState(false);
   const [draftFiles, setDraftFiles] = useState<Record<string, string> | null>(null);
   const [previewNonce, setPreviewNonce] = useState(0);
 
@@ -355,7 +352,69 @@ export default function SiteProjectPage() {
     const stopProgress = runAgentProgress(EDIT_STEPS, 1400);
     const snapshot = draftSpec;
     appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: instruction, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }]).catch(() => {});
+    const hasWorkspace = !!draftFiles && Object.keys(draftFiles).length > 0;
+    const pushReply = (msg: string, activity?: Array<{ phase: string; detail: string }>) => {
+      const activityLines = (activity ?? [])
+        .filter((a) => a.phase === "editing" || a.phase === "done")
+        .map((a) => `✓ ${a.detail}`)
+        .slice(0, 8);
+      const full = activityLines.length ? `${msg}\n\n${activityLines.join("\n")}` : msg;
+      setAiMessages((prev) => [...prev, { role: "assistant", text: full }]);
+      appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: full }]).catch(() => {});
+    };
     try {
+      // ===== CAMINHO PRINCIPAL: Cline Agent no workspace (código real) =====
+      if (hasWorkspace) {
+        let agentErr: unknown = null;
+        let agentRes: Awaited<ReturnType<typeof invokeProspectorAgent>> | null = null;
+        try {
+          const cContent = (draftSpec.content ?? {}) as Record<string, unknown>;
+          const cContact = (cContent.contact ?? {}) as Record<string, unknown>;
+          agentRes = await invokeProspectorAgent({
+            instruction,
+            files: draftFiles,
+            projectId: project.id,
+            context: {
+              name: project.company_name || project.name,
+              segment: project.segment,
+              city: project.city,
+              state: project.state,
+              phone: typeof cContact.phone === "string" ? cContact.phone : null,
+              whatsapp: typeof cContact.whatsapp === "string" ? cContact.whatsapp : null,
+              address: typeof cContact.address === "string" ? cContact.address : null,
+            },
+            memory: designMemory(),
+          });
+        } catch (e) {
+          agentErr = e;
+        }
+
+        if (!agentErr && agentRes && agentRes.status === "ok") {
+          if (agentRes.changed && agentRes.files) {
+            setAiHistory((prev) => [snapshot, ...prev].slice(0, 10));
+            const derivedSpec = agentRes.spec ? normalizeSpec(agentRes.spec as SiteSpec | Record<string, unknown> | null) : draftSpec;
+            setDraftSpec(derivedSpec);
+            setDirty(true);
+            prevFilesRef.current = agentRes.files;
+            setDraftFiles(agentRes.files);
+            setPreviewNonce((n) => n + 1);
+            const runtime = agentRes.runtime === "cline" ? "" : " (modo compatível)";
+            pushReply(agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`, agentRes.activity);
+          } else {
+            pushReply(agentRes.reply?.trim() || "Entendi! Não apliquei mudanças no código por enquanto.");
+          }
+          stopProgress();
+          setAgentStep(null);
+          setAiRunning(false);
+          return;
+        }
+        if (agentErr || !agentRes || agentRes.status === "error") {
+          // Fallback automático para o fluxo spec quando o agente de código não
+          // está disponível (sem runtime Node / edge indisponível).
+        }
+      }
+
+      // ===== FALLBACK LEGADO: edit-site sobre a SiteSpec =====
       const ctx = {
         name: project.company_name || project.name,
         segment: project.segment,
@@ -373,8 +432,7 @@ export default function SiteProjectPage() {
             ? "Entendi! Para eu ajustar com precisão, me diga o que você quer mudar (ex.: cor, texto, seção, layout)."
             : "Entendi! Por enquanto não apliquei mudanças no site — continue me pedindo o que quer ajustar.";
         }
-        setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
-        appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }]).catch(() => {});
+        pushReply(msg);
         stopProgress();
         setAgentStep(null);
         setAiRunning(false);
@@ -384,8 +442,7 @@ export default function SiteProjectPage() {
       const protectedSpec = applyAiProtections(draftSpec, res.spec, instruction);
       if (specsEqual(draftSpec, protectedSpec)) {
         const msg = res.reply?.trim() || "Não alterei nada relevante (dados factuais protegidos foram mantidos).";
-        setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
-        appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }]).catch(() => {});
+        pushReply(msg);
         stopProgress();
         setAgentStep(null);
         setAiRunning(false);
@@ -402,8 +459,7 @@ export default function SiteProjectPage() {
       setPreviewNonce((n) => n + 1);
       const summary = describeChanges(snapshot, protectedSpec);
       const msg = [res.reply?.trim(), `Alteração aplicada: ${summary} (ainda não salva).`].filter(Boolean).join(" ");
-      setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
-      appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }]).catch(() => {});
+      pushReply(msg);
     } catch (e) {
       const msg = friendlyAiError(e);
       setAiError(msg);
@@ -489,62 +545,6 @@ export default function SiteProjectPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
-
-  // Code-first: o agente opera sobre os ARQUIVOS reais (generated_code) do projeto.
-  async function runCodeEdit(instruction: string) {
-    if (!project) return;
-    setCodeWorking(true);
-    setGenError(null);
-    try {
-      // Workspace atual: usa o código persistido ou materializa do rascunho.
-      const existing = (project.generated_code as Record<string, string> | null) ?? {};
-      const hasFiles = Object.keys(existing).length > 0;
-      const baseFiles = hasFiles ? existing : materializeProjectFiles(draftSpec);
-      const cContent = (draftSpec.content ?? {}) as Record<string, unknown>;
-      const cContact = (cContent.contact ?? {}) as Record<string, unknown>;
-      const res = await invokeProspectorAgent({
-        instruction,
-        files: baseFiles,
-        projectId: project.id,
-        context: {
-          name: project.company_name || project.name,
-          segment: project.segment,
-          city: project.city,
-          state: project.state,
-          phone: typeof cContact.phone === "string" ? cContact.phone : null,
-          whatsapp: typeof cContact.whatsapp === "string" ? cContact.whatsapp : null,
-          address: typeof cContact.address === "string" ? cContact.address : null,
-        },
-        memory: designMemory(),
-      });
-      if (res.status === "error") {
-        toast.error(res.reply || (res.errors ?? []).join("; ") || "O agente não conseguiu concluir no código.");
-        setGenError(res.reply || (res.errors ?? []).join("; "));
-        return;
-      }
-      if (res.changed && res.files) {
-        // Atualiza spec derivada (se o agente mexeu em site.json) e salva arquivos.
-        const derivedSpec = res.spec ? normalizeSpec(res.spec as SiteSpec | Record<string, unknown> | null) : draftSpec;
-        await updateProjectSpec(project.id, derivedSpec, res.files);
-        if (user?.id) await createSiteVersion(project.id, user.id, derivedSpec, `Edição no código: ${instruction}`).catch(() => {});
-        setDraftSpec(derivedSpec);
-        setDirty(false);
-        setPendingSummary(undefined);
-        toast.success(res.reply || `Arquivos atualizados (${(res.touched ?? []).length}).`);
-        prevFilesRef.current = res.files;
-        setDraftFiles(res.files);
-        setPreviewNonce((n) => n + 1);
-        await load();
-      } else {
-        toast.info(res.reply || "Nenhuma alteração foi necessária nos arquivos.");
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao editar o código");
-      setGenError(e instanceof Error ? e.message : "Erro ao editar o código");
-    } finally {
-      setCodeWorking(false);
-    }
-  }
 
   if (loading) {
     return (
@@ -753,32 +753,13 @@ export default function SiteProjectPage() {
             ) : (
               <SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />
             )}
-            <div className="mt-3 rounded-xl border border-border/70 bg-card/60 p-3">
-              <button type="button" onClick={() => setCodeOpen((v) => !v)} className="flex w-full items-center justify-between gap-2 text-left">
-                <span className="flex items-center gap-2 text-sm font-semibold">
-                  <Code2 className="h-4 w-4 text-primary" /> Agente de código (Cline)
-                </span>
-                <span className="text-xs text-muted-foreground">{codeOpen ? "ocultar" : "mostrar"}</span>
-              </button>
-              {codeOpen && (
-                <div className="mt-2 space-y-2">
-                  <p className="text-[11px] text-muted-foreground">O agente (motor Cline + DeepSeek) lê, planeja e edita os arquivos reais do projeto — HTML, CSS e JS — com validação e refinamento. Ideal para mudanças que o construtor visual não alcança (animações, composições, detalhes de CSS).</p>
-                  <textarea
-                    value={codePrompt}
-                    onChange={(e) => setCodePrompt(e.target.value)}
-                    placeholder="Ex.: deixa os cards de serviços com um efeito hover de elevação e um gradiente sutil no topo; anima o hero com entrada suave…"
-                    rows={3}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/60"
-                  />
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Button size="sm" disabled={codeWorking || !codePrompt.trim()} onClick={() => { runCodeEdit(codePrompt); setCodePrompt(""); }}>
-                      {codeWorking ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Code2 className="h-3.5 w-3.5 mr-1" />}
-                      Executar no código
-                    </Button>
-                    <span className="text-[11px] text-muted-foreground">Salva uma nova versão quando altera arquivos.</span>
-                  </div>
-                </div>
-              )}
+            <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-border/70 bg-card/60 px-3 py-2">
+              <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Code2 className="h-3.5 w-3.5 text-primary" />
+                Motor do editor: <span className="font-medium text-foreground">Cline Agent</span>
+                {draftFiles && Object.keys(draftFiles).length > 0 ? " · código real" : " · modo compatível"}
+              </p>
+              {aiRunning && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
             </div>
           </div>
         </div>

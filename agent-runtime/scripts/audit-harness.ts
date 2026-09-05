@@ -20,7 +20,7 @@ export async function auditRun(opts: {
   business?: Record<string, unknown>;
   instruction: string;
   memory?: string[];
-  label: string;
+  label?: string;
 }): Promise<AuditTrace> {
   const root = ensureWorkspaceDir(opts.projectId, opts.files);
   const agent = new ProspectorSiteAgent({

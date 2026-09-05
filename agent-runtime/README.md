@@ -24,21 +24,23 @@ Prospector Agent Runtime (Node, este pacote)
 ```bash
 cd agent-runtime
 npm install
+cp .env.example .env   # preencha PROSPECTOR_BASE_URL/PROSPECTOR_API_KEY (ai-proxy) ou DEEPSEEK_API_KEY
 
-# opção A — usando o ai-proxy do Supabase (secret fica no servidor):
-$env:PROSPECTOR_BASE_URL="https://<ref>.supabase.co/functions/v1/ai-proxy"
-$env:PROSPECTOR_API_KEY="<sb_publishable key>"
+# servidor HTTP (o app chama via VITE_AGENT_RUNTIME_URL):
+node --env-file=.env --import tsx src/server.ts
+
+# E2E / sessão / compreensão (requer o servidor rodando na 8787):
 npx tsx scripts/e2e-hero-badge.ts
-
-# opção B — chave local direta:
-$env:DEEPSEEK_API_KEY="sk-..."
-npx tsx scripts/e2e-hero-badge.ts
-
-# servidor HTTP (para o app chamar via VITE_AGENT_RUNTIME_URL):
-npx tsx src/server.ts
+npx tsx scripts/test-session.ts
+npx tsx scripts/test-understanding.ts
 ```
 
-O app (`SiteProjectPage`) usa `invokeProspectorAgent()`: se `VITE_AGENT_RUNTIME_URL` estiver definida, fala com este runtime; senão, faz fallback para a edge function `agent-execute` (mesmo contrato, sem runtime Node).
+Endpoints:
+- `GET /health` — status do runtime e nº de sessões ativas.
+- `POST /run` — roda/continua o agente de um projeto. `projectId` identifica a sessão: se já existe um Agent vivo, a nova mensagem usa `agent.continue()` (contexto preservado). `fresh:true` reinicia a sessão.
+- `DELETE /session` `{projectId}` — encerra a sessão.
+
+O app (`SiteProjectPage`) usa o agente como motor principal do chat quando há workspace; `invokeProspectorAgent()` fala com este runtime se `VITE_AGENT_RUNTIME_URL` estiver definida, senão faz fallback para a edge `agent-execute`.
 
 ## Segurança
 

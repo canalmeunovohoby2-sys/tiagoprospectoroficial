@@ -187,6 +187,9 @@ export interface AgentExecuteResult {
   files?: Record<string, string>;
   spec?: Record<string, unknown> | null;
   model?: string;
+  runtime?: "cline" | "edge-fallback";
+  resumed_session?: boolean;
+  activity?: Array<{ phase: string; detail: string }>;
 }
 
 // Code-first: invoca o agent-execute que opera sobre os ARQUIVOS reais do projeto.
