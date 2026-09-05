@@ -43,6 +43,25 @@ Endpoints:
 
 O app (`SiteProjectPage`) usa o agente como motor principal do chat quando há workspace; `invokeProspectorAgent()` fala com este runtime se `VITE_AGENT_RUNTIME_URL` estiver definida, senão faz fallback para a edge `agent-execute`.
 
+## Quality Gate de Geração (consistência)
+
+O `/generate` roda um **Quality Gate técnico pós-geração** (`src/generation-gate.ts`)
+para que qualidade seja consequência do processo, não da sorte do modelo:
+
+1. O Cline cria o site (loop com ferramentas + browser QA).
+2. `assertGenerationQuality` checa objetivamente: imagens reais em segmentos visuais
+   (`<img>`/background), `@media` responsivo, CTA de conversão, `<nav>`, `<footer>`
+   com contato, ausência de lorem/placeholder, nome da empresa visível, e rejeita
+   horários inventados quando o negócio não os forneceu.
+3. Se reprovar, o agente recebe a **lista concreta de problemas** e roda uma correção
+   dirigida (`continueSession`), revalidando — máximo 2 ciclos (`gate_ok`/`gate_issues`
+   na resposta).
+
+Evidência (repetibilidade): a mesma academia gerada várias vezes retorna sempre com
+`<img>` reais, hero, CTA, `@media` e `gate_ok:true` — a variação fica na composição
+(qualidade consistente, aparência distinta). Sem o gate, execuções podiam omitir
+imagens por completo.
+
 ## Segurança
 
 - Cada projeto tem um diretório isolado (`sha256(projectId)`), criado em `tmp` ou em `PROSPECTOR_WORKSPACES`.

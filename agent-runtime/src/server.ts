@@ -8,6 +8,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { ProspectorSiteAgent } from "./prospector-site-agent";
 import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot } from "./workspace";
 import type { BusinessContext } from "./tools";
+import { assertGenerationQuality } from "./generation-gate";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -158,6 +159,34 @@ ${ctxLines || "(apenas nome de arquivo/nenhum dado além do projeto)"}
 ${extra}`;
 
         const outcome = await agent.runTask(mission, { continueSession: !!existingGen });
+
+        // ===== QUALITY GATE PÓS-GERAÇÃO (5.21) =====
+        // A qualidade passa a ser consequência do processo: se a primeira versão
+        // estiver tecnicamente deficiente (sem imagens em segmento visual, sem
+        // CTA, sem responsividade, footer simples...), o agente recebe a lista
+        // concreta de problemas e roda UMA correção dirigida. Máx. 2 ciclos.
+        let finalOutcome = outcome;
+        let gateResult = assertGenerationQuality(readWorkspace(resolveWorkspaceRoot(projectId)), {
+          segment: business.segment ?? "",
+          name: business.name ?? "",
+          businessHas: (f) => f === "hours" ? false : true,
+        });
+        const gateCycles = 2;
+        for (let g = 0; g < gateCycles && !gateResult.ok; g++) {
+          const fixMission = `Antes de finalizar, você precisa corrigir os problemas técnicos abaixo apontados pela revisão automática da geração. Continue trabalhando no código (pode abrir o navegador para validar) e corrija TODOS:
+${gateResult.issues.map((i) => `- ${i}`).join("\n")}
+Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifique novamente e finalize.`;
+          const fixOut = await agent.runTask(fixMission, { continueSession: true });
+          const filesAfter = readWorkspace(resolveWorkspaceRoot(projectId));
+          gateResult = assertGenerationQuality(filesAfter, {
+            segment: business.segment ?? "",
+            name: business.name ?? "",
+            businessHas: () => true,
+          });
+          finalOutcome = fixOut;
+          activity.push({ phase: "gate", detail: `Revisão automática: ${gateResult.ok ? "problemas resolvidos" : `${gateResult.issues.length} problema(s) restante(s)`}` });
+          if (gateResult.ok) break;
+        }
         const finalFiles = readWorkspace(resolveWorkspaceRoot(projectId));
         // Move o agente de geração para o pool de edição do mesmo projectId,
         // para que o chat continue a MESMA conversa/sessão após a geração.
@@ -165,16 +194,18 @@ ${extra}`;
         sessions.set(projectId, { agent, projectId, lastActive: Date.now(), resetToken: "" });
 
         send(res, 200, {
-          status: outcome.ok ? "ok" : "error",
-          reply: outcome.reply,
-          error: outcome.error,
+          status: finalOutcome.ok ? "ok" : "error",
+          reply: finalOutcome.reply,
+          error: finalOutcome.error,
           changed: true,
-          touched: outcome.touched,
+          touched: finalOutcome.touched,
           files: finalFiles,
           model: process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
           provider: process.env.PROSPECTOR_PROVIDER ?? "deepseek",
           runtime: "cline",
           mode: "generate",
+          gate_ok: gateResult.ok,
+          gate_issues: gateResult.issues,
           events: events.slice(0, 200),
           activity,
         });
