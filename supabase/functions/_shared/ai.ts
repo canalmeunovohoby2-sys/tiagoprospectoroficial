@@ -188,9 +188,21 @@ async function nvidiaGenerateText(opts: GenerateTextOptions, model: string): Pro
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const base = nvidiaBody(opts, model);
-  // Reasoning habilitado conforme o exemplo oficial. Se o endpoint rejeitar o
-  // parâmetro, fazemos uma única reexecução sem chat_template_kwargs.
-  const withReasoning = { ...base, chat_template_kwargs: { thinking: true, reasoning_effort: "high" } };
+  // Thinking configurável. O parâmetro correto depende do modelo NIM:
+  //   - Nemotron: enable_thinking (padrão)
+  //   - DeepSeek: thinking
+  // Ajuste via NVIDIA_THINKING_PARAM quando necessário.
+  const thinkingEnabled = getEnv("NVIDIA_THINKING") !== "false";
+  let chatTemplateKwargs: Record<string, unknown> | undefined;
+  if (thinkingEnabled) {
+    const param = getEnv("NVIDIA_THINKING_PARAM") ?? "enable_thinking";
+    chatTemplateKwargs = { [param]: true };
+    const effort = getEnv("NVIDIA_REASONING_EFFORT");
+    if (effort === "high" || effort === "medium" || effort === "low") {
+      chatTemplateKwargs.reasoning_effort = effort;
+    }
+  }
+  const withReasoning = chatTemplateKwargs ? { ...base, chat_template_kwargs: chatTemplateKwargs } : base;
 
   const doPost = async (body: Record<string, unknown>): Promise<Response> =>
     fetch(`${baseUrl}/chat/completions`, {

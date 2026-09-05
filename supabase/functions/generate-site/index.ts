@@ -126,6 +126,13 @@ Depois produza o JSON final.
 - O hero NÃO precisa ocupar a tela toda. Prefira composições equilibradas.
 - Imagens: deixe "image": null. Em visual_style, descreva que TIPOS de imagem combinariam (não URLs).
 
+# LIMITE DE TAMANHO (IMPORTANTE — manter resposta enxuta)
+- Produza um JSON COMPACTO: no máximo ~3.500–4.000 tokens no total.
+- Títulos: curtos (até 8 palavras). Subtítulos/parágrafos: no máximo 2–3 frases.
+- Serviços: entre 3 e 5 itens, com descrições de 1–2 frases cada.
+- NÃO repita a mesma informação em seções diferentes (ex.: não repita a tagline no hero e no sobre).
+- Seções: 4 a 6 no total (hero incluso) + footer. Nada de conteúdo redundante ou genérico demais.
+
 # VALIDADE
 Retorne APENAS o JSON (sem markdown, sem comentários). Use aspas duplas válidas.`;
 
@@ -308,7 +315,7 @@ Gere a especificação JSON do site.`;
         user,
         temperature: 0.9,
         json: true,
-        maxOutputTokens: 8192,
+        maxOutputTokens: 4500,
       });
       raw = result.text;
       usedModel = result.model;
