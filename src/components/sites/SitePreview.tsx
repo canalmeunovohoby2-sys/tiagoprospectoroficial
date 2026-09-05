@@ -72,9 +72,9 @@ function resolveImg(v: unknown): { url: string; alt: string } | null {
   return null;
 }
 
-function Picture({ src, alt, ratio = "16 / 9", eager = false, className = "" }: { src: string; alt: string; ratio?: string; eager?: boolean; className?: string }) {
+function Picture({ src, alt, ratio, eager = false, className = "" }: { src: string; alt: string; ratio?: string; eager?: boolean; className?: string }) {
   return (
-    <div className={`relative overflow-hidden ${className}`} style={{ aspectRatio: ratio, backgroundColor: "color-mix(in srgb, var(--sp-muted) 15%, transparent)" }}>
+    <div className={`relative overflow-hidden ${className}`} style={ratio ? { aspectRatio: ratio, backgroundColor: "color-mix(in srgb, var(--sp-muted) 15%, transparent)" } : { backgroundColor: "color-mix(in srgb, var(--sp-muted) 15%, transparent)" }}>
       <img
         src={src}
         alt={alt || ""}
@@ -759,15 +759,26 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
       .map((it) => resolveImg(it.image ?? it.url ?? it))
       .filter((x): x is { url: string; alt: string } => !!x);
     if (!sectionHas("gallery") || items.length === 0) return null;
+    const editorial = str(gallery.layout) === "editorial";
     return (
       <section id="gallery" style={{ backgroundColor: "var(--sp-surface)" }}>
         <div className="mx-auto px-6 py-[var(--sp-py-section)]" style={{ maxWidth: "var(--sp-maxw)" }}>
           {blockText(gallery, "title") && <div className="mb-9 text-center">{heading(blockText(gallery, "title"))}</div>}
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
-            {items.slice(0, 6).map((img, i) => (
-              <Picture key={i} src={img.url} alt={img.alt || ""} ratio="4 / 3" className="rounded-[calc(var(--sp-radius)*0.9)] shadow-sm" />
-            ))}
-          </div>
+          {editorial ? (
+            <div className="grid auto-rows-[10rem] grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+              {items.slice(0, 7).map((img, i) => (
+                <div key={i} className={i === 0 ? "col-span-2 row-span-2" : ""}>
+                  <Picture src={img.url} alt={img.alt || ""} className="h-full rounded-[calc(var(--sp-radius)*0.9)] shadow-sm" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+              {items.slice(0, 6).map((img, i) => (
+                <Picture key={i} src={img.url} alt={img.alt || ""} ratio="4 / 3" className="rounded-[calc(var(--sp-radius)*0.9)] shadow-sm" />
+              ))}
+            </div>
+          )}
           <p className="mt-3 text-center text-[11px]" style={{ color: "var(--sp-muted)" }}>Imagens ilustrativas de referência (não são fotos do negócio).</p>
         </div>
       </section>

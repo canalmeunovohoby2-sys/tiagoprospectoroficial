@@ -127,6 +127,14 @@ export default function SiteProjectPage() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
 
+  // Chat-first: ao abrir um projeto com site, o construtor conversacional
+  // (chat + preview) já entra automaticamente — sem precisar clicar em "Editar".
+  const hasSpecNow = !!project?.spec && Object.keys(project.spec as object).length > 0;
+  useEffect(() => {
+    if (hasSpecNow && !editMode) startEditing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id, hasSpecNow]);
+
   async function generate() {
     if (!project) return;
     setGenerating(true);
