@@ -145,6 +145,31 @@ header.scrolled .nav{padding-block:10px}
 .hero-fig:hover img{transform:scale(1.04)}
 .hero-fig::after{content:"";position:absolute;inset:0;border:1px solid rgba(255,255,255,.08);border-radius:inherit;pointer-events:none}
 .statement .hero-fig{aspect-ratio:21/9;margin-top:44px;border-radius:var(--r)}
+.hero-fig-wide{aspect-ratio:21/9;border-radius:var(--r)}
+.hero-fig-tall{aspect-ratio:4/5}
+/* Cinematic: imagem full-bleed + overlay + conteúdo à esquerda */
+.hero.cinematic{padding:0;background:var(--s)}
+.hero.cinematic .hero-bg{position:absolute;inset:0;z-index:0}
+.hero.cinematic .hero-bg img{width:100%;height:100%;object-fit:cover}
+.hero.cinematic .hero-bg .hero-veil{position:absolute;inset:0;background:linear-gradient(100deg,var(--s) 8%,color-mix(in srgb,var(--s) 78%,transparent) 55%,transparent)}
+.hero.cinematic .hero-cinematic-content{position:relative;z-index:1;padding:clamp(90px,12vw,150px) 24px clamp(80px,11vw,140px)}
+.hero.cinematic .hero-cinematic-inner{max-width:560px;color:var(--onp)}
+.hero.cinematic h1{text-shadow:0 2px 30px rgba(0,0,0,.35)}
+.hero.cinematic .lead{color:color-mix(in srgb,var(--onp) 88%,transparent)}
+.hero.cinematic .eyebrow{color:var(--a)}
+.hero.cinematic .eyebrow::before{background:var(--a)}
+/* Asymmetric: texto + imagem alta com moldura deslocada */
+.hero.asymmetric .hero-fig-tall{position:relative;border:1px solid color-mix(in srgb,var(--p) 35%,transparent);box-shadow:none}
+.hero.asymmetric .hero-fig-tall::before{content:"";position:absolute;inset:0;transform:translate(-12px,-12px);border-radius:inherit;border:1px solid color-mix(in srgb,var(--p) 30%,transparent);pointer-events:none}
+.hero.asymmetric .hero-fig-tall img{position:relative;border-radius:inherit}
+/* Typography-led: sem grid, headline enorme, imagem larga abaixo */
+.hero.typography-led{background:var(--bg)}
+.hero.typography-led .container{max-width:var(--max)}
+.hero.typography-led h1{font-size:clamp(3rem,8vw,6.5rem);line-height:.98;letter-spacing:-.03em;max-width:900px}
+.hero.typography-led .lead{max-width:620px}
+.hero.typography-led .hero-fig-wide{margin-top:clamp(30px,5vw,60px)}
+/* Editorial */
+.hero.editorial .hero-grid.split{grid-template-columns:1.25fr .75fr;align-items:end}
 section{padding:clamp(60px,8vw,104px) 0}
 section.sf{background:var(--sf)}
 /* Section headers */
@@ -250,15 +275,42 @@ footer.light .foot-line{border-color:var(--bd)}
 
   if (sectionTypes.includes("hero") || heroTitle) {
     const sub = t(hero.subtitle);
-    parts.push(`<section id="top" class="hero ${statement ? "statement" : ""}"><div class="container ${statement ? "" : "hero-grid split"}">`);
-    parts.push(`<div ${revealAttr()}>${statement ? `<span class="eyebrow">${t(seg)}</span>` : `<div><span class="eyebrow">${t(seg)}</span></div>`}<h1>${heroTitle}</h1>`);
-    if (sub) parts.push(`<p class="lead">${sub}</p>`);
+    const cinematic = hVariant === "cinematic" || hVariant === "full_image";
+    const editorial = hVariant === "editorial" || (hVariant !== "split" && hVariant !== "centered" && hVariant !== "statement" && hVariant !== "cinematic" && hVariant !== "service_first" && hVariant !== "typography_led" && (["editorial", "luxury"].includes(str(ds.layout_archetype))));
+    const typographyLed = hVariant === "typography_led";
+    const asymmetric = hVariant === "asymmetric" || hVariant === "layered";
+    const statement = hVariant === "statement";
+
+    if (cinematic) {
+      parts.push(`<section id="top" class="hero cinematic"><div class="hero-bg"><img src="${heroImg ? imgSrc(hero.image) : ""}" alt="" onerror="this.style.display='none'"/><div class="hero-veil"></div></div><div class="container hero-cinematic-content">`);
+      parts.push(`<div class="hero-cinematic-inner">${heroImg ? `<span class="eyebrow">${t(seg)}</span>` : `<span class="eyebrow">${t(seg)}</span>`}<h1>${heroTitle}</h1>`);
+      if (sub) parts.push(`<p class="lead">${sub}</p>`);
+      parts.push(`</div>`);
+    } else if (asymmetric || editorial) {
+      parts.push(`<section id="top" class="hero ${asymmetric ? "asymmetric" : "editorial"}"><div class="container hero-grid split">`);
+      parts.push(`<div ${revealAttr()}><div><span class="eyebrow">${t(seg)}</span></div><h1>${heroTitle}</h1>`);
+      if (sub) parts.push(`<p class="lead">${sub}</p>`);
+    } else {
+      parts.push(`<section id="top" class="hero ${statement ? "statement" : typographyLed ? "typography-led" : ""}"><div class="container ${statement || typographyLed ? "" : "hero-grid split"}">`);
+      parts.push(`<div ${revealAttr()}>${statement ? `<span class="eyebrow">${t(seg)}</span>` : typographyLed ? `<span class="eyebrow">${t(seg)}</span>` : `<div><span class="eyebrow">${t(seg)}</span></div>`}<h1>${heroTitle}</h1>`);
+      if (sub) parts.push(`<p class="lead">${sub}</p>`);
+    }
     const cta = str(hero.primary_cta);
     const ctaHref = statement ? "#contact" : wa ? `https://wa.me/${wa.replace(/\D/g, "")}` : "#contact";
     const ctaTarget = ctaHref.startsWith("http") ? ` target="_blank" rel="noreferrer"` : "";
     if (cta) parts.push(`<div class="btn-group"><a class="btn" href="${ctaHref}"${ctaTarget}>${t(cta)}</a></div>`);
     parts.push(`</div>`);
-    if (heroImg) parts.push(`<div ${revealAttr()} class="hero-fig"><img src="${imgSrc(hero.image)}" alt=""/></div>`);
+    if (heroImg) {
+      if (cinematic) {
+        // imagem já é o fundo
+      } else if (asymmetric) {
+        parts.push(`<div ${revealAttr()} class="hero-fig hero-fig-tall"><img src="${imgSrc(hero.image)}" alt=""/></div>`);
+      } else if (statement || typographyLed) {
+        parts.push(`<div ${revealAttr()} class="hero-fig hero-fig-wide"><img src="${imgSrc(hero.image)}" alt=""/></div>`);
+      } else {
+        parts.push(`<div ${revealAttr()} class="hero-fig"><img src="${imgSrc(hero.image)}" alt=""/></div>`);
+      }
+    }
     parts.push(`</div></section>`);
   }
 

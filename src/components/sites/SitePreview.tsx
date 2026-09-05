@@ -104,16 +104,10 @@ export function SitePreview({ spec: raw, bare = false }: SitePreviewProps) {
   const colors = ds.colors ?? {};
   const typo = ds.typography ?? {};
   const archetype = oneOf(str(ds.layout_archetype), ["editorial", "corporate", "minimal", "luxury", "bold", "service_focused", "local_business"] as const, "minimal");
-  // Hero premium (7.1): mapeia variantes ricas para a composição mais próxima
-  // suportada pelo renderer (fallback elegante, nunca quebra).
-  const heroVariantRaw = str(ds.hero_variant) || "";
-  const heroVariant = heroVariantRaw === "asymmetric" || heroVariantRaw === "layered" || heroVariantRaw === "collage"
-    ? "split"
-    : heroVariantRaw === "typography_led"
-      ? "centered"
-      : heroVariantRaw === "cinematic" || heroVariantRaw === "full_image"
-        ? "statement"
-        : oneOf(heroVariantRaw, ["split", "centered", "editorial", "statement", "service_first"] as const, "centered");
+  // Hero premium (7.1+): passa a variante REAL ao renderer — cada composição
+  // (cinematic/asymmetric/layered/collage/typography_led/editorial/split/
+  // centered/statement/service_first) tem layout próprio.
+  const heroVariant = oneOf(str(ds.hero_variant), ["split", "centered", "editorial", "statement", "service_first", "cinematic", "asymmetric", "layered", "collage", "typography_led"] as const, "centered");
   const cardStyle = oneOf(str(ds.card_style), ["flat", "bordered", "elevated", "editorial"] as const, "bordered");
   const buttonStyle = oneOf(str(ds.button_style), ["solid", "outline", "soft"] as const, "solid");
   const navStyle = oneOf(str(ds.navigation_style), ["minimal", "centered", "boxed"] as const, "minimal");
@@ -504,34 +498,159 @@ export function SitePreview({ spec: raw, bare = false }: SitePreviewProps) {
       );
     }
 
-    // centered + editorial
+    // ---- Composições premium distintas (cada uma com layout próprio) ----
     const editorial = heroVariant === "editorial" || archetype === "editorial" || archetype === "luxury";
-    return (
-      <section id="hero" style={{ backgroundColor: "var(--sp-background)", color: "var(--sp-on-surface)" }}>
-        <div className={`mx-auto px-6 py-16 text-${editorial ? "left" : "center"} sm:py-24`} style={{ maxWidth: "var(--sp-maxw)" }}>
-          <div className={`${editorial ? "max-w-3xl" : "mx-auto max-w-3xl"} space-y-6`}>
-            {editorial ? eyebrow(segmentLabel) : (
-              <span className="inline-block text-[0.72rem] uppercase tracking-[0.24em]" style={{ color: "var(--sp-primary)", fontWeight: 600 }}>{segmentLabel}</span>
-            )}
-            <h1 className="font-bold leading-[1.02]" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "var(--sp-heading-size)", letterSpacing: "var(--sp-tracking)" }}>
-              {textRich(title)}
-            </h1>
-            {sub && <p className={`text-lg leading-relaxed ${editorial ? "" : "mx-auto"}`} style={{ color: "var(--sp-muted)" }}>{textRich(sub)}</p>}
-            <div className={`flex flex-wrap items-center gap-3 pt-1 ${editorial ? "" : "justify-center"}`}>
-              {heroBtnHref && heroBtnLabel && btn(heroBtnLabel, heroBtnHref)}
-              {!heroBtnLabel && waLink && btn("Falar agora", waLink)}
-              {str(hero.secondary_cta) && btn(str(hero.secondary_cta), "#contato", "ghost")}
+    const ctas = (align: "start" | "center") => (
+      <div className={`flex flex-wrap items-center gap-3 pt-1 ${align === "center" ? "justify-center" : ""}`}>
+        {heroBtnHref && heroBtnLabel && btn(heroBtnLabel, heroBtnHref)}
+        {!heroBtnLabel && waLink && btn("Falar agora", waLink)}
+        {str(hero.secondary_cta) && btn(str(hero.secondary_cta), "#contato", "ghost")}
+      </div>
+    );
+
+    // cinematic: imagem full-bleed com overlay escuro + conteúdo à esquerda
+    if (heroVariant === "cinematic") {
+      return (
+        <section id="hero" className="relative overflow-hidden" style={{ backgroundColor: "var(--sp-secondary)", color: "var(--sp-on-primary)" }}>
+          {heroImg ? (
+            <>
+              <div aria-hidden className="absolute inset-0">
+                <img src={heroImg.url} alt="" loading="eager" className="h-full w-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                <div className="absolute inset-0" style={{ background: "linear-gradient(100deg, var(--sp-secondary) 8%, color-mix(in srgb, var(--sp-secondary) 78%, transparent) 55%, transparent 100%)" }} />
+                <div className="absolute inset-x-0 bottom-0 h-32" style={{ background: "linear-gradient(0deg, var(--sp-secondary) 0%, transparent 100%)" }} />
+              </div>
+              <div className="relative mx-auto px-6 py-28 sm:py-40" style={{ maxWidth: "var(--sp-maxw)" }}>
+                <div className="max-w-2xl space-y-7">
+                  <span className="inline-flex items-center gap-2 text-[0.72rem] uppercase tracking-[0.24em] font-semibold" style={{ color: "var(--sp-accent)" }}><span className="h-px w-8" style={{ backgroundColor: "var(--sp-accent)" }} />{segmentLabel}</span>
+                  <h1 className="font-bold leading-[1.02]" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "var(--sp-heading-size)", letterSpacing: "var(--sp-tracking)", textShadow: "0 2px 30px rgba(0,0,0,.35)" }}>{textRich(title)}</h1>
+                  {sub && <p className="max-w-xl text-lg leading-relaxed" style={{ color: "color-mix(in srgb, var(--sp-on-primary) 88%, transparent)" }}>{textRich(sub)}</p>}
+                  {ctas("start")}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="mx-auto px-6 py-24 sm:py-32" style={{ maxWidth: "var(--sp-maxw)" }}>
+              <div className="max-w-2xl space-y-7">
+                <span className="inline-flex items-center gap-2 text-[0.72rem] uppercase tracking-[0.24em] font-semibold" style={{ color: "var(--sp-accent)" }}><span className="h-px w-8" style={{ backgroundColor: "var(--sp-accent)" }} />{segmentLabel}</span>
+                <h1 className="font-bold leading-[1.02]" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "var(--sp-heading-size)", letterSpacing: "var(--sp-tracking)" }}>{textRich(title)}</h1>
+                {sub && <p className="max-w-xl text-lg leading-relaxed" style={{ color: "color-mix(in srgb, var(--sp-on-primary) 88%, transparent)" }}>{textRich(sub)}</p>}
+                {ctas("start")}
+              </div>
+            </div>
+          )}
+        </section>
+      );
+    }
+
+    // asymmetric: texto alinhado à esquerda + imagem deslocada para cima com moldura
+    if (heroVariant === "asymmetric" || heroVariant === "layered" || heroVariant === "collage") {
+      const framed = heroVariant === "collage";
+      return (
+        <section id="hero" className="relative overflow-hidden" style={{ backgroundColor: "var(--sp-background)", color: "var(--sp-on-surface)" }}>
+          {decorative !== "none" && <div aria-hidden className="absolute inset-y-0 right-0 w-1/2" style={{ background: "linear-gradient(120deg, transparent 40%, color-mix(in srgb, var(--sp-primary) 7%, transparent) 100%)" }} />}
+          <div className="relative mx-auto px-6 py-20 sm:py-28" style={{ maxWidth: "var(--sp-maxw)" }}>
+            <div className="grid items-center gap-12 lg:grid-cols-[1fr_0.95fr]">
+              <div className="relative z-10 space-y-6 lg:pr-4">
+                {eyebrow(segmentLabel)}
+                <h1 className="font-bold leading-[1.03]" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "calc(var(--sp-heading-size) * 1.05)", letterSpacing: "var(--sp-tracking)" }}>{textRich(title)}</h1>
+                {sub && <p className="text-lg leading-relaxed" style={{ color: "var(--sp-muted)" }}>{textRich(sub)}</p>}
+                {ctas("start")}
+              </div>
+              <div className="relative">
+                {heroImg ? (
+                  framed ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Picture src={heroImg.url} alt={heroImg.alt} ratio="3 / 4" eager className="mt-8 rounded-[calc(var(--sp-radius)*1.2)] shadow-[0_30px_70px_-30px_rgba(16,24,40,.35)]" />
+                      <div className="space-y-3">
+                        <div aria-hidden className="rounded-[calc(var(--sp-radius)*1.2)] p-6" style={{ background: "color-mix(in srgb, var(--sp-primary) 10%, transparent)", border: "1px solid var(--sp-border)" }}>
+                          <p className="font-bold" style={{ color: "var(--sp-primary)", fontFamily: "var(--sp-heading-font)", fontSize: "1.8rem", lineHeight: 1 }}>{str(hero.badge_value) || "100%"}</p>
+                          <p className="mt-1 text-xs" style={{ color: "var(--sp-muted)" }}>{str(hero.badge_label) || "dedicação ao cliente"}</p>
+                        </div>
+                        <Picture src={heroImg.url} alt={heroImg.alt} ratio="1 / 1" eager className="rounded-[calc(var(--sp-radius)*1.2)] shadow-[0_30px_70px_-30px_rgba(16,24,40,.3)]" />
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div aria-hidden className="absolute -right-4 -top-4 h-full w-full rounded-[calc(var(--sp-radius)*1.2)]" style={{ border: "1px solid color-mix(in srgb, var(--sp-primary) 35%, transparent)" }} />
+                      <Picture src={heroImg.url} alt={heroImg.alt} ratio="4 / 5" eager className="relative rounded-[calc(var(--sp-radius)*1.2)] shadow-[0_36px_90px_-36px_rgba(16,24,40,.45)]" />
+                      {heroImgNote && <p className="mt-3 text-[11px]" style={{ color: "var(--sp-muted)" }}>{textRich(heroImgNote)}</p>}
+                    </>
+                  )
+                ) : (
+                  renderSidePanel()
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    // typography_led: sem depender de imagem — tipografia grande como protagonista
+    if (heroVariant === "typography_led") {
+      return (
+        <section id="hero" style={{ backgroundColor: "var(--sp-background)", color: "var(--sp-on-surface)" }}>
+          <div className="mx-auto px-6 py-24 sm:py-32" style={{ maxWidth: "var(--sp-maxw)" }}>
+            <div className="max-w-4xl space-y-7">
+              {eyebrow(segmentLabel)}
+              <h1 className="font-bold leading-[0.98] tracking-[-0.03em]" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "calc(var(--sp-heading-size) * 1.45)", letterSpacing: "var(--sp-tracking)" }}>{textRich(title)}</h1>
+              {sub && <p className="max-w-2xl text-lg leading-relaxed" style={{ color: "var(--sp-muted)" }}>{textRich(sub)}</p>}
+              {ctas("start")}
             </div>
             {heroImg && (
-              <div className={editorial ? "mt-14" : "mx-auto mt-12 max-w-3xl"}>
+              <div className="mt-16">
+                <Picture src={heroImg.url} alt={heroImg.alt} ratio="21 / 8" eager className="rounded-[calc(var(--sp-radius)*1.2)] shadow-[0_40px_90px_-40px_rgba(16,24,40,.4)]" />
+                {heroImgNote && <p className="mt-2 text-center text-[11px]" style={{ color: "var(--sp-muted)" }}>{textRich(heroImgNote)}</p>}
+              </div>
+            )}
+          </div>
+        </section>
+      );
+    }
+
+    // centered + editorial (clássicos, com diferenciação real)
+    const centerCt = (align: "start" | "center") => ctas(align);
+    if (editorial) {
+      return (
+        <section id="hero" style={{ backgroundColor: "var(--sp-background)", color: "var(--sp-on-surface)" }}>
+          <div className="mx-auto px-6 py-20 sm:py-28" style={{ maxWidth: "var(--sp-maxw)" }}>
+            <div className="grid gap-10 lg:grid-cols-[1.25fr_0.75fr] lg:items-end">
+              <div className="max-w-3xl space-y-6">
+                {eyebrow(segmentLabel)}
+                <h1 className="font-bold leading-[1.02]" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "var(--sp-heading-size)", letterSpacing: "var(--sp-tracking)" }}>{textRich(title)}</h1>
+                {sub && <p className="text-lg leading-relaxed" style={{ color: "var(--sp-muted)" }}>{textRich(sub)}</p>}
+                {centerCt("start")}
+              </div>
+              <div className="hidden text-right text-[0.7rem] uppercase tracking-[0.2em] lg:block" style={{ color: "var(--sp-muted)" }}>{[str(business.city), str(business.state)].filter(Boolean).join(" · ")}</div>
+            </div>
+            {heroImg && (
+              <div className="mt-14">
+                <Picture src={heroImg.url} alt={heroImg.alt} ratio="16 / 7" eager className="rounded-[calc(var(--sp-radius)*1.2)] shadow-[0_36px_90px_-40px_rgba(16,24,40,.38)]" />
+                {heroImgNote && <p className="mt-2 text-center text-[11px]" style={{ color: "var(--sp-muted)" }}>{textRich(heroImgNote)}</p>}
+              </div>
+            )}
+          </div>
+        </section>
+      );
+    }
+    return (
+      <section id="hero" style={{ backgroundColor: "var(--sp-background)", color: "var(--sp-on-surface)" }}>
+        <div className="mx-auto px-6 py-16 text-center sm:py-24" style={{ maxWidth: "var(--sp-maxw)" }}>
+          <div className="mx-auto max-w-3xl space-y-6">
+            <span className="inline-block text-[0.72rem] uppercase tracking-[0.24em]" style={{ color: "var(--sp-primary)", fontWeight: 600 }}>{segmentLabel}</span>
+            <h1 className="font-bold leading-[1.02]" style={{ fontFamily: "var(--sp-heading-font)", fontWeight: "var(--sp-heading-weight)", fontSize: "var(--sp-heading-size)", letterSpacing: "var(--sp-tracking)" }}>{textRich(title)}</h1>
+            {sub && <p className="mx-auto text-lg leading-relaxed" style={{ color: "var(--sp-muted)" }}>{textRich(sub)}</p>}
+            {centerCt("center")}
+            {heroImg && (
+              <div className="mx-auto mt-12 max-w-3xl">
                 <Picture src={heroImg.url} alt={heroImg.alt} ratio="16 / 8" eager className="rounded-[calc(var(--sp-radius)*1.2)] shadow-[0_30px_70px_-30px_rgba(16,24,40,.3)]" />
                 {heroImgNote && <p className="mt-2 text-center text-[11px]" style={{ color: "var(--sp-muted)" }}>{textRich(heroImgNote)}</p>}
               </div>
             )}
           </div>
         </div>
-        </section>
-      );
+      </section>
+    );
   };
 
   const renderAbout = () =>
