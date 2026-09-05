@@ -299,32 +299,74 @@ export async function invokeProspectorAgent(input: {
   return invokeAgentExecute(input);
 }
 
-// Geração inicial via Cline (FASE 5.19): o agente cria o site real no workspace.
-// Prefere o runtime Node; se indisponível, retorna { status: "error", runtime: "edge-fallback" }
-// para o caller decidir cair no gerador clássico (spec).
+// Monta a missão de geração premium (identidade/skills + contexto real do negócio).
+function buildGenerationMission(ctx: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null; about?: string | null; services?: string[] }, briefing?: Record<string, unknown>): string {
+  const ctxLines = [
+    ctx.name && `Empresa: ${ctx.name}`,
+    ctx.segment && `Segmento: ${ctx.segment}`,
+    ctx.city && `Cidade: ${ctx.city}`,
+    ctx.state && `Estado: ${ctx.state}`,
+    ctx.address && `Endereço: ${ctx.address}`,
+    ctx.phone && `Telefone: ${ctx.phone}`,
+    ctx.whatsapp && `WhatsApp: ${ctx.whatsapp}`,
+    ctx.about && `Sobre: ${ctx.about}`,
+    Array.isArray(ctx.services) && ctx.services.length ? `Serviços: ${ctx.services.join(", ")}` : "",
+  ].filter(Boolean).join("\n");
+  const extra = briefing && Object.keys(briefing).length ? `\nBriefing adicional (use o que for real; não invente):\n${JSON.stringify(briefing).slice(0, 1800)}` : "";
+  return `CRIE UM SITE COMPLETO E PREMIUM para este negócio, direto no workspace (site estático autocontido: index.html completo, CSS em <style> inline ou src/site.css, dados em src/site.json). Você é um Senior UI/UX Director + Art Director + Frontend Engineer especialista em landing pages de alta conversão.
+
+CONTEXTO REAL DO NEGÓCIO:
+${ctxLines || "(poucos dados — não invente o resto)"}
+${extra}
+
+REGRA DE DIRECÃO (aplique a SKILL de Design Contextual Adaptativo):
+- Defina a identidade visual sob medida: psicologia das cores do segmento, tipografia Google Fonts expressiva, imagens reais contextualizadas (Unsplash, 3+ DISTINTAS, coerentes com o negócio — NUNCA repita a mesma imagem e NUNCA use imagem de outro segmento).
+- Aplique a SKILL de Efeitos/Motion: glassmorphism no header/cards quando couber, glow/bordas sutis, botões com hover, cards com elevação, microinterações e transições — sem exagerar.
+- Use arquitetura de conversão com ritmo: header/nav, hero de alto impacto (headline + CTA principal + secundário), seções variadas (valor/diferenciais, serviços/ambientes, como funciona, prova apenas com dados reais, CTA final), footer profissional completo.
+- Responsividade total (mobile/tablet/desktop) sem overflow.
+
+REGRAS:
+- NÃO invente endereço/telefone/WhatsApp/horários/preços/avaliações/certificações/resultados/serviços não fornecidos.
+- NÃO deixe placeholders ("lorem", "adicione aqui") — código 100% integral do <!DOCTYPE html> ao </html>.
+- Faça o site COMPLETO (não curto): hero forte + pelo menos 4-5 seções com função + footer rico.`;
+}
+
+// Geração inicial: prefere o Cline Agent Runtime (Node); sem ele, usa o agente
+// de código (edge agent-execute) com a mesma missão premium — nunca o gerador
+// legado curto.
 export async function invokeProspectorGenerate(input: {
   projectId: string;
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null; about?: string | null; services?: string[] };
   briefing?: Record<string, unknown>;
 }): Promise<AgentExecuteResult> {
   const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
-  if (!runtimeUrl) return { status: "error", runtime: "edge-fallback", errors: ["runtime não configurado"] };
-  try {
-    const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {} }),
-      signal: AbortSignal.timeout(300_000),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as AgentExecuteResult & { error?: string };
-      if (data.error) return { status: "error", runtime: "cline", errors: [data.error] };
-      return data;
+  if (runtimeUrl) {
+    try {
+      const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {} }),
+        signal: AbortSignal.timeout(300_000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as AgentExecuteResult & { error?: string };
+        if (data.error) return { status: "error", runtime: "cline", errors: [data.error] };
+        return data;
+      }
+    } catch {
+      // runtime indisponível → tenta o agente de código edge
     }
-    return { status: "error", runtime: "edge-fallback", errors: [`runtime indisponível (HTTP ${res.status})`] };
-  } catch {
-    return { status: "error", runtime: "edge-fallback", errors: ["runtime indisponível"] };
   }
+  // Sem runtime Node: usa o AGENTE DE CÓDIGO (edge) para criar o site do zero
+  // com a missão premium — qualidade muito superior ao gerador legado.
+  const instruction = buildGenerationMission(input.context, input.briefing);
+  return invokeAgentExecute({
+    instruction,
+    files: {},
+    context: input.context,
+    memory: [],
+    attachments: [],
+  });
 }
 
 export interface PersistedChatMsg {
