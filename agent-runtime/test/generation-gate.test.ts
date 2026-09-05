@@ -66,4 +66,12 @@ describe("Generation Quality Gate (5.21)", () => {
     const r = assertGenerationQuality(files, { segment: "Academias", name: "Academia Corpo Forte", businessHas: () => true });
     expect(r.ok).toBe(true);
   });
+
+  it("detecta repetição da MESMA imagem (anti-preguiça de fotos)", () => {
+    const same = `<img src="https://images.unsplash.com/photo-1" alt="a"/><img src="https://images.unsplash.com/photo-1" alt="b"/><img src="https://images.unsplash.com/photo-1" alt="c"/>`;
+    const files = base(same, "@media{}");
+    const r = assertGenerationQuality(files, { segment: "Academias", name: "Academia Corpo Forte", businessHas: () => true });
+    expect(r.ok).toBe(false);
+    expect(r.issues.some((i) => i.toLowerCase().includes("mesma imagem") || i.toLowerCase().includes("repetid"))).toBe(true);
+  });
 });

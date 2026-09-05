@@ -42,6 +42,20 @@ export function assertGenerationQuality(
     issues.push("Nenhuma imagem utilizada. Considere ao menos uma imagem/ícone contextual se fizer sentido ao negócio.");
   }
 
+  // ANTI-REPETIÇÃO DE IMAGEM (5.27): a MESMA url usada várias vezes indica
+  // "as mesmas fotos" / preguiça visual.
+  const imgUrls = [...html.matchAll(/src=["']([^"']+)["']/gi)].map((m) => m[1]).filter((u) => u && !u.startsWith("data:") && !u.startsWith("data:image"));
+  const urlCount = new Map<string, number>();
+  for (const u of imgUrls) urlCount.set(u, (urlCount.get(u) ?? 0) + 1);
+  const dup = [...urlCount.entries()].filter(([, c]) => c > 1);
+  if (dup.length) {
+    issues.push(`A MESMA imagem está sendo usada ${dup.map(([u, c]) => `${c}x (${u.slice(0, 70)})`).join(", ")}. Use imagens DISTINTAS e coerentes — não repita a mesma foto no site.`);
+  }
+  // Pouca variedade: site com 4+ <img> mas menos de 3 URLs únicas.
+  if (imgUrls.length >= 4 && urlCount.size < 3) {
+    issues.push("Pouca variedade de imagens (todas as fotos iguais/repetidas). Diversifique as imagens para parecer um site profissional.");
+  }
+
   // Responsividade
   if (!/@media/i.test(css || html)) issues.push("Sem regras responsivas (@media). Adicione layout mobile (a partir de ~900px e ~600px).");
 
