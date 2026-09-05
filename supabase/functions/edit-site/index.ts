@@ -1,6 +1,8 @@
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { generateText, AiError, extractJson, DEFAULT_DEEPSEEK_MODEL } from "../_shared/ai.ts";
 import { getImageNeeds, type SiteAsset } from "../_shared/image-assets.ts";
+import { premiumQA, qaIssuesForRefinement, PREMIUM_QA_MIN, qualityIssues, type SpecLike } from "../_shared/site-quality.ts";
+import { classifyAmplitude, hasContextualReference } from "../_shared/design-intent.ts";
 
 const ALLOWED_SECTIONS = ["hero", "trust", "features", "numbers", "process", "faq", "gallery", "about", "services", "testimonials", "cta", "contact"];
 
@@ -80,6 +82,25 @@ real e claro de modificação. Siga este fluxo de raciocínio a cada mensagem:
 4. Seja um bom consultor: comente o que já está bom, explique trade-offs com naturalidade e nunca trate conversa casual como ordem de alteração.
 5. Prefira respostas curtas (1–3 frases) e em pt-BR, no tom de um especialista em sites que também entende o negócio do cliente.
 
+# AGENTE AUTÔNOMO — NUNCA PARAR ANTES DE ENTREGAR O OBJETIVO
+Você é um PROFISSIONAL SENIOR de produto web (design + frontend + UX + conversão),
+não um "aplicador de uma alteração". Quando o usuário der um OBJETIVO amplo
+("deixa mais premium", "melhora o site", "mais profissional", "primeiro mundo",
+"melhora tudo", "sofisticado", "bonito"), trate como ORDEM DE TRABALHO COMPLETA:
+1. ANALISE o site inteiro (hierarquia, hero, header, tipografia, espaçamento,
+   imagens, composição, cards, CTAs, seções, footer, ritmo, motion).
+2. PLANEJE várias mudanças coordenadas (ex.: elevar a hero + refinar tipografia +
+   corrigir espaçamento + variar cards + melhorar CTA + enriquecer footer).
+3. EXECUTE TODAS de uma vez na spec — não apenas "a primeira alteração óbvia".
+4. FAÇA AUTOCRÍTICA ANTES DE RESPONDER: ainda parece template/PDF? O hero
+   impressiona? Os componentes parecem desenhados para ESTE projeto? Há ritmo e
+   profundidade? A pergunta obrigatória é: "eu apresentaria isto a um cliente que
+   pagou R$10.000?". Se a resposta for NÃO, continue melhorando NA MESMA resposta.
+5. SÓ então escreva o reply resumindo o trabalho feito (2-4 frases, sem listar
+   tudo mecanicamente).
+Pedidos específicos ("troca a cor para azul", "muda o título") devem continuar
+sendo executados de forma cirúrgica — sem reconstruir o que foi aprovado.
+
 # CONVERSA CONTÍNUA (memória do projeto)
 - Esta conversa é contínua sobre ESTE projeto. O bloco "TRANSCRIPT DA CONVERSA" traz
   trocas anteriores (Usuário/Assistente). Use-o para entender referências como
@@ -88,10 +109,10 @@ real e claro de modificação. Siga este fluxo de raciocínio a cada mensagem:
 - "MEMÓRIA DE DECISÕES" resume preferências já expressas (aprovado/rejeitado/
   direção visual). PRESERVE decisões aprovadas: se o usuário aprovou a hero e
   depois pede outra mudança, altere apenas o que foi pedido e mantenha a hero.
-- EDIÇÃO INCREMENTAL: aplique a MENOR mudança coerente com o pedido. Não reconstrua
-  o site inteiro a cada mensagem. Preserve conteúdo, imagens aprovadas, cores e
-  decisões anteriores salvas na spec atual. Se o pedido for amplo ("deixa tudo mais
-  premium"), aí sim pode reavaliar a composição completa.
+- EDIÇÃO INCREMENTAL: pedido específico = MENOR mudança coerente, preservando
+  conteúdo, imagens aprovadas, cores e decisões da spec atual. Pedido amplo
+  ("deixa tudo mais premium") = pode reavaliar a composição completa, mas SEMPRE
+  preservando identidade, dados reais e o que a memória marca como aprovado.
 - NUNCA invente fatos (endereço, telefone, avaliações, números, certificações,
   preços, serviços, depoimentos). Pode sugerir no reply o que precisaria ser real.
 
@@ -279,6 +300,9 @@ Deno.serve(async (req) => {
     const conversationBlock = conversation.length > 0
       ? `\nTRANSCRIPT DA CONVERSA (referências como "agora", "essa seção", "antes", "aquela imagem" se aplicam a estas trocas):\n${conversation.join("\n")}\n`
       : "";
+    const refHint = hasContextualReference(instruction)
+      ? `\nATENÇÃO: a instrução contém referência contextual ("aquela", "a anterior", "essa seção", "igual a", etc.). Consulte o TRANSCRIPT/MEMÓRIA acima para resolver a referência; NÃO a trate como texto literal.\n`
+      : "";
 
     // Se o pedido envolver imagens, busca assets reais do nicho (Pexels).
     const wantsImages = /imagem|imagens|foto|fotos|galeria|fundo/i.test(instruction);
@@ -290,72 +314,132 @@ Deno.serve(async (req) => {
       ].filter(Boolean).join("\n")}\n`
       : "";
 
-    const userPrompt = `CONTEXTO DO PROJETO:
+    // ---- HEURÍSTICA DE AMPLITUDE -------------------------------------------
+    // Pedidos vagos/amplos ("deixa premium", "melhora tudo", "site primeiro
+    // mundo") disparam o ciclo autônomo: várias passadas com auto-crítica.
+    // Pedidos específicos e cirúrgicos executam em UMA passada (rápido, barato).
+    const amplitude = classifyAmplitude(instruction);
+    const isBroadRequest = amplitude === "broad";
+
+    const MAX_AUTONOMOUS_PASSES = isBroadRequest ? 2 : 1;
+    const passLimit = MAX_AUTONOMOUS_PASSES;
+
+    const baseUserPrompt = (targetSpec: Record<string, unknown>, qaNote: string) => `CONTEXTO DO PROJETO:
 ${ctxLines || "(sem contexto adicional)"}
-${conversationBlock}${memoryBlock}${assetBlock}
+${conversationBlock}${refHint}${memoryBlock}${assetBlock}
 INSTRUÇÃO DO USUÁRIO:
 "${instruction}"
-
+${qaNote}
 SPEC ATUAL (JSON):
-${JSON.stringify(original)}
+${JSON.stringify(targetSpec)}
 
 Devolva a spec COMPLETA atualizada conforme a instrução.`;
 
     let raw = "";
     let usedModel = DEFAULT_DEEPSEEK_MODEL;
-    try {
-      const result = await generateText({
-        system: SYSTEM_PROMPT,
-        user: userPrompt,
-        temperature: 0.8,
-        json: true,
-        maxOutputTokens: 8192,
-      });
-      raw = result.text;
-      usedModel = result.model;
-    } catch (e) {
-      if (e instanceof AiError) {
-        return new Response(
-          JSON.stringify({ error: e.message, kind: e.kind, detail: e.detail }),
-          { status: e.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
+    let lastQa: ReturnType<typeof premiumQA> | null = null;
+    let bestSpec: Record<string, unknown> | null = null;
+    let bestQaScore = -1;
+    let appliedReply = "";
+    let appliedMode = "edit";
+    let changed = false;
+
+    for (let pass = 0; pass < passLimit; pass++) {
+      const currentSpec = bestSpec ?? original;
+      const qaNote = pass > 0 && lastQa && (lastQa.score < PREMIUM_QA_MIN || lastQa.antiPdf.length > 0 || lastQa.antiTemplate.length > 0)
+        ? `\nAUTO-CRÍTICA (rodada ${pass}): a versão anterior ainda tem pontos a corrigir antes de entregar. Analise e melhore NA PRÓPRIA SPEC (não apenas no reply):
+- ${lastQa.issues.slice(0, 8).join("\n- ") || lastQa.antiPdf[0] || lastQa.antiTemplate[0] || "elevar o nível geral"}
+Preserve os dados reais e as decisões aprovadas. Se precisar de mais imagens reais, use os assets fornecidos.`
+        : "";
+      try {
+        const result = await generateText({
+          system: SYSTEM_PROMPT,
+          user: baseUserPrompt(currentSpec, qaNote),
+          temperature: 0.8,
+          json: true,
+          maxOutputTokens: 8192,
+        });
+        raw = result.text;
+        usedModel = result.model;
+      } catch (e) {
+        if (e instanceof AiError) {
+          return new Response(
+            JSON.stringify({ error: e.message, kind: e.kind, detail: e.detail }),
+            { status: e.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        throw e;
       }
-      throw e;
+
+      const parsedOuter = extractJson(raw);
+      if (!parsedOuter || Object.keys(parsedOuter).length === 0) {
+        if (pass === 0) {
+          return new Response(
+            JSON.stringify({ error: "A IA retornou JSON inválido ou vazio.", raw: raw.slice(0, 800) }),
+            { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        break; // passada de refinamento ruim: usa o melhor encontrado até aqui
+      }
+      const reply = typeof parsedOuter.reply === "string" ? parsedOuter.reply.slice(0, 1200) : "";
+      const mode = ["edit", "question", "clarify", "chat"].includes(parsedOuter.mode as string) ? parsedOuter.mode as string : "edit";
+
+      // Mensagens de conversa/consulta NÃO alteram nada (mode != edit).
+      if (mode !== "edit") {
+        if (pass === 0) {
+          return new Response(
+            JSON.stringify({ spec: original, model: usedModel, status: "ok", changed: false, reply, mode }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+          );
+        }
+        break;
+      }
+
+      const specPayload = parsedOuter.spec && isObj(parsedOuter.spec) ? parsedOuter.spec : parsedOuter;
+      const merged = deepMerge(currentSpec, specPayload) as Record<string, unknown>;
+      const protectedSpec = protectFactual(currentSpec, merged, instruction);
+      attachImagesIfRequested(protectedSpec, images, instruction);
+      const spec = normalizeResult(protectedSpec);
+      if (!spec) {
+        if (pass === 0) {
+          return new Response(JSON.stringify({ error: "Spec inválida após edição." }), {
+            status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        break;
+      }
+
+      const qa = premiumQA(spec as unknown as SpecLike);
+      const issues = qualityIssues(spec as unknown as SpecLike, { imageDriven: false });
+      const score = qa.score - issues.length * 4;
+      lastQa = qa;
+      appliedReply = reply;
+      appliedMode = mode;
+      if (score > bestQaScore) {
+        bestQaScore = score;
+        bestSpec = spec;
+      }
+
+      const acceptable = qa.score >= PREMIUM_QA_MIN && qa.antiPdf.length === 0 && qa.antiTemplate.length === 0 && issues.length === 0;
+      if (acceptable) {
+        changed = JSON.stringify(spec) !== JSON.stringify(original);
+        break; // objetivo atingido — entrega
+      }
     }
 
-    const parsedOuter = extractJson(raw);
-    if (!parsedOuter || Object.keys(parsedOuter).length === 0) {
-      return new Response(
-        JSON.stringify({ error: "A IA retornou JSON inválido ou vazio.", raw: raw.slice(0, 800) }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-    const reply = typeof parsedOuter.reply === "string" ? parsedOuter.reply.slice(0, 1200) : "";
-    const mode = ["edit", "question", "clarify", "chat"].includes(parsedOuter.mode as string) ? parsedOuter.mode as string : "edit";
-    // Wrapper { reply, spec } — caso o modelo retorne a spec direto (compat), usa o próprio objeto.
-    const specPayload = parsedOuter.spec && isObj(parsedOuter.spec) ? parsedOuter.spec : parsedOuter;
-
-    // Mensagens de conversa/consulta NÃO alteram nada (mode != edit).
-    if (mode !== "edit") {
-      return new Response(
-        JSON.stringify({ spec: original, model: usedModel, status: "ok", changed: false, reply, mode }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    const merged = deepMerge(original, specPayload) as Record<string, unknown>;
-    const protectedSpec = protectFactual(original, merged, instruction);
-    attachImagesIfRequested(protectedSpec, images, instruction);
-    const spec = normalizeResult(protectedSpec);
-    if (!spec) {
-      return new Response(JSON.stringify({ error: "Spec inválida após edição." }), {
-        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const changed = JSON.stringify(spec) !== JSON.stringify(original);
+    const finalSpec = bestSpec ?? original;
+    changed = changed || JSON.stringify(finalSpec) !== JSON.stringify(original);
     return new Response(
-      JSON.stringify({ spec, model: usedModel, status: "ok", changed, reply, mode }),
+      JSON.stringify({
+        spec: finalSpec,
+        model: usedModel,
+        status: "ok",
+        changed,
+        reply: appliedReply || (changed ? "Ajustes aplicados." : "Entendi! Não apliquei mudanças por enquanto — continue me orientando."),
+        mode: appliedMode,
+        qa_score: lastQa?.score,
+        passes_used: passLimit,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {

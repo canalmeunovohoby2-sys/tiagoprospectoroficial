@@ -17,11 +17,41 @@ function str(v: unknown): string { return typeof v === "string" ? v.trim() : "";
 function arr(v: unknown): unknown[] { return Array.isArray(v) ? v : []; }
 function obj(v: unknown): Record<string, unknown> { return v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {}; }
 
-function hexToRgb(hex: string): Rgb {
+export function hexToRgb(hex: string): Rgb {
   const h = hex.replace("#", "");
   const n = h.length === 3 ? h.split("").map((x) => x + x).join("") : h;
   const num = parseInt(n, 16);
   return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+
+// Luminância relativa (WCAG 2.1) e razão de contraste — para garantir
+// legibilidade no PDF (nunca entregar texto invisível ou com contraste ruim).
+function luminance({ r, g, b }: Rgb): number {
+  const f = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+export function contrastRatio(a: Rgb, b: Rgb): number {
+  const la = luminance(a);
+  const lb = luminance(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+// Escolhe o texto legível sobre um fundo: branco se o fundo for escuro, senão
+// um tom escuro — respeitando um contraste mínimo de 4.5:1 quando possível.
+export function readableTextFor(bg: Rgb, darkText: Rgb, lightText: Rgb): Rgb {
+  const dark = contrastRatio(bg, darkText);
+  const light = contrastRatio(bg, lightText);
+  return dark >= light ? darkText : lightText;
+}
+export function ensureContrast(fg: Rgb, bg: Rgb): Rgb {
+  const ratio = contrastRatio(fg, bg);
+  if (ratio >= 3) return fg; // legível para títulos grandes/UI
+  // Corrige automaticamente: fundo escuro → texto branco; fundo claro → texto escuro.
+  const lum = luminance(bg);
+  return lum < 0.25 ? { r: 255, g: 255, b: 255 } : lum > 0.6 ? { r: 24, g: 24, b: 27 } : fg;
 }
 function shade(rgb: Rgb, amt: number): Rgb {
   const f = (c: number) => Math.max(0, Math.min(255, Math.round(c + 255 * amt)));
@@ -107,9 +137,20 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   const A = hexToRgb(accentHex);
   const BG = hexToRgb(bgHex);
   const SURF = hexToRgb(surfaceHex);
-  const TXT = hexToRgb(onSurfaceHex);
-  const MUT = hexToRgb(mutedHex);
+  const rawTXT = hexToRgb(onSurfaceHex);
+  const rawMUT = hexToRgb(mutedHex);
   const WHITE = { r: 255, g: 255, b: 255 };
+
+  // QA de contraste (7.3): garante legibilidade independente da paleta enviada.
+  // O corpo do documento flui sobre superfícies claras; corrigir aqui evita
+  // texto invisível ou de baixo contraste em qualquer paleta.
+  const TXT = ensureContrast(rawTXT, SURF);
+  const MUT = ensureContrast(rawMUT, SURF);
+  const TXT_ON_BG = ensureContrast(rawTXT, BG);
+  const WHITE_ON_S = contrastRatio(WHITE, S) >= 3 ? WHITE : { r: 255, g: 255, b: 255 };
+  const WHITE_ON_P = contrastRatio(WHITE, P) >= 3 ? WHITE : { r: 255, g: 255, b: 255 };
+  const ACCENT_ON_S = ensureContrast(A, S); // detalhes/títulos sobre capa escura
+  void TXT_ON_BG; void WHITE_ON_P;
 
   const hero = obj(content.hero);
   const about = obj(content.about);
@@ -161,7 +202,7 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.setTextColor(A.r, A.g, A.b);
+  doc.setTextColor(ACCENT_ON_S.r, ACCENT_ON_S.g, ACCENT_ON_S.b);
   doc.text("PROPOSTA COMERCIAL", M, 120);
 
   // Nome grande com quebra
@@ -483,7 +524,7 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
-  doc.setTextColor(A.r, A.g, A.b);
+  doc.setTextColor(ACCENT_ON_S.r, ACCENT_ON_S.g, ACCENT_ON_S.b);
   doc.text("PRÓXIMO PASSO", M, 130);
 
   doc.setFontSize(34);

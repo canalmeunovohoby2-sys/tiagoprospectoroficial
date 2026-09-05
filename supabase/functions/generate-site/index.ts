@@ -202,6 +202,15 @@ Antes de finalizar, se auto-avaliar como Art Director: o site tem identidade vis
 - NÃO repita a mesma informação em seções diferentes (ex.: não repita a tagline no hero e no sobre).
 - Seções: 4 a 6 no total (hero incluso) + footer. Nada de conteúdo redundante ou genérico demais.
 
+# AUTOCRÍTICA OBRIGATÓRIA (nunca parar no mediano)
+Antes de finalizar o JSON, revise a spec como quem cobrou R$10.000:
+- Ainda parece "hero + 3 cards + texto + 3 cards + footer" (template/PDF)? Se sim, MUDE a arquitetura/ritmo na própria resposta.
+- O hero é uma composição (não uma caixa com título+texto+botão)?
+- Imagens representam o negócio (contexto), não só a palavra-chave?
+- Há profundidade/variação entre seções e o footer não é só "links + copyright"?
+- A combinação (header/hero/footer/galeria/paleta/tipografia) é distinta deste segmento?
+Se algo destoar, corrija AINDA NESTA resposta e só então finalize.
+
 # VALIDADE
 Retorne APENAS o JSON (sem markdown, sem comentários). Use aspas duplas válidas.`;
 

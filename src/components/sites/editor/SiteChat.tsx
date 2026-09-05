@@ -199,7 +199,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, onApply, on
           ))}
           {running && (
             <div className="inline-flex items-center gap-1.5 rounded-2xl border border-border/60 bg-card px-3 py-2 text-[12.5px] text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin text-primary" /> editando o site…
+              <Loader2 className="h-3 w-3 animate-spin text-primary" /> analisando, editando e refinando…
             </div>
           )}
         </div>
