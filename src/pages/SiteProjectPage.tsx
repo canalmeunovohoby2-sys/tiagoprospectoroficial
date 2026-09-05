@@ -464,30 +464,30 @@ export default function SiteProjectPage() {
           agentErr = e;
         }
 
-        if (!agentErr && agentRes && agentRes.status === "ok") {
-          if (agentRes.changed && agentRes.files) {
-            setAiHistory((prev) => [{ spec: snapshot, files: draftFiles }, ...prev].slice(0, 10));
-            const derivedSpec = agentRes.spec ? normalizeSpec(agentRes.spec as SiteSpec | Record<string, unknown> | null) : draftSpec;
-            // AUTOSAVE: só persiste com evidência real de alteração (files).
-            const saved = await persistAutosave(derivedSpec, agentRes.files, `Alteração via chat: ${instruction}`);
-            setDraftSpec(derivedSpec);
-            prevFilesRef.current = agentRes.files;
-            setDraftFiles(agentRes.files);
-            setPreviewNonce((n) => n + 1);
-            const runtime = agentRes.runtime === "cline" ? "" : " (modo compatível)";
-            const savedNote = saved ? "\n\n✓ Alterações salvas automaticamente" : "\n\n(estado já era o mais recente — nenhuma versão duplicada)";
-            pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}`, agentRes.activity);
-          } else {
-            pushReply(agentRes.reply?.trim() || "Entendi! Não apliquei mudanças no código por enquanto.");
-          }
+        if (!agentErr && agentRes && agentRes.files && Object.keys(agentRes.files).length > 0 && (agentRes.changed || JSON.stringify(agentRes.files) !== JSON.stringify(draftFiles))) {
+          // EVIDÊNCIA real de mudança (arquivos retornados diferem). Aplica no
+          // preview ANTES de persistir — assim a edição nunca "some".
+          setAiHistory((prev) => [{ spec: snapshot, files: draftFiles }, ...prev].slice(0, 10));
+          const derivedSpec = agentRes.spec ? normalizeSpec(agentRes.spec as SiteSpec | Record<string, unknown> | null) : draftSpec;
+          setDraftSpec(derivedSpec);
+          prevFilesRef.current = agentRes.files;
+          setDraftFiles(agentRes.files);
+          setPreviewNonce((n) => n + 1);
+          const autosave = await persistAutosave(derivedSpec, agentRes.files, `Alteração via chat: ${instruction}`);
+          const runtime = agentRes.runtime === "cline" ? "" : " (modo compatível)";
+          let savedNote;
+          if (autosave.ok && autosave.created) savedNote = "\n\n✓ Alterações salvas automaticamente";
+          else if (autosave.ok) savedNote = "\n\n(estado já era o mais recente — nenhuma versão duplicada)";
+          else savedNote = `\n\n⚠ Não foi possível salvar automaticamente: ${autosave.error || "erro desconhecido"}. A edição está no preview — clique em Salvar para persistir.`;
+          const valErrors = agentRes.status === "error" && agentRes.errors?.length ? `\n(Validação reportou: ${agentRes.errors.slice(0, 2).join("; ")})` : "";
+          pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}${valErrors}`, agentRes.activity);
           stopProgress();
           setAgentStep(null);
           setAiRunning(false);
           return;
         }
-        if (agentErr || !agentRes || agentRes.status === "error") {
-          // Fallback automático para o fluxo spec quando o agente de código não
-          // está disponível (sem runtime Node / edge indisponível).
+        if (agentErr || !agentRes || !agentRes.files || !Object.keys(agentRes.files).length) {
+          // Sem evidência de mudança → fallback para o fluxo spec (edit-site).
         }
       }
 
@@ -528,13 +528,22 @@ export default function SiteProjectPage() {
 
       setAiHistory((prev) => [{ spec: snapshot, files: draftFiles }, ...prev].slice(0, 10));
       const summary = describeChanges(snapshot, protectedSpec);
-      const draftNow = materializeProjectFiles(protectedSpec);
-      const saved = await persistAutosave(protectedSpec, draftNow, summary);
+      // Preserva arquivos reais já existentes (código do Cline) quando houver;
+      // senão materializa a partir da spec editada.
+      const existingReal = draftFiles && Object.keys(draftFiles).length > 0 ? draftFiles : null;
+      const draftNow = existingReal ? { ...existingReal, ...materializeProjectFiles(protectedSpec) } : materializeProjectFiles(protectedSpec);
+      const autosave = await persistAutosave(protectedSpec, draftNow, summary);
       setDraftSpec(protectedSpec);
       // Live preview de código: reflete o rascunho editado (código materializado).
       setDraftFiles((prev) => (prev && Object.keys(prev).length > 0 ? draftNow : draftNow));
       setPreviewNonce((n) => n + 1);
-      const msg = [res.reply?.trim(), summary, saved ? "✓ Alterações salvas automaticamente" : "(sem mudança real — nada duplicado)"].filter(Boolean).join(" ");
+      const msg = [
+        res.reply?.trim(),
+        summary,
+        autosave.ok
+          ? (autosave.created ? "✓ Alterações salvas automaticamente" : "(sem mudança real — nada duplicado)")
+          : `⚠ Não foi possível salvar automaticamente: ${autosave.error || "erro desconhecido"}. As alterações estão no editor.`,
+      ].filter(Boolean).join(" ");
       pushReply(msg);
     } catch (e) {
       const msg = friendlyAiError(e);
@@ -587,18 +596,30 @@ export default function SiteProjectPage() {
   }
 
   // AUTOSAVE (5.24): persiste o estado REAL (spec + arquivos) e cria versão
-  // somente quando houve mudança real. Retorna true se salvou/criou versão.
-  async function persistAutosave(specToSave: SiteSpec, filesToSave: Record<string, string>, summary?: string): Promise<boolean> {
-    if (!project?.id) return false;
+  // somente quando houve mudança real. NUNCA lança: retorna { ok, created, error }.
+  async function persistAutosave(
+    specToSave: SiteSpec,
+    filesToSave: Record<string, string>,
+    summary?: string,
+  ): Promise<{ ok: boolean; created: boolean; error?: string }> {
+    if (!project?.id) return { ok: false, created: false, error: "Projeto não carregado." };
     const hasFiles = filesToSave && Object.keys(filesToSave).length > 0;
-    await updateProjectSpec(project.id, specToSave, hasFiles ? filesToSave : undefined);
-    if (!user?.id) return false;
-    const created = await createSiteVersion(project.id, user.id, specToSave, summary, hasFiles ? filesToSave : undefined).catch(() => false);
-    if (created) {
-      setDirty(false);
-      setPendingSummary(undefined);
+    try {
+      await updateProjectSpec(project.id, specToSave, hasFiles ? filesToSave : undefined);
+      // Sincroniza o estado local com o que foi salvo (para reload não perder).
+      setProject((p) => (p ? { ...p, spec: specToSave as never, generated_code: hasFiles ? filesToSave as never : p.generated_code } : p));
+      if (!user?.id) return { ok: true, created: false };
+      const created = await createSiteVersion(project.id, user.id, specToSave, summary, hasFiles ? filesToSave : undefined).catch(() => false);
+      if (created) {
+        setDirty(false);
+        setPendingSummary(undefined);
+      }
+      return { ok: true, created };
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      console.error("[autosave] falhou", error);
+      return { ok: false, created: false, error };
     }
-    return created;
   }
 
   async function saveEdits() {
@@ -607,14 +628,15 @@ export default function SiteProjectPage() {
     const savedSpec = draftSpec;
     const summary = pendingSummary;
     try {
-      const files = materializeProjectFiles(savedSpec);
-      await persistAutosave(savedSpec, files, summary);
-      toast.success("✓ Alterações salvas");
+      // Preserva o código real (draftFiles) quando existir; só materializa da
+      // spec quando não há workspace/código (projeto legado).
+      const hasReal = !!draftFiles && Object.keys(draftFiles).length > 0;
+      const files = hasReal ? draftFiles! : materializeProjectFiles(savedSpec);
+      const res = await persistAutosave(savedSpec, files, summary);
+      if (!res.ok) throw new Error(res.error || "Erro ao salvar");
+      toast.success(res.created ? "✓ Alterações salvas" : "Alterações salvas (sem nova versão — nada mudou desde o último autosave)");
+      setDirty(false);
       await load();
-      if (project.id) {
-        const fresh = await fetchSiteProject(project.id);
-        if (fresh?.spec) setDraftSpec(normalizeSpec(fresh.spec as SiteSpec | Record<string, unknown> | null));
-      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao salvar alterações");
     } finally {
@@ -851,7 +873,7 @@ export default function SiteProjectPage() {
               <h2 className="font-display font-semibold flex items-center gap-2">
                 <Eye className="h-4 w-4 text-primary" /> Preview ao vivo
               </h2>
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">O que você conversar aparece aqui — só salva quando você clicar em Salvar</span>
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">As alterações confirmadas são salvas automaticamente — use ↶ Voltar para reverter</span>
             </div>
             {draftFiles && Object.keys(draftFiles).length > 0 ? (
               <LiveProjectPreview files={draftFiles} refreshKey={previewNonce} fallback={<SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />} />
