@@ -88,6 +88,12 @@ function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> 
   });
 }
 
+// Extrai o media type de um data URL ("data:image/png;base64,...").
+function guessMediaType(dataUrl: string): string {
+  const m = /^data:([^;,]+)/.exec(dataUrl || "");
+  return m ? m[1] : "application/octet-stream";
+}
+
 export default function SiteProjectPage() {
   const { user } = useAuth();
   const { id } = useParams<{ id: string }>();
@@ -452,6 +458,7 @@ export default function SiteProjectPage() {
               address: typeof cContact.address === "string" ? cContact.address : null,
             },
             memory: designMemory(),
+            attachments: attachment ? [{ name: attachment.label, dataUrl: attachment.dataUrl, mediaType: guessMediaType(attachment.dataUrl), label: attachment.label }] : [],
           });
         } catch (e) {
           agentErr = e;

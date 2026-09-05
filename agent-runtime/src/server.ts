@@ -10,6 +10,7 @@ import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot } from "./works
 import type { BusinessContext } from "./tools";
 import { assertGenerationQuality } from "./generation-gate";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction";
+import { materializeAttachments, type ChatAttachment } from "./attachments";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -108,6 +109,12 @@ export function startServer(port = PORT, host = HOST) {
         const agent = existingGen?.agent ?? makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate" });
         if (!existingGen) sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "" });
 
+        // ANEXOS (5.26) na geração: materializa no workspace (ex.: logo/foto real do cliente).
+        const attachResult = materializeAttachments(resolveWorkspaceRoot(projectId), (body.attachments ?? []) as ChatAttachment[]);
+        const genAttachBlock = attachResult.attachments.length || attachResult.errors.length
+          ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace — use se fizerem sentido para o site):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nPara usar uma imagem: LEIA o data URL com read_file e embuta inline (<img src="data:...">) para funcionar no preview/export.\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
+          : "";
+
         const activity: Array<{ phase: string; detail: string }> = [];
         const events: string[] = [];
         agent.subscribe((event) => {
@@ -158,6 +165,7 @@ export function startServer(port = PORT, host = HOST) {
 CONTEXTO REAL DO NEGÓCIO:
 ${ctxLines || "(apenas nome de arquivo/nenhum dado além do projeto)"}
 ${extra}
+${genAttachBlock}
 
 ${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
 
@@ -274,7 +282,16 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         });
 
         const memoryBlock = memory.length ? `\nMEMÓRIA DE DECISÕES (preserve):\n- ${memory.join("\n- ")}\n` : "";
-        const outcome = await agent.runTask(`${memoryBlock}${instruction}`, { continueSession: resume });
+
+        // ANEXOS (5.26): materializa arquivos anexados no workspace para o Cline
+        // acessar/ler/usar de verdade. Nunca apenas dataURL.
+        const attachments = (body.attachments ?? []) as ChatAttachment[];
+        const attachResult = materializeAttachments(resolveWorkspaceRoot(projectId), attachments);
+        const attachBlock = attachResult.attachments.length || attachResult.errors.length
+          ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace — você pode ler/usar):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nPara usar uma imagem no site: LEIA o arquivo com read_file (ele contém um data URL) e embuta inline no HTML como <img src="data:..."> — isso garante que funcione no preview/export sem servidor.\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
+          : "";
+
+        const outcome = await agent.runTask(`${memoryBlock}${attachBlock}${instruction}`, { continueSession: resume });
 
         // workspace final
         const root = resolveWorkspaceRoot(projectId);
@@ -291,6 +308,8 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           model: process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
           provider: process.env.PROSPECTOR_PROVIDER ?? "deepseek",
           runtime: "cline",
+          attachments: attachResult.attachments,
+          attach_errors: attachResult.errors,
           resumed_session: resume,
           events: events.slice(0, 150),
           activity,

@@ -96,6 +96,11 @@ export function prepareProjectPreview(files: WorkspaceMap | Record<string, strin
     }
   }
 
+  // Embutir assets LOCAIS do workspace (ex.: assets/logo.png usados pelo Cline)
+  // como dataURL — sem servidor, <img src="./assets/x.png"> não carregaria no
+  // iframe srcDoc. Imagens até ~2MB viram data URL.
+  html = embedLocalAssets(html, ws, names);
+
   // Remove qualquer referência a .env / arquivos sensíveis no documento.
   html = html.replace(/<script[^>]*src=["'][^"']*\.env[^"']*["'][^>]*>\s*<\/script>/gi, "");
 
@@ -121,6 +126,49 @@ export function prepareProjectPreview(files: WorkspaceMap | Record<string, strin
     warnings,
     fileCount: names.length,
   };
+}
+
+function embedLocalAssets(html: string, ws: WorkspaceMap, names: string[]): string {
+  const lookups = names.map((n) => ({ key: fileKeyOf(n), n }));
+  const MAX = 2_000_000;
+  const findContent = (href: string): string | null => {
+    const clean = href.replace(/^\.\//, "").split("?")[0];
+    const hit = lookups.find((l) => l.key === clean || l.key.endsWith("/" + clean) || l.n.endsWith(clean));
+    if (!hit) return null;
+    const content = ws[hit.n];
+    if (!content) return null;
+    // data URL já embutido → mantém
+    if (content.startsWith("data:")) return content;
+    // conteúdo binário (base64) vindo do cliente? o workspace guarda texto;
+    // se parecer base64 de imagem, tentamos wrapper data url.
+    const lower = hit.n.toLowerCase();
+    const mime = lower.endsWith(".png") ? "image/png" : lower.endsWith(".jpg") || lower.endsWith(".jpeg") ? "image/jpeg" : lower.endsWith(".webp") ? "image/webp" : lower.endsWith(".gif") ? "image/gif" : lower.endsWith(".svg") ? "image/svg+xml" : null;
+    if (!mime) return null;
+    // conteúdo pode estar como dataURL string OU texto (não é img real) — só embute
+    // se for base64 válido (aproximação: sem caracteres de HTML/css).
+    if (content.length > MAX) return null;
+    if (/^[A-Za-z0-9+/=\s]+$/.test(content.slice(0, 400)) && content.length > 100) {
+      return `data:${mime};base64,${content.replace(/\s+/g, "")}`;
+    }
+    return null;
+  };
+
+  // <img src="./assets/x.png">
+  html = html.replace(/(<img[^>]*\ssrc=["'])(\.\/[^"']+|assets\/[^"']+)(["'])/gi, (m, pre, href, post) => {
+    const data = findContent(href);
+    return data ? `${pre}${data}${post}` : m;
+  });
+  // url('./assets/x.png') em style inline
+  html = html.replace(/(url\(["']?)(\.\/assets\/[^"')]+|assets\/[^"')]+)(["']?\))/gi, (m, pre, href, post) => {
+    const data = findContent(href);
+    return data ? `${pre}${data}${post}` : m;
+  });
+  return html;
+}
+
+function fileKeyOf(p: string): string {
+  const parts = p.split("/");
+  return parts.slice(1).join("/");
 }
 
 function isBalancedCssText(styleBlock: string): boolean {

@@ -193,12 +193,18 @@ export interface AgentExecuteResult {
 }
 
 // Code-first: invoca o agent-execute que opera sobre os ARQUIVOS reais do projeto.
+// O fallback (edge) NÃO materializa anexos reais — se houver anexo e cair aqui,
+// retornamos erro honesto para não fingir uso do arquivo.
 export async function invokeAgentExecute(input: {
   instruction: string;
   files: Record<string, string>;
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null };
   memory?: string[];
+  attachments?: ChatAttachmentInput[];
 }): Promise<AgentExecuteResult> {
+  if (input.attachments && input.attachments.length > 0) {
+    return { status: "error", runtime: "edge-fallback", errors: ["Anexos exigem o Cline Agent Runtime (Node). Configure VITE_AGENT_RUNTIME_URL para usar arquivos anexados."] };
+  }
   const { data, error } = await supabase.functions.invoke<AgentExecuteResult>("agent-execute", {
     body: {
       instruction: input.instruction,
@@ -215,12 +221,20 @@ export async function invokeAgentExecute(input: {
 // Invoca o ProspectorSiteAgent (Cline SDK). Prefere o runtime Node local
 // (VITE_AGENT_RUNTIME_URL); se não estiver disponível, faz fallback para a
 // edge function agent-execute (mesmo contrato, infraestrutura atual).
+export interface ChatAttachmentInput {
+  name?: string;
+  mediaType?: string;
+  dataUrl?: string;
+  label?: string;
+}
+
 export async function invokeProspectorAgent(input: {
   instruction: string;
   files: Record<string, string>;
   projectId?: string;
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null };
   memory?: string[];
+  attachments?: ChatAttachmentInput[];
 }): Promise<AgentExecuteResult> {
   const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
   if (runtimeUrl) {
@@ -234,6 +248,7 @@ export async function invokeProspectorAgent(input: {
           projectId: input.projectId,
           context: input.context,
           memory: input.memory ?? [],
+          attachments: input.attachments ?? [],
         }),
         signal: AbortSignal.timeout(180_000),
       });
