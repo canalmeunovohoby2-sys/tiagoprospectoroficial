@@ -10,6 +10,10 @@ export interface SiteProjectRow {
   city: string | null;
   state: string | null;
   status: SiteProjectStatus;
+  slug: string | null;
+  published_status: "unpublished" | "published";
+  published_spec: SiteSpec | null;
+  published_at: string | null;
   briefing: Record<string, unknown>;
   design_system: Record<string, unknown> | null;
   site_structure: Record<string, unknown> | null;
@@ -53,12 +57,14 @@ export interface SiteCta {
 }
 
 export const LAYOUT_ARCHETYPES = ["editorial", "corporate", "minimal", "luxury", "bold", "service_focused", "local_business"] as const;
-export const HERO_VARIANTS = ["split", "centered", "editorial", "statement", "service_first"] as const;
+export const HERO_VARIANTS = ["split", "centered", "editorial", "statement", "service_first", "asymmetric", "layered", "collage", "typography_led", "cinematic"] as const;
 export const CARD_STYLES = ["flat", "bordered", "elevated", "editorial"] as const;
-export const BUTTON_STYLES = ["solid", "outline", "soft"] as const;
+export const BUTTON_STYLES = ["solid", "outline", "soft", "ghost", "text", "accent"] as const;
 export const NAV_STYLES = ["minimal", "centered", "boxed"] as const;
-export const CTA_TREATMENTS = ["primary_section", "band", "inline"] as const;
-export const FOOTER_STYLES = ["simple", "editorial", "centered"] as const;
+export const HEADER_VARIANTS = ["solid", "glass", "floating", "editorial", "minimal", "transparent"] as const;
+export const CTA_TREATMENTS = ["primary_section", "band", "inline", "split", "image", "immersive"] as const;
+export const FOOTER_STYLES = ["multi_column", "large_cta", "editorial", "dark", "minimal", "centered", "simple"] as const;
+export const GALLERY_VARIANTS = ["grid", "editorial", "asymmetric", "masonry", "featured"] as const;
 export const SECTION_SPACINGS = ["compact", "comfortable", "generous"] as const;
 export const VISUAL_DENSITIES = ["airy", "balanced", "dense"] as const;
 export const DECORATIVE_INTENSITIES = ["none", "low", "medium"] as const;
@@ -84,13 +90,17 @@ export interface SiteDesignSystem {
   card_style?: (typeof CARD_STYLES)[number];
   button_style?: (typeof BUTTON_STYLES)[number];
   navigation_style?: (typeof NAV_STYLES)[number];
+  header_variant?: (typeof HEADER_VARIANTS)[number];
   cta_treatment?: (typeof CTA_TREATMENTS)[number];
   footer_style?: (typeof FOOTER_STYLES)[number];
+  footer_visual?: "simple" | "editorial" | "centered";
+  gallery_variant?: (typeof GALLERY_VARIANTS)[number];
   section_spacing?: (typeof SECTION_SPACINGS)[number];
   visual_density?: (typeof VISUAL_DENSITIES)[number];
   decorative_intensity?: (typeof DECORATIVE_INTENSITIES)[number];
   container_width?: (typeof CONTAINER_WIDTHS)[number];
   radius_scale?: (typeof RADIUS_SCALES)[number];
+  motion?: Record<string, boolean>;
 }
 
 export interface SiteSpec {
@@ -247,13 +257,19 @@ export function normalizeSpec(raw: SiteSpec | Record<string, unknown> | null | u
       card_style: enumOr(designRaw.card_style, CARD_STYLES),
       button_style: enumOr(designRaw.button_style, BUTTON_STYLES),
       navigation_style: enumOr(designRaw.navigation_style, NAV_STYLES),
+      header_variant: enumOr(designRaw.header_variant, HEADER_VARIANTS),
       cta_treatment: enumOr(designRaw.cta_treatment, CTA_TREATMENTS),
       footer_style: enumOr(designRaw.footer_style, FOOTER_STYLES),
+      footer_visual: str(designRaw.footer_visual) === "simple" || str(designRaw.footer_visual) === "editorial" || str(designRaw.footer_visual) === "centered" ? designRaw.footer_visual as "simple" | "editorial" | "centered" : undefined,
+      gallery_variant: enumOr(designRaw.gallery_variant, GALLERY_VARIANTS),
       section_spacing: enumOr(designRaw.section_spacing, SECTION_SPACINGS),
       visual_density: enumOr(designRaw.visual_density, VISUAL_DENSITIES),
       decorative_intensity: enumOr(designRaw.decorative_intensity, DECORATIVE_INTENSITIES),
       container_width: enumOr(designRaw.container_width, CONTAINER_WIDTHS),
       radius_scale: enumOr(designRaw.radius_scale, RADIUS_SCALES),
+      motion: designRaw.motion && typeof designRaw.motion === "object"
+        ? Object.fromEntries(Object.entries(designRaw.motion as Record<string, unknown>).filter(([, v]) => typeof v === "boolean"))
+        : undefined,
     },
     pages: raw.pages && typeof raw.pages === "object"
       ? Object.fromEntries(Object.entries(raw.pages as Record<string, unknown>).map(([k, v]) => [k, !!v]))

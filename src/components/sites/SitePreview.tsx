@@ -4,6 +4,7 @@ import { normalizeSpec, contentBlock, safeArr } from "@/data/siteProjects";
 
 interface SitePreviewProps {
   spec: SiteSpec | Record<string, unknown> | null;
+  bare?: boolean;
 }
 
 const KNOWN_TYPES = ["hero", "trust", "features", "numbers", "process", "faq", "gallery", "about", "services", "testimonials", "cta", "contact"] as const;
@@ -26,6 +27,9 @@ const DESIGN_RADIUS: Record<string, string> = {
   medium: "16px",
   large: "24px",
 };
+// Mapeia variantes ricas de footer para o visual "light" do preview (fallback seguro).
+const LIGHT_FOOTER_STYLES = new Set(["editorial", "centered", "large_cta", "multi_column", "minimal"]);
+const DARK_FOOTER_STYLES = new Set(["dark", "immersive"]);
 const HEADING_FALLBACK = "Plus Jakarta Sans";
 const BODY_FALLBACK = "Inter";
 
@@ -72,14 +76,15 @@ function resolveImg(v: unknown): { url: string; alt: string } | null {
   return null;
 }
 
-function Picture({ src, alt, ratio, eager = false, className = "" }: { src: string; alt: string; ratio?: string; eager?: boolean; className?: string }) {
+function Picture({ src, alt, ratio, eager = false, className = "", zoom = false }: { src: string; alt: string; ratio?: string; eager?: boolean; className?: string; zoom?: boolean }) {
   return (
     <div className={`relative overflow-hidden ${className}`} style={ratio ? { aspectRatio: ratio, backgroundColor: "color-mix(in srgb, var(--sp-muted) 15%, transparent)" } : { backgroundColor: "color-mix(in srgb, var(--sp-muted) 15%, transparent)" }}>
       <img
         src={src}
         alt={alt || ""}
         loading={eager ? "eager" : "lazy"}
-        className="h-full w-full object-cover"
+        className={`h-full w-full object-cover transition-transform duration-500 ease-out ${zoom ? "group-hover:scale-[1.06]" : ""}`}
+        style={zoom ? { transformOrigin: "center center" } : undefined}
         onError={(e) => {
           (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
         }}
@@ -90,7 +95,7 @@ function Picture({ src, alt, ratio, eager = false, className = "" }: { src: stri
 
 type Tokens = Record<string, string>;
 
-export function SitePreview({ spec: raw }: SitePreviewProps) {
+export function SitePreview({ spec: raw, bare = false }: SitePreviewProps) {
   const [viewport, setViewport] = useState<"desktop" | "mobile">("desktop");
   const spec = useMemo(() => normalizeSpec(raw), [raw]);
 
@@ -99,17 +104,36 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
   const colors = ds.colors ?? {};
   const typo = ds.typography ?? {};
   const archetype = oneOf(str(ds.layout_archetype), ["editorial", "corporate", "minimal", "luxury", "bold", "service_focused", "local_business"] as const, "minimal");
-  const heroVariant = oneOf(str(ds.hero_variant), ["split", "centered", "editorial", "statement", "service_first"] as const, "centered");
+  // Hero premium (7.1): mapeia variantes ricas para a composição mais próxima
+  // suportada pelo renderer (fallback elegante, nunca quebra).
+  const heroVariantRaw = str(ds.hero_variant) || "";
+  const heroVariant = heroVariantRaw === "asymmetric" || heroVariantRaw === "layered" || heroVariantRaw === "collage"
+    ? "split"
+    : heroVariantRaw === "typography_led"
+      ? "centered"
+      : heroVariantRaw === "cinematic" || heroVariantRaw === "full_image"
+        ? "statement"
+        : oneOf(heroVariantRaw, ["split", "centered", "editorial", "statement", "service_first"] as const, "centered");
   const cardStyle = oneOf(str(ds.card_style), ["flat", "bordered", "elevated", "editorial"] as const, "bordered");
   const buttonStyle = oneOf(str(ds.button_style), ["solid", "outline", "soft"] as const, "solid");
   const navStyle = oneOf(str(ds.navigation_style), ["minimal", "centered", "boxed"] as const, "minimal");
-  const footerStyle = oneOf(str(ds.footer_style), ["simple", "editorial", "centered"] as const, "simple");
+  const headerVariant = str(ds.header_variant) || "";
+  const footerStyle = oneOf(str(ds.footer_style), ["simple", "editorial", "centered", "multi_column", "large_cta", "dark", "minimal"] as const, "simple");
+  const galleryVariant = str(ds.gallery_variant) || "";
   const containerWidth = DESIGN_VIEWPORT_WIDTHS[oneOf(str(ds.container_width), ["narrow", "standard", "wide"] as const, "standard")];
   const sectionPad = DESIGN_SECTION_PAD[oneOf(str(ds.section_spacing), ["compact", "comfortable", "generous"] as const, "comfortable")];
   const radius = DESIGN_RADIUS[oneOf(str(ds.radius_scale), ["none", "small", "medium", "large"] as const, "medium")];
   const density = oneOf(str(ds.visual_density), ["airy", "balanced", "dense"] as const, "airy");
   const decorative = oneOf(str(ds.decorative_intensity), ["none", "low", "medium"] as const, "low");
   const headingScale = oneOf(str(typo.heading_scale), ["normal", "large", "display"] as const, "large");
+  const motionRaw = ds.motion && typeof ds.motion === "object" ? ds.motion : {};
+  const motion: Record<string, boolean> = {
+    reveal: motionRaw.reveal !== false,
+    staggerCards: motionRaw.staggerCards !== false,
+    hoverLift: motionRaw.hoverLift !== false,
+    imageZoom: motionRaw.imageZoom !== false,
+    smoothScroll: motionRaw.smoothScroll !== false,
+  };
 
   const name = str(business.name) || "Minha Empresa";
   const segmentLabel = str(business.segment) || "Negócio local";
@@ -169,7 +193,9 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
   const subheadingSize = headingScale === "display" ? "clamp(1.4rem, 2.4vw, 1.9rem)" : "clamp(1.15rem, 1.8vw, 1.45rem)";
   const bodySize = str(typo.body_size) === "large" ? "1.075rem" : "1rem";
   const letterSpacing = archetype === "luxury" || archetype === "editorial" ? "-0.015em" : "-0.02em";
-  const isLightFooter = archetype === "editorial" || archetype === "luxury" || archetype === "corporate";
+  const isLightFooter = footerStyle === "editorial" || footerStyle === "centered" || footerStyle === "multi_column" || footerStyle === "large_cta" || footerStyle === "minimal" || (["editorial", "luxury", "corporate"].includes(archetype) && footerStyle !== "dark");
+  // Footer "immersivo"/"large_cta" ganham CTA em destaque no rodapé quando houver WhatsApp.
+  const footerCta = footerStyle === "large_cta" || footerStyle === "dark";
 
   const tokens: Tokens = {
     "--sp-primary": primary,
@@ -206,15 +232,22 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
     }
   }, [headingFont, bodyFont]);
 
-  // Microinterações: reveal suave das seções ao entrar no viewport.
-  useEffect(() => {
+// Microinterações: reveal suave das seções ao entrar no viewport.
+    useEffect(() => {
     if (!document.getElementById("sp-anim")) {
       const style = document.createElement("style");
       style.id = "sp-anim";
       style.textContent = `
         .sp-root section[id]{opacity:0;transform:translateY(14px);transition:opacity .55s ease,transform .55s ease}
         .sp-root section[id].sp-in{opacity:1;transform:none}
-        @media (prefers-reduced-motion: reduce){.sp-root section[id]{opacity:1 !important;transform:none !important;transition:none}}
+        .sp-cta-arrow{transition:transform .25s ease,opacity .25s ease}
+        .sp-cta-arrow:hover{transform:translateX(4px);opacity:1}
+        .sp-cta-arrow[aria-hidden]{opacity:.85}
+        .sp-gallery-zoom .sp-pic img{transition:transform .5s cubic-bezier(.2,.7,.2,1)}
+        .sp-gallery-zoom .sp-pic:hover img{transform:scale(1.06)}
+        .sp-stagger > *{opacity:0;transform:translateY(10px);animation:sp-rise .5s ease both;animation-delay:calc(var(--i,0)*60ms)}
+        @keyframes sp-rise{to{opacity:1;transform:none}}
+        @media (prefers-reduced-motion: reduce){.sp-root section[id]{opacity:1 !important;transform:none !important;transition:none}.sp-cta-arrow{transition:none}.sp-gallery-zoom .sp-pic img{transition:none}.sp-stagger > *{animation:none;opacity:1;transform:none}}
       `;
       document.head.appendChild(style);
     }
@@ -235,12 +268,16 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
       { threshold: 0.06, rootMargin: "0px 0px -5% 0px" },
     );
     secs.forEach((s) => {
+      if (!motion.reveal) {
+        s.classList.add("sp-in");
+        return;
+      }
       const rect = s.getBoundingClientRect();
       if (rect.top < window.innerHeight * 0.9) s.classList.add("sp-in");
       io.observe(s);
     });
     return () => io.disconnect();
-  }, [spec]);
+  }, [spec, motion.reveal]);
 
   const activeSections = useMemo<SectionType[]>(() => {
     const out: SectionType[] = [];
@@ -296,6 +333,11 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
         style={{ backgroundColor: bg, color: fg, border: bd, boxShadow: "none" }}
       >
         {label}
+        {kind === "primary" && motion.hoverLift && (
+          <svg aria-hidden="true" className="sp-cta-arrow h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        )}
       </a>
     );
   };
@@ -391,15 +433,23 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
               {sub && <p className="max-w-2xl text-lg leading-relaxed" style={{ color: "color-mix(in srgb, var(--sp-on-primary) 82%, transparent)" }}>{textRich(sub)}</p>}
               <div className="flex flex-wrap items-center gap-3 pt-2">
                 {heroBtnHref && heroBtnLabel && (
-                  <a href={heroBtnHref} target={heroBtnExternal ? "_blank" : undefined} rel={heroBtnExternal ? "noreferrer" : undefined} className="inline-flex items-center gap-2 rounded-full px-7 py-3 font-semibold" style={{ backgroundColor: "var(--sp-accent)", color: "#1c1917" }}>
+                  <a href={heroBtnHref} target={heroBtnExternal ? "_blank" : undefined} rel={heroBtnExternal ? "noreferrer" : undefined} className="inline-flex items-center gap-2 rounded-full px-7 py-3 font-semibold transition-transform hover:scale-[1.03]" style={{ backgroundColor: "var(--sp-accent)", color: "#1c1917" }}>
                     {heroBtnLabel}
+                    {motion.hoverLift && (
+                      <svg aria-hidden="true" className="sp-cta-arrow h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                    )}
                   </a>
                 )}
                 {!heroBtnLabel && waLink && (
-                  <a href={waLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full px-7 py-3 font-semibold" style={{ backgroundColor: "var(--sp-accent)", color: "#1c1917" }}>Falar agora</a>
+                  <a href={waLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full px-7 py-3 font-semibold transition-transform hover:scale-[1.03]" style={{ backgroundColor: "var(--sp-accent)", color: "#1c1917" }}>
+                    Falar agora
+                    {motion.hoverLift && (
+                      <svg aria-hidden="true" className="sp-cta-arrow h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                    )}
+                  </a>
                 )}
                 {str(hero.secondary_cta) && (
-                  <a href="#contato" className="rounded-full border px-7 py-3 font-semibold" style={{ borderColor: "color-mix(in srgb, var(--sp-on-primary) 35%, transparent)", color: "var(--sp-on-primary)" }}>{str(hero.secondary_cta)}</a>
+                  <a href="#contato" className="rounded-full border px-7 py-3 font-semibold transition-transform hover:scale-[1.03]" style={{ borderColor: "color-mix(in srgb, var(--sp-on-primary) 35%, transparent)", color: "var(--sp-on-primary)" }}>{str(hero.secondary_cta)}</a>
                 )}
               </div>
             </div>
@@ -507,13 +557,14 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
               {blockText(services, "subtitle") && <p className="max-w-sm text-left" style={{ color: "var(--sp-muted)" }}>{textRich(blockText(services, "subtitle"))}</p>}
             </div>
           </div>
-          <div className={`grid gap-5 ${cardStyle === "editorial" ? "sm:grid-cols-2" : serviceItems.length >= 4 ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 lg:grid-cols-3"}`}>
+          <div className={`grid gap-5 ${cardStyle === "editorial" ? "sm:grid-cols-2" : serviceItems.length >= 4 ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 lg:grid-cols-3"} ${motion.staggerCards ? "sp-stagger" : ""}`}>
             {serviceItems.map((item, i) => {
               const title = str(item.title);
               const desc = str(item.description);
               const styleCss = cardCss();
+              const staggerStyle = motion.staggerCards ? ({ ["--i" as string]: i } as React.CSSProperties) : undefined;
               return (
-                <div key={i} className={`p-6 ${cardStyle === "editorial" ? "" : "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_28px_60px_-30px_rgba(16,24,40,0.4)]"}`} style={{ ...styleCss, padding: cardStyle === "editorial" ? 0 : undefined }}>
+                <div key={i} className={`p-6 ${cardStyle === "editorial" ? "" : "transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_28px_60px_-30px_rgba(16,24,40,0.4)]"}`} style={{ ...styleCss, padding: cardStyle === "editorial" ? 0 : undefined, ...staggerStyle }}>
                   {cardStyle === "editorial" && <span className="mb-3 inline-block text-xs font-semibold" style={{ color: "var(--sp-primary)" }}>0{i + 1}</span>}
                   {!cardStyle.includes("editorial") && (
                     <div className="mb-4 h-9 w-9 rounded-lg flex items-center justify-center text-lg" style={{ backgroundColor: "color-mix(in srgb, var(--sp-primary) 10%, transparent)", color: "var(--sp-primary)" }}>
@@ -562,17 +613,20 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
             {eyebrow("Diferenciais")}
             {heading(blockText(features, "title") || "Por que nos escolher")}
           </div>
-          <div className={`grid gap-px overflow-hidden rounded-2xl border ${columns}`} style={{ borderColor: "var(--sp-border)", backgroundColor: "var(--sp-border)" }}>
-            {items.map((item, i) => (
-              <div key={i} className="group p-7 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_28px_60px_-30px_rgba(16,24,40,0.4)]" style={{ backgroundColor: "var(--sp-surface)" }}>
+<div className={`grid gap-px overflow-hidden rounded-2xl border ${columns} ${motion.staggerCards ? "sp-stagger" : ""}`} style={{ borderColor: "var(--sp-border)", backgroundColor: "var(--sp-border)" }}>
+              {items.map((item, i) => {
+                const staggerStyle = motion.staggerCards ? ({ ["--i" as string]: i } as React.CSSProperties) : undefined;
+                return (
+                  <div key={i} className="group p-7 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_28px_60px_-30px_rgba(16,24,40,0.4)]" style={{ backgroundColor: "var(--sp-surface)", ...staggerStyle }}>
                 <div className="mb-4 flex items-baseline justify-between">
                   <span className="text-sm font-bold" style={{ color: "var(--sp-primary)" }}>{str(item.icon) || `0${i + 1}`}</span>
                 </div>
                 <h3 className="mb-2 font-semibold leading-snug" style={{ fontFamily: "var(--sp-heading-font)", color: "var(--sp-on-surface)" }}>{str(item.title)}</h3>
                 {str(item.description) && <p className="text-sm leading-relaxed" style={{ color: "var(--sp-muted)" }}>{textRich(str(item.description))}</p>}
               </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
         </div>
       </section>
     );
@@ -763,23 +817,26 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
       .map((it) => resolveImg(it.image ?? it.url ?? it))
       .filter((x): x is { url: string; alt: string } => !!x);
     if (!sectionHas("gallery") || items.length === 0) return null;
-    const editorial = str(gallery.layout) === "editorial";
+    // gallery_variant (7.1) com fallback para gallery.layout legado.
+    const editorial = str(gallery.layout) === "editorial" || ["editorial", "asymmetric", "masonry", "featured"].includes(galleryVariant);
     return (
-      <section id="gallery" style={{ backgroundColor: "var(--sp-surface)" }}>
+      <section id="gallery" className={motion.imageZoom ? "sp-gallery-zoom" : ""} style={{ backgroundColor: "var(--sp-surface)" }}>
         <div className="mx-auto px-6 py-[var(--sp-py-section)]" style={{ maxWidth: "var(--sp-maxw)" }}>
           {blockText(gallery, "title") && <div className="mb-9 text-center">{heading(blockText(gallery, "title"))}</div>}
           {editorial ? (
             <div className="grid auto-rows-[10rem] grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
               {items.slice(0, 7).map((img, i) => (
-                <div key={i} className={i === 0 ? "col-span-2 row-span-2" : ""}>
-                  <Picture src={img.url} alt={img.alt || ""} className="h-full rounded-[calc(var(--sp-radius)*0.9)] shadow-sm" />
+                <div key={i} className={`group sp-pic ${i === 0 ? "col-span-2 row-span-2" : ""}`}>
+                  <Picture src={img.url} alt={img.alt || ""} className="h-full rounded-[calc(var(--sp-radius)*0.9)] shadow-sm" zoom={motion.imageZoom} />
                 </div>
               ))}
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
               {items.slice(0, 6).map((img, i) => (
-                <Picture key={i} src={img.url} alt={img.alt || ""} ratio="4 / 3" className="rounded-[calc(var(--sp-radius)*0.9)] shadow-sm" />
+                <div key={i} className="group sp-pic">
+                  <Picture src={img.url} alt={img.alt || ""} ratio="4 / 3" className="rounded-[calc(var(--sp-radius)*0.9)] shadow-sm" zoom={motion.imageZoom} />
+                </div>
               ))}
             </div>
           )}
@@ -839,18 +896,20 @@ export function SitePreview({ spec: raw }: SitePreviewProps) {
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <p className="text-xs text-muted-foreground">Preview da especificação · Desktop/Mobile</p>
-        <div className="flex items-center gap-1">
-          <button type="button" onClick={() => setViewport("desktop")} className={`h-7 px-3 rounded-lg text-xs font-medium border transition-colors ${viewport === "desktop" ? "border-primary/50 bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}>Desktop</button>
-          <button type="button" onClick={() => setViewport("mobile")} className={`h-7 px-3 rounded-lg text-xs font-medium border transition-colors ${viewport === "mobile" ? "border-primary/50 bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}>Mobile</button>
+    <div className={bare ? "" : "space-y-3"}>
+      {!bare && (
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="text-xs text-muted-foreground">Preview da especificação · Desktop/Mobile</p>
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={() => setViewport("desktop")} className={`h-7 px-3 rounded-lg text-xs font-medium border transition-colors ${viewport === "desktop" ? "border-primary/50 bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}>Desktop</button>
+            <button type="button" onClick={() => setViewport("mobile")} className={`h-7 px-3 rounded-lg text-xs font-medium border transition-colors ${viewport === "mobile" ? "border-primary/50 bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground"}`}>Mobile</button>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="rounded-2xl border border-border/60 overflow-hidden bg-[var(--sp-background)] shadow-[0_0_0_1px_hsl(0_0%_0%/0.04)]">
+      <div className={bare ? "" : "rounded-2xl border border-border/60 overflow-hidden bg-[var(--sp-background)] shadow-[0_0_0_1px_hsl(0_0%_0%/0.04)]"}>
         <div
-          className={`sp-root mx-auto ${viewport === "mobile" ? "max-w-[400px]" : "max-w-full"} transition-all duration-300`}
+          className={`sp-root ${bare ? "w-full" : `mx-auto ${viewport === "mobile" ? "max-w-[400px]" : "max-w-full"} transition-all duration-300`}`}
           style={{ ...(tokens as React.CSSProperties), backgroundColor: "var(--sp-background)", color: "var(--sp-on-surface)", fontFamily: "var(--sp-body-font)", fontSize: "var(--sp-body-size)" }}
         >
           {/* Header / nav */}

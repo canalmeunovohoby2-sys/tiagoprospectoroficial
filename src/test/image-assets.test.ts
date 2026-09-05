@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  normalizeImageList, normalizeImageItem, selectAssets, resolveImageUrl, getImageNeeds,
+  normalizeImageList, normalizeImageItem, selectAssets, resolveImageUrl, getImageNeeds, sectionImageQuery,
+  sectionImageArt, clusterImageFocus, imageRolesForSegment, imageRelevance, imageDiversity,
 } from "../../supabase/functions/_shared/image-assets";
 import { qualityIssues, hasUsableImages } from "../../supabase/functions/_shared/site-quality";
 
@@ -57,6 +58,65 @@ describe("Image assets", () => {
     expect(food.heroQuery.toLowerCase()).toContain("food");
     const law = getImageNeeds("Advogados");
     expect(law.heroQuery.toLowerCase()).toContain("office");
+  });
+
+  it("queries por seção existem para cada cluster", () => {
+    const food = sectionImageQuery("Restaurantes", "hero");
+    expect(food).toContain("dish");
+    const law = sectionImageQuery("Advogados", "hero");
+    expect(law).toContain("office");
+    const pet = sectionImageQuery("Pet Shop", "gallery");
+    expect(pet).toContain("pet");
+    const auto = sectionImageQuery("Oficinas", "trust");
+    expect(auto).toContain("garage");
+  });
+
+  it("query por seção cai no default geral para cluster desconhecido", () => {
+    expect(sectionImageQuery("Brinquedos", "hero")).toContain("business");
+  });
+});
+
+describe("Image Art Direction (7.1)", () => {
+  it("planos por papel existem e respeitam o negócio", () => {
+    const petHero = sectionImageArt("Pet Shop", "hero");
+    expect(petHero?.intent).toContain("cuidado profissional");
+    expect(petHero?.query.toLowerCase()).toContain("groom");
+
+    const auto = sectionImageArt("Oficinas", "professional");
+    expect(auto?.intent).toContain("técnico");
+    expect(auto?.query.toLowerCase()).toContain("engine");
+
+    const food = sectionImageArt("Restaurantes", "product");
+    expect(food?.query.toLowerCase()).toContain("dish");
+  });
+
+  it("fallback geral para papel/cluster sem plano detalhado", () => {
+    expect(sectionImageArt("Brinquedos", "hero")).not.toBeNull();
+    expect(sectionImageArt("Clínicas", "about")).not.toBeNull();
+  });
+
+  it("foco de imagem por cluster reflete o contexto do negócio", () => {
+    expect(clusterImageFocus("pet_care")).toEqual(expect.arrayContaining(["dog", "pet", "groom"]));
+    expect(clusterImageFocus("automotivo")).toEqual(expect.arrayContaining(["car", "mechanic"]));
+    expect(clusterImageFocus("alimentacao")).toEqual(expect.arrayContaining(["food", "chef"]));
+  });
+
+  it("papéis de imagem disponíveis por segmento", () => {
+    const roles = imageRolesForSegment("Clínicas");
+    expect(roles).toContain("hero");
+    expect(roles).toContain("gallery");
+    expect(roles.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("relevância: alt contextual alto, genérico baixo", () => {
+    expect(imageRelevance("pet_care", "Cachorro tomando banho com groomer")).toBeGreaterThanOrEqual(80);
+    expect(imageRelevance("pet_care", "Generic business stock photo")).toBeLessThanOrEqual(40);
+    expect(imageRelevance("pet_care", "")).toBe(40);
+  });
+
+  it("diversidade: URLs repetidas ou alts iguais penalizam", () => {
+    expect(imageDiversity([{ url: "a" }, { url: "b" }, { url: "c" }])).toBeGreaterThanOrEqual(70);
+    expect(imageDiversity([{ url: "a" }, { url: "a" }, { url: "c" }])).toBeLessThanOrEqual(55);
   });
 });
 

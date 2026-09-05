@@ -342,6 +342,44 @@ export type Database = {
           },
         ]
       }
+      site_project_versions: {
+        Row: {
+          change_summary: string | null
+          created_at: string
+          id: string
+          project_id: string
+          spec: Json
+          user_id: string
+          version_number: number
+        }
+        Insert: {
+          change_summary?: string | null
+          created_at?: string
+          id?: string
+          project_id: string
+          spec: Json
+          user_id: string
+          version_number: number
+        }
+        Update: {
+          change_summary?: string | null
+          created_at?: string
+          id?: string
+          project_id?: string
+          spec?: Json
+          user_id?: string
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "site_project_versions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "site_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       site_projects: {
         Row: {
           ai_model: string | null
@@ -357,10 +395,14 @@ export type Database = {
           id: string
           lead_id: string | null
           name: string
+          published_at: string | null
+          published_spec: Json | null
+          published_status: string
           segment: string | null
           seo: Json
           settings: Json
           site_structure: Json
+          slug: string | null
           spec: Json
           state: string | null
           status: string
@@ -381,10 +423,14 @@ export type Database = {
           id?: string
           lead_id?: string | null
           name?: string
+          published_at?: string | null
+          published_spec?: Json | null
+          published_status?: string
           segment?: string | null
           seo?: Json
           settings?: Json
           site_structure?: Json
+          slug?: string | null
           spec?: Json
           state?: string | null
           status?: string
@@ -405,10 +451,14 @@ export type Database = {
           id?: string
           lead_id?: string | null
           name?: string
+          published_at?: string | null
+          published_spec?: Json | null
+          published_status?: string
           segment?: string | null
           seo?: Json
           settings?: Json
           site_structure?: Json
+          slug?: string | null
           spec?: Json
           state?: string | null
           status?: string
@@ -451,6 +501,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      get_public_site: {
+        Args: { p_slug: string }
+        Returns: {
+          name: string
+          published_at: string
+          published_spec: Json
+          slug: string
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

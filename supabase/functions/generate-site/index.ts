@@ -1,7 +1,9 @@
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { generateText, AiError, extractJson } from "../_shared/ai.ts";
 import { getNicheDesign } from "../_shared/niche-design.ts";
-import { qualityIssues, ensureBaseContent } from "../_shared/site-quality.ts";
+import { getDesignDirective, normalizeMotionMeta, defaultMotionMeta } from "../_shared/design-directive.ts";
+import { qualityIssues, ensureBaseContent, qualityScore, premiumScore, premiumQA, PREMIUM_QA_MIN, qaIssuesForRefinement } from "../_shared/site-quality.ts";
+import { componentPlanForCluster, resolveComponentPlan, type ComponentPlan } from "../_shared/component-library.ts";
 import { getImageNeeds, type SiteAsset, type ImageNeeds } from "../_shared/image-assets.ts";
 
 interface LeadInput {
@@ -39,6 +41,9 @@ function asStringArray(v: unknown): string[] {
   return asArray(v).filter((i): i is string => typeof i === "string" && i.trim().length > 0);
 }
 
+// Limite mínimo de qualidade premium (0-100) para aceitar a spec gerada.
+const PREMIUM_MIN = 55;
+
 const SYSTEM_PROMPT = `Você é o diretor de criação do gerador de sites do TiagoProspector. Você transforma dados reais de um pequeno negócio brasileiro em uma ESPECIFICAÇÃO ESTRUTURADA de site (JSON), pronta para renderização futura.
 
 # MÉTODO (pense rápido, sem mostrar o raciocínio)
@@ -62,24 +67,27 @@ Depois produza o JSON final.
     "name": string, "segment": string, "city": string, "state": string,
     "tagline": string | null, "about": string | null
   },
-  "design_system": {
-    "colors": { "primary": "#hex", "on_primary": "#hex", "secondary": "#hex", "accent": "#hex", "background": "#hex", "surface": "#hex", "on_surface": "#hex", "muted": "#hex", "border": "#hex" },
-    "typography": { "heading_font": "fonte Google", "body_font": "fonte Google", "heading_weight": "regular|semibold|bold", "heading_scale": "normal|large|display", "body_size": "normal|large" },
-    "visual_style": "descrição curta da atmosfera",
-    "layout_mood": "minimal|editorial|bold|organic|premium|playful",
-    "layout_archetype": "editorial|corporate|minimal|luxury|bold|service_focused|local_business",
-    "hero_variant": "split|centered|editorial|statement|service_first",
-    "card_style": "flat|bordered|elevated|editorial",
-    "button_style": "solid|outline|soft",
-    "navigation_style": "minimal|centered|boxed",
-    "cta_treatment": "primary_section|band|inline",
-    "footer_style": "simple|editorial|centered",
-    "section_spacing": "compact|comfortable|generous",
-    "visual_density": "airy|balanced|dense",
-    "decorative_intensity": "none|low|medium",
-    "container_width": "narrow|standard|wide",
-    "radius_scale": "none|small|medium|large"
-  },
+"design_system": {
+     "colors": { "primary": "#hex", "on_primary": "#hex", "secondary": "#hex", "accent": "#hex", "background": "#hex", "surface": "#hex", "on_surface": "#hex", "muted": "#hex", "border": "#hex" },
+     "typography": { "heading_font": "fonte Google", "body_font": "fonte Google", "heading_weight": "regular|semibold|bold", "heading_scale": "normal|large|display", "body_size": "normal|large" },
+     "visual_style": "descrição curta da atmosfera",
+     "layout_mood": "minimal|editorial|bold|organic|premium|playful",
+     "layout_archetype": "editorial|corporate|minimal|luxury|bold|service_focused|local_business",
+     "hero_variant": "split|centered|editorial|statement|service_first|asymmetric|layered|collage|typography_led|cinematic",
+     "card_style": "flat|bordered|elevated|editorial",
+     "button_style": "solid|outline|soft|ghost|text|accent",
+     "navigation_style": "minimal|centered|boxed",
+     "header_variant": "solid|glass|floating|editorial|minimal|transparent",
+     "cta_treatment": "primary_section|band|inline|split|image|immersive",
+     "footer_style": "multi_column|large_cta|editorial|dark|minimal|centered|simple",
+     "gallery_variant": "grid|editorial|asymmetric|masonry|featured",
+     "section_spacing": "compact|comfortable|generous",
+     "visual_density": "airy|balanced|dense",
+     "decorative_intensity": "none|low|medium",
+     "container_width": "narrow|standard|wide",
+     "radius_scale": "none|small|medium|large",
+     "motion": { "reveal": boolean, "staggerCards": boolean, "hoverLift": boolean, "imageZoom": boolean, "smoothScroll": boolean }
+   },
   "pages": { "home": true, "services": boolean, "contact": boolean },
   "navigation": [ { "label": string, "anchor": "hero|about|services|testimonials|contact" } ],
   "sections": [ { "id": string, "type": "hero|about|services|features|trust|numbers|process|faq|testimonials|cta|contact", "order": number } ],
@@ -125,6 +133,16 @@ Depois produza o JSON final.
 - PADARIA/CAFETERIA/LOCAL: acolhedor artesanal; tipografia display calorosa; fotos de produto; CTA de encomenda/WhatsApp. Archetype: local_business ou bold.
 - OUTROS: escolha a direção mais plausível para o segmento.
 
+# MOTION (metadados de animação — devem ser coerentes com o segmento)
+- Inclua em design_system.motion um objeto com 5 chaves booleanas:
+  - reveal: animação de revelação suave por seção (stagger de blocos).
+  - staggerCards: cards de serviços/galeria com stagger (aparecem um a um).
+  - hoverLift: hover com elevação sutil em cards/botões.
+  - imageZoom: zoom leve na imagem ao passar o mouse (galeria/hero).
+  - smoothScroll: scroll suave entre âncoras.
+- Defaults: todos true. Desative apenas quando o segmento pede um ritmo extremamente estático (ex.: profissional consultivo pode desativar staggerCards).
+- Nunca use efeitos de paralaxe, flash ou transições bruscas.
+
 # REGRAS DE CONTEÚDO (CRÍTICAS)
 - Português do Brasil. Textos curtos, diretos e profissionais.
 - NUNCA invente fatos: telefone, endereço, e-mail, horário, avaliações, CNPJ, funcionários, prêmios, anos de história, números.
@@ -142,6 +160,17 @@ Depois produza o JSON final.
 - SEÇÕES: hero + 3 a 5 seções com função + footer. Cada seção deve ter papel na conversão.
 - O hero NÃO precisa ocupar a tela toda. Prefira composições equilibradas.
 - Imagens: deixe "image": null. Em visual_style, descreva que TIPOS de imagem combinariam (não URLs).
+
+# COMPONENTES (7.1) — combinações coerentes, NUNCA o mesmo site para todos
+- header_variant: "solid|glass|floating|editorial|minimal|transparent". header não pode ser só logo + links: adicione CTA em destaque quando o segmento converter (agendar/orçar/reservar).
+- hero_variant: além dos clássicos, pode usar "asymmetric" (imagem deslocada + tipografia), "layered" (imagem sobreposta a cor de fundo), "typography_led" (quase sem imagem, tipografia enorme) ou "cinematic" (imagem full-bleed com overlay suave). Escolha UMA coerente com o segmento.
+- button_style: solid|outline|soft|ghost|text|accent. Prefira "accent" quando o CTA for conversão quente (restaurante/automotivo).
+- footer_style: nunca apenas links+copyright. Use "large_cta" (CTA grande no rodapé), "multi_column" (marca + navegação + contato + horários), "editorial" (base com tagline), "dark" ou "minimal".
+- gallery_variant: "grid|editorial|asymmetric|masonry|featured". Use composições assimétricas/editoriais para segmentos visuais.
+- REGRA DE COERÊNCIA: a combinação header_variant+hero_variant+footer_style+gallery_variant DEVE variar por segmento — não repita a mesma combinação genérica (hero split + cards + footer simple) em todos os projetos.
+
+# PREMIUM QA (7.3) — o site não pode parecer PDF/template
+Antes de finalizar, se auto-avaliar como Art Director: o site tem identidade visual? Imagens com contexto do negócio? Composição variada (não só cards repetidos)? Motion/microinterações? Header/footer com intenção? Se parecer "template com cores trocadas", REESCREVA a spec com direção de arte própria do segmento.
 
 # LIMITE DE TAMANHO (IMPORTANTE — manter resposta enxuta)
 - Produza um JSON COMPACTO: no máximo ~3.500–4.000 tokens no total.
@@ -218,45 +247,59 @@ function normalizeSpec(raw: Record<string, unknown>, lead: LeadInput): Record<st
 
   const mood = normToken(design.layout_mood, ["minimal", "editorial", "bold", "organic", "premium", "playful"], "minimal");
   const archetype = normToken(design.layout_archetype, ["editorial", "corporate", "minimal", "luxury", "bold", "service_focused", "local_business"], "service_focused");
-  const heroVariant = normToken(design.hero_variant, ["split", "centered", "editorial", "statement", "service_first"], archetype === "editorial" || archetype === "luxury" ? "editorial" : archetype === "bold" ? "statement" : "split");
+  // Plano de componentes do cluster (7.1) — fornece fallbacks coerentes quando
+  // o modelo omitir/errar a variante. A spec guarda a escolha rica.
+  const cluster = getNicheDesign(segment).cluster;
+  const plan = componentPlanForCluster(cluster);
+  const heroVariant = normToken(design.hero_variant, ["split", "centered", "editorial", "statement", "service_first", "asymmetric", "layered", "collage", "typography_led", "cinematic"], plan.hero);
   const cardStyle = normToken(design.card_style, ["flat", "bordered", "elevated", "editorial"], archetype === "editorial" || archetype === "luxury" ? "editorial" : "bordered");
-  const buttonStyle = normToken(design.button_style, ["solid", "outline", "soft"], "solid");
+  const buttonStyle = normToken(design.button_style, ["solid", "outline", "soft", "ghost", "text", "accent"], plan.button);
   const navStyle = normToken(design.navigation_style, ["minimal", "centered", "boxed"], "minimal");
-  const ctaTreatment = normToken(design.cta_treatment, ["primary_section", "band", "inline"], archetype === "editorial" ? "inline" : "band");
-  const footerStyle = normToken(design.footer_style, ["simple", "editorial", "centered"], "simple");
+  const headerVariant = normToken(design.header_variant, ["solid", "glass", "floating", "editorial", "minimal", "transparent"], plan.header);
+  const ctaTreatment = normToken(design.cta_treatment, ["primary_section", "band", "inline", "split", "image", "immersive"], plan.cta);
+  const footerStyle = normToken(design.footer_style, ["multi_column", "large_cta", "editorial", "dark", "minimal", "centered", "simple"], plan.footer);
+  const galleryVariant = normToken(design.gallery_variant, ["grid", "editorial", "asymmetric", "masonry", "featured"], plan.gallery);
   const sectionSpacing = normToken(design.section_spacing, ["compact", "comfortable", "generous"], "comfortable");
   const density = normToken(design.visual_density, ["airy", "balanced", "dense"], "airy");
   const decorative = normToken(design.decorative_intensity, ["none", "low", "medium"], "low");
   const container = normToken(design.container_width, ["narrow", "standard", "wide"], "standard");
   const radiusScale = normToken(design.radius_scale, ["none", "small", "medium", "large"], "medium");
 
-  return {
-    business: {
-      name,
-      segment,
-      city: s(business.city) || s(lead.city) || "",
-      state: s(business.state) || s(lead.state) || "",
-      tagline: s(business.tagline) || null,
-      about: s(business.about) || null,
-    },
-    design_system: {
-      colors: cleanColors,
-      typography: cleanTypography,
-      visual_style: s(design.visual_style) || "",
-      layout_mood: mood,
-      layout_archetype: archetype,
-      hero_variant: heroVariant,
-      card_style: cardStyle,
-      button_style: buttonStyle,
-      navigation_style: navStyle,
-      cta_treatment: ctaTreatment,
-      footer_style: footerStyle,
-      section_spacing: sectionSpacing,
-      visual_density: density,
-      decorative_intensity: decorative,
-      container_width: container,
-      radius_scale: radiusScale,
-    },
+  // Back-compat: renderizadores antigos só conheciam os footer_style clássicos.
+  // Guardamos o valor rico em "footer_style" e um mapa de compat em "footer_visual".
+  const legacyFooter = footerStyle === "editorial" || footerStyle === "centered" || footerStyle === "simple" ? footerStyle : footerStyle === "minimal" ? "simple" : "centered";
+
+return {
+     business: {
+       name,
+       segment,
+       city: s(business.city) || s(lead.city) || "",
+       state: s(business.state) || s(lead.state) || "",
+       tagline: s(business.tagline) || null,
+       about: s(business.about) || null,
+     },
+     design_system: {
+       colors: cleanColors,
+       typography: cleanTypography,
+       visual_style: s(design.visual_style) || "",
+       layout_mood: mood,
+       layout_archetype: archetype,
+       hero_variant: heroVariant,
+       card_style: cardStyle,
+       button_style: buttonStyle,
+       navigation_style: navStyle,
+       header_variant: headerVariant,
+       cta_treatment: ctaTreatment,
+       footer_style: footerStyle,
+       footer_visual: legacyFooter,
+       gallery_variant: galleryVariant,
+       section_spacing: sectionSpacing,
+       visual_density: density,
+       decorative_intensity: decorative,
+       container_width: container,
+       radius_scale: radiusScale,
+       motion: normalizeMotionMeta(design.motion),
+     },
     pages: {
       home: true,
       services: !!asRecord(raw.pages).services,
@@ -351,6 +394,8 @@ ${businessFacts || "Nenhum dado factual além do nome."}
 `;
 
     const niche = getNicheDesign(lead.segment || lead.category || "");
+    const directive = getDesignDirective(lead.segment || lead.category || "");
+    const plan = componentPlanForCluster(niche.cluster);
     const imageNeeds = getImageNeeds(lead.segment || lead.category || "");
     const assets = await fetchAssetsForNiche(imageNeeds);
     const assetsAvailable = !!(assets.hero || assets.extras.length > 0);
@@ -389,13 +434,35 @@ ${businessFacts || "Nenhum dado factual além do nome."}
     let usedModel = "gemini-2.5-flash";
     let finalSpec: Record<string, unknown> | null = null;
     let lastIssues: string[] = [];
+    let lastScore = 100;
+    let lastQaScore = 100;
+    let lastQaFeedback: string[] = [];
 
-    // Até 2 tentativas: a 2ª é usada quando o quality gate reprova a 1ª.
-    for (let attempt = 0; attempt < 2 && !finalSpec; attempt++) {
-      const correction = attempt > 0 && lastIssues.length > 0
+    const planBlock = `Plano de componentes premium deste nicho (escolha coerente e NÃO repita a mesma combinação de outros segmentos):
+Header: ${plan.header} | Hero sugerido: ${plan.hero} | Botão: ${plan.button}
+CTA: ${plan.cta} | Footer: ${plan.footer} | Galeria: ${plan.gallery} | Imagem: ${plan.imageBlock}
+Composições recomendadas: ${plan.composition.join(", ")}
+Foco de imagem: ${plan.imageFocus.join(", ")}`;
+
+    // Até 4 tentativas: quality gate (anti-genérico), premium gate (7.1) e
+    // Premium QA (7.3) com refinement automático guiado pelos problemas.
+    for (let attempt = 0; attempt < 4 && !finalSpec; attempt++) {
+      const qualityIssuesList = attempt > 0 && lastIssues.length > 0
         ? `\n\nQUALITY GATE — problemas detectados na tentativa anterior. Corrija TODOS ao reescrever a spec completa:
 - ${lastIssues.join("\n- ")}
 Mantenha a direção de design por nicho e NUNCA invente dados.`
+        : "";
+      const premiumIssues = attempt > 0 && lastScore < PREMIUM_MIN
+        ? `\n\nPREMIUM GATE — pontuação de qualidade premium foi ${lastScore}/100 (mínimo ${PREMIUM_MIN}). Melhore:
+- Adicione ou diversifique seções com função (trust, features, process, faq, gallery).
+- Refine o design_system: cores completas, tipografia coerente, motion metadata (reveal/staggerCards/hoverLift/imageZoom/smoothScroll).
+- Inclua imagens (hero e galeria) quando a direção visual exigir.
+- Alongue a copy (evite textos genéricos ou muito curtos).`
+        : "";
+      const qaRefinement = attempt > 0 && lastQaScore < PREMIUM_QA_MIN && lastQaFeedback.length > 0
+        ? `\n\nPREMIUM QA (7.3) — crítica automática (Art Director/UX): score ${lastQaScore}/100 (mínimo ${PREMIUM_QA_MIN}). Corrija os problemas apontados preservando os dados reais:
+- ${lastQaFeedback.slice(0, 8).join("\n- ")}
+Pode mudar apenas o que for visual/estrutural (composição, variantes, imagens ilustrativas, layout, motion). NUNCA invente fatos.`
         : "";
       const user = `${userBase}
 
@@ -410,7 +477,22 @@ Tom de comunicação: ${niche.tone}
 CTA principal recomendado: "${niche.cta}"
 Seções recomendadas para considerar (escolha com função): ${niche.recommendedSections.join(", ")}
 Microinterações: ${niche.interactionNotes}
-${assetBrief}${correction}
+
+DIRETRIZ DE ARTE ESTRUTURADA (Design Directive — use como referência primária):
+Arquétipo de exibição: ${directive.displayArchetype}
+Personalidade da marca: ${directive.brandPersonality}
+Estratégia do hero: ${directive.heroStrategy}
+Elementos do hero (use pelo menos 3): ${directive.heroElements.join(", ")}
+Linguagem de imagem: ${directive.imageLanguage.join(", ")}
+Linguagem decorativa: ${directive.decorativeLanguage}
+Linguagem de motion: ${directive.motionLanguage}
+Ritmo de seções: ${directive.sectionRhythm}
+Estratégia do rodapé: ${directive.footerStrategy}
+Estratégia de navegação: ${directive.navStrategy}
+Motion metadata (incluir em design_system.motion): ${JSON.stringify(defaultMotionMeta())}
+
+${planBlock}
+${assetBrief}${qualityIssuesList}${premiumIssues}${qaRefinement}
 
 Gere a especificação JSON completa do site.`;
 
@@ -420,7 +502,7 @@ Gere a especificação JSON completa do site.`;
           user,
           temperature: 0.9,
           json: true,
-          maxOutputTokens: 5000,
+          maxOutputTokens: 5200,
         });
         raw = result.text;
         usedModel = result.model;
@@ -436,7 +518,7 @@ Gere a especificação JSON completa do site.`;
 
       const parsed = extractJson(raw);
       if (!parsed || Object.keys(parsed).length === 0) {
-        if (attempt === 0) {
+        if (attempt < 3) {
           lastIssues = ["JSON inválido ou vazio na resposta"];
           continue;
         }
@@ -448,11 +530,21 @@ Gere a especificação JSON completa do site.`;
 
       const normalized = normalizeSpec(parsed, lead);
       attachAssets(normalized);
-      lastIssues = qualityIssues(normalized as Parameters<typeof qualityIssues>[0], {
+      const specForQa = normalized as Parameters<typeof qualityIssues>[0];
+      lastIssues = qualityIssues(specForQa, {
         imageDriven: assetsAvailable && imageNeeds.imageDriven,
       });
-      if (lastIssues.length > 0 && attempt === 0) {
-        // Quality gate reprovou — regenera uma vez com as correções apontadas.
+      lastScore = premiumScore(specForQa);
+      const qa = premiumQA(specForQa);
+      lastQaScore = qa.score;
+      lastQaFeedback = qaIssuesForRefinement(specForQa);
+      if (lastIssues.length > 0 && attempt < 3) {
+        continue;
+      }
+      if (lastScore < PREMIUM_MIN && attempt < 3) {
+        continue;
+      }
+      if (qa.score < PREMIUM_QA_MIN && attempt < 3) {
         continue;
       }
       finalSpec = normalized;
@@ -460,13 +552,13 @@ Gere a especificação JSON completa do site.`;
 
     if (!finalSpec) {
       return new Response(
-        JSON.stringify({ error: "Qualidade insuficiente após regeneração.", issues: lastIssues }),
+        JSON.stringify({ error: "Qualidade insuficiente após regeneração.", issues: lastIssues, premium_score: lastScore, qa_score: lastQaScore }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     return new Response(
-      JSON.stringify({ spec: finalSpec, model: usedModel, status: "ok", quality_issues: lastIssues }),
+      JSON.stringify({ spec: finalSpec, model: usedModel, status: "ok", quality_issues: lastIssues, premium_score: lastScore, qa_score: lastQaScore }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {

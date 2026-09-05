@@ -8,6 +8,7 @@ import {
   ListChecks,
   Briefcase,
   Globe,
+  Settings,
 } from "lucide-react";
 import {
   Sidebar,
@@ -30,6 +31,7 @@ const items = [
   { title: "Serviços", url: "/services", icon: Briefcase },
   { title: "Sites", url: "/sites", icon: Globe },
   { title: "Histórico", url: "/history", icon: History },
+  { title: "Configurações", url: "/settings", icon: Settings },
 ];
 
 export function AppSidebar() {

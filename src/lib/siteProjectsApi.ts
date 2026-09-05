@@ -6,6 +6,8 @@ import { pickLeadForSpec } from "@/data/siteProjects";
 function rowToProject(row: unknown): SiteProjectRow | null {
   if (!row || typeof row !== "object") return null;
   const r = row as Record<string, unknown>;
+  const specRaw = r.spec && typeof r.spec === "object" && Object.keys(r.spec as object).length > 0 ? (r.spec as SiteSpec) : null;
+  const pubRaw = r.published_spec && typeof r.published_spec === "object" && Object.keys(r.published_spec as object).length > 0 ? (r.published_spec as SiteSpec) : null;
   return {
     id: String(r.id ?? ""),
     user_id: String(r.user_id ?? ""),
@@ -16,6 +18,10 @@ function rowToProject(row: unknown): SiteProjectRow | null {
     city: r.city ? String(r.city) : null,
     state: r.state ? String(r.state) : null,
     status: (r.status as SiteProjectRow["status"]) ?? "draft",
+    slug: r.slug ? String(r.slug) : null,
+    published_status: (r.published_status as SiteProjectRow["published_status"]) ?? "unpublished",
+    published_spec: pubRaw,
+    published_at: r.published_at ? String(r.published_at) : null,
     briefing: r.briefing && typeof r.briefing === "object" ? (r.briefing as Record<string, unknown>) : {},
     design_system: r.design_system && typeof r.design_system === "object" ? (r.design_system as Record<string, unknown>) : null,
     site_structure: r.site_structure && typeof r.site_structure === "object" ? (r.site_structure as Record<string, unknown>) : null,
@@ -25,11 +31,31 @@ function rowToProject(row: unknown): SiteProjectRow | null {
     assets: Array.isArray(r.assets) ? r.assets.filter((a): a is Record<string, unknown> => !!a && typeof a === "object") : [],
     generated_code: r.generated_code && typeof r.generated_code === "object" ? (r.generated_code as Record<string, unknown>) : {},
     settings: r.settings && typeof r.settings === "object" ? (r.settings as Record<string, unknown>) : {},
-    spec: r.spec && typeof r.spec === "object" && Object.keys(r.spec as object).length > 0 ? (r.spec as SiteSpec) : null,
+    spec: specRaw,
     ai_model: r.ai_model ? String(r.ai_model) : null,
     created_at: String(r.created_at ?? ""),
     updated_at: String(r.updated_at ?? ""),
   };
+}
+
+export function slugifyName(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+async function uniqueSlug(base: string): Promise<string> {
+  const root = slugifyName(base) || "site";
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const candidate = attempt === 0 ? root : `${root}-${attempt + 1}`;
+    const { data } = await supabase.from("site_projects").select("id").eq("slug", candidate).limit(1).maybeSingle();
+    if (!data) return candidate;
+  }
+  return `${root}-${Date.now().toString(36)}`;
 }
 
 export async function listSiteProjects(userId: string): Promise<SiteProjectRow[]> {
@@ -70,12 +96,14 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
   const name = String(rawName).trim() || "Novo site";
   const briefingMap = pickLeadForSpec(lead);
   const briefing = briefingMap as unknown as Json;
+  const slug = await uniqueSlug(name);
   const { data: created, error } = await supabase
     .from("site_projects")
     .insert({
       user_id: userId,
       lead_id: String(lead.id),
       name,
+      slug,
       company_name: String(briefingMap.name ?? name),
       segment: briefingMap.segment ? String(briefingMap.segment) : null,
       city: briefingMap.city ? String(briefingMap.city) : null,
@@ -177,6 +205,113 @@ export async function appendSiteChatMessages(projectId: string, userId: string, 
   }));
   const { error } = await supabase.from("site_chat_messages").insert(rows);
   if (error) throw new Error(error.message);
+}
+
+// Publicação atômica: copia o draft atual para published_spec e marca publicado.
+export async function publishSiteProject(projectId: string, spec: SiteSpec): Promise<void> {
+  const payload = {
+    published_status: "published" as const,
+    published_spec: spec as unknown as Json,
+    published_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("site_projects").update(payload).eq("id", projectId);
+  if (error) throw new Error(error.message);
+}
+
+export async function unpublishSiteProject(projectId: string): Promise<void> {
+  const { error } = await supabase.from("site_projects").update({ published_status: "unpublished" as const }).eq("id", projectId);
+  if (error) throw new Error(error.message);
+}
+
+export interface PublicSiteData {
+  slug: string;
+  name: string;
+  published_spec: SiteSpec;
+  published_at: string | null;
+}
+
+// Acesso público via RPC (somente publicado; nada privado é exposto).
+export async function fetchPublicSite(slug: string): Promise<PublicSiteData | null> {
+  const { data, error } = await supabase.rpc("get_public_site", { p_slug: slug });
+  if (error) throw new Error(error.message);
+  if (!Array.isArray(data) || data.length === 0 || !data[0]?.published_spec) return null;
+  const row = data[0];
+  return {
+    slug: String(row.slug ?? slug),
+    name: String(row.name ?? ""),
+    published_spec: row.published_spec as SiteSpec,
+    published_at: row.published_at ? String(row.published_at) : null,
+  };
+}
+
+export interface SiteVersion {
+  id: string;
+  version_number: number;
+  spec: SiteSpec;
+  change_summary: string | null;
+  created_at: string;
+}
+
+function versionRowToVersion(row: Record<string, unknown>): SiteVersion {
+  return {
+    id: String(row.id ?? ""),
+    version_number: Number(row.version_number ?? 0),
+    spec: (row.spec && typeof row.spec === "object" ? row.spec : {}) as SiteSpec,
+    change_summary: row.change_summary ? String(row.change_summary) : null,
+    created_at: String(row.created_at ?? ""),
+  };
+}
+
+// Resumo simples de alteração baseado em comparação estrutural (sem IA).
+export function diffSummary(before: SiteSpec | null, after: SiteSpec): string {
+  if (!before) return "Versão inicial";
+  const areas: Array<[keyof SiteSpec, string]> = [
+    ["content", "Conteúdo"],
+    ["design_system", "Identidade visual"],
+    ["sections", "Seções"],
+    ["calls_to_action", "CTAs"],
+    ["navigation", "Navegação"],
+    ["seo", "SEO"],
+    ["pages", "Estrutura"],
+  ];
+  const changed = areas.filter(([k]) => JSON.stringify(before[k]) !== JSON.stringify(after[k])).map(([, label]) => label);
+  return changed.length > 0 ? `${changed.slice(0, 3).join(", ")} alterado(s)` : "Alterações no projeto";
+}
+
+export async function listSiteVersions(projectId: string): Promise<SiteVersion[]> {
+  const { data, error } = await supabase
+    .from("site_project_versions")
+    .select("id,version_number,spec,change_summary,created_at")
+    .order("version_number", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => versionRowToVersion(r as unknown as Record<string, unknown>));
+}
+
+// Cria uma versão apenas quando há alteração real em relação à última versão.
+export async function createSiteVersion(projectId: string, userId: string, spec: SiteSpec, summary?: string): Promise<boolean> {
+  const { data: last, error: lastErr } = await supabase
+    .from("site_project_versions")
+    .select("version_number,spec")
+    .eq("project_id", projectId)
+    .order("version_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastErr) throw new Error(lastErr.message);
+
+  const prev = last && last.spec && typeof last.spec === "object" ? (last.spec as SiteSpec) : null;
+  if (prev && JSON.stringify(prev) === JSON.stringify(spec)) return false; // sem alteração real
+
+  const nextNumber = last ? Number(last.version_number) + 1 : 1;
+  const changeSummary = summary || diffSummary(prev, spec);
+  const { error } = await supabase.from("site_project_versions").insert({
+    project_id: projectId,
+    user_id: userId,
+    version_number: nextNumber,
+    spec: spec as unknown as Json,
+    change_summary: changeSummary.slice(0, 240),
+  });
+  if (error) throw new Error(error.message);
+  return true;
 }
 
 export async function deleteSiteProject(id: string): Promise<void> {

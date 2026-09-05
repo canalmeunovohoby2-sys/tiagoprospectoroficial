@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye } from "lucide-react";
+import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,11 +10,15 @@ import type { SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual } from "@/data/siteProjects";
 import {
   fetchSiteProject, generateSiteSpec, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
-  loadSiteChatMessages, appendSiteChatMessages,
+  loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
+  createSiteVersion,
 } from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
+import { SiteVersionsDialog } from "@/components/sites/editor/SiteVersionsDialog";
 import { supabase } from "@/integrations/supabase/client";
+import { exportProjectZip, saveBlob, fetchImageAsDataUrl } from "@/lib/siteDownload";
+import { buildCommercialPdf, pdfFileName } from "@/lib/sitePdf";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -98,6 +102,102 @@ export default function SiteProjectPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiMessages, setAiMessages] = useState<ChatMessage[]>([]);
   const [aiHistory, setAiHistory] = useState<SiteSpec[]>([]);
+  const [busyAction, setBusyAction] = useState<"pdf" | "zip" | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [unpublishing, setUnpublishing] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [pendingSummary, setPendingSummary] = useState<string | undefined>(undefined);
+
+  function handleRestoreFromVersion(spec: SiteSpec, version: { version_number: number }) {
+    setDraftSpec(normalizeSpec(spec));
+    setDirty(true);
+    setPendingSummary(`Restauração de v${version.version_number}`);
+    toast.info(`Versão v${version.version_number} restaurada como rascunho — revise e salve.`);
+  }
+
+  const publicUrl = (): string | null => (project?.slug ? `${window.location.origin}/public/${project.slug}` : null);
+
+  async function handlePublish() {
+    if (publishing || unpublishing) return;
+    const specData = currentSpec();
+    if (!specData || !project?.id) { toast.error("Gere o site antes de publicar."); return; }
+    setPublishing(true);
+    try {
+      await publishSiteProject(project.id, specData);
+      toast.success("Site publicado");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao publicar");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function handleUnpublish() {
+    if (publishing || unpublishing) return;
+    if (!project?.id) return;
+    setUnpublishing(true);
+    try {
+      await unpublishSiteProject(project.id);
+      toast.success("Site despublicado");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao despublicar");
+    } finally {
+      setUnpublishing(false);
+    }
+  }
+
+  async function copyPublicLink() {
+    const url = publicUrl();
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Link copiado");
+    } catch {
+      toast.error("Não foi possível copiar o link");
+    }
+  }
+
+  const currentSpec = (): SiteSpec | null =>
+    project?.spec && Object.keys(project.spec as object).length > 0 ? normalizeSpec(draftSpec) : null;
+
+  async function handlePdf() {
+    if (busyAction) return;
+    const specData = currentSpec();
+    if (!specData) { toast.error("Gere o site antes de exportar a proposta."); return; }
+    setBusyAction("pdf");
+    try {
+      const heroRaw = (specData.content?.hero as Record<string, unknown> | undefined)?.image;
+      const heroUrl = typeof heroRaw === "string" ? heroRaw
+        : heroRaw && typeof heroRaw === "object" && typeof (heroRaw as Record<string, unknown>).url === "string" ? (heroRaw as Record<string, unknown>).url as string
+        : null;
+      const heroData = heroUrl ? await fetchImageAsDataUrl(heroUrl) : null;
+      const { buffer, fileName } = await buildCommercialPdf(specData as never, heroData ? { dataUrl: heroData } : null);
+      saveBlob(new Blob([buffer], { type: "application/pdf" }), fileName);
+      toast.success("Proposta em PDF gerada");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao gerar PDF");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleZip() {
+    if (busyAction) return;
+    const specData = currentSpec();
+    if (!specData) { toast.error("Gere o site antes de baixar o projeto."); return; }
+    setBusyAction("zip");
+    try {
+      const { blob, name } = await exportProjectZip(specData as never);
+      saveBlob(blob, name);
+      toast.success("Projeto baixado");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao gerar o ZIP");
+    } finally {
+      setBusyAction(null);
+    }
+  }
 
   async function load() {
     if (!id) return;
@@ -166,7 +266,11 @@ export default function SiteProjectPage() {
       const briefing = (project.briefing ?? {}) as Record<string, unknown>;
       const { spec, model } = await generateSiteSpec(briefing);
       await saveGeneratedSite(project.id, spec, model);
-      toast.success("EspecificaÃ§Ã£o gerada e salva");
+      if (user?.id) {
+        await createSiteVersion(project.id, user.id, spec, pendingSummary).catch(() => {});
+        setPendingSummary(undefined);
+      }
+      toast.success("Especificação gerada e salva");
       await load();
     } catch (e) {
       const message = friendlyAiError(e);
@@ -272,17 +376,23 @@ export default function SiteProjectPage() {
   async function saveEdits() {
     if (!project) return;
     setSaving(true);
+    const savedSpec = draftSpec;
+    const summary = pendingSummary;
     try {
-      await updateProjectSpec(project.id, draftSpec);
-      toast.success("AlteraÃ§Ãµes salvas");
+      await updateProjectSpec(project.id, savedSpec);
+      if (user?.id) {
+        await createSiteVersion(project.id, user.id, savedSpec, summary).catch(() => {});
+      }
+      toast.success("Alterações salvas");
       setDirty(false);
+      setPendingSummary(undefined);
       await load();
       if (project.id) {
         const fresh = await fetchSiteProject(project.id);
         if (fresh?.spec) setDraftSpec(normalizeSpec(fresh.spec as SiteSpec | Record<string, unknown> | null));
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar alteraÃ§Ãµes");
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar alterações");
     } finally {
       setSaving(false);
     }
@@ -319,6 +429,9 @@ export default function SiteProjectPage() {
 
   return (
     <div className={editMode ? "p-4 lg:p-6" : "p-6 lg:p-8 max-w-7xl mx-auto space-y-6"}>
+      {versionsOpen && project && (
+        <SiteVersionsDialog projectId={project.id} onClose={() => setVersionsOpen(false)} onRestore={handleRestoreFromVersion} />
+      )}
       <div>
         <Link to="/sites" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2">
           <ArrowLeft className="h-3 w-3" /> Sites
@@ -337,6 +450,11 @@ export default function SiteProjectPage() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="outline" className="text-xs">{statusLabel(project.status)}</Badge>
+            {hasSpec && (
+              <Button variant="outline" size="sm" onClick={() => setVersionsOpen(true)} title="Histórico de versões">
+                <HistoryIcon className="h-3.5 w-3.5 mr-1" /> Histórico
+              </Button>
+            )}
             {editMode ? (
               <>
                 <span className={`inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border ${dirty ? "border-amber-400/50 text-amber-500 bg-amber-500/10" : "border-border/60 text-muted-foreground"}`}>
@@ -366,6 +484,58 @@ export default function SiteProjectPage() {
           </div>
         </div>
       </div>
+
+      {hasSpec && project.published_status === "published" && project.slug && (
+        <Card className="p-3.5 flex flex-wrap items-center justify-between gap-3 border-emerald-500/30 bg-emerald-500/5">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold flex items-center gap-2"><Globe className="h-4 w-4 text-emerald-600" /> Site publicado</p>
+            <p className="text-xs font-mono text-muted-foreground truncate max-w-full">{publicUrl()}</p>
+            {project.published_at && <p className="text-[11px] text-muted-foreground">Publicado em {new Date(project.published_at).toLocaleString("pt-BR")}</p>}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" variant="outline" onClick={copyPublicLink}><Copy className="h-3.5 w-3.5 mr-1" /> Copiar link</Button>
+            <Button size="sm" variant="outline" onClick={() => { const u = publicUrl(); if (u) window.open(u, "_blank", "noopener"); }}>
+              <ExternalLink className="h-3.5 w-3.5 mr-1" /> Abrir site
+            </Button>
+            <Button size="sm" variant="outline" onClick={handlePublish} disabled={publishing || unpublishing}>
+              {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Rocket className="h-3.5 w-3.5 mr-1" />} Publicar nova versão
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleUnpublish} disabled={unpublishing}>
+              {unpublishing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <X className="h-3.5 w-3.5 mr-1" />} Despublicar
+            </Button>
+          </div>
+        </Card>
+      )}
+      {hasSpec && project.published_status !== "published" && (
+        <Card className="p-3.5 flex flex-wrap items-center justify-between gap-3 border-primary/20 bg-primary/5">
+          <div>
+            <p className="text-sm font-semibold">Publicação</p>
+            <p className="text-xs text-muted-foreground">Ao publicar, esta versão fica disponível na URL pública. Alterações futuras exigem nova publicação.</p>
+          </div>
+          <Button size="sm" onClick={handlePublish} disabled={publishing}>
+            {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Rocket className="h-3.5 w-3.5 mr-1" />} Publicar site
+          </Button>
+        </Card>
+      )}
+
+      {hasSpec && (
+        <Card className="p-3.5 flex flex-wrap items-center justify-between gap-3 border-primary/20 bg-primary/5">
+          <div>
+            <p className="text-sm font-semibold">Exportar projeto</p>
+            <p className="text-xs text-muted-foreground">Proposta comercial em PDF e arquivo completo do site (versão atual).</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" variant="outline" onClick={handlePdf} disabled={!!busyAction}>
+              {busyAction === "pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <FileText className="h-3.5 w-3.5 mr-1" />}
+              Gerar proposta PDF
+            </Button>
+            <Button size="sm" onClick={handleZip} disabled={!!busyAction}>
+              {busyAction === "zip" ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <FolderDown className="h-3.5 w-3.5 mr-1" />}
+              Baixar projeto
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {project.status === "error" && !editMode && (
         <Card className="p-4 border-amber-500/40 bg-amber-500/5 flex items-start gap-3">

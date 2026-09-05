@@ -1,294 +1,224 @@
-// Camada de IA compartilhada das Edge Functions do LeadHunter/Prospector.
-// Ponto único de acesso a provedores de IA:
-//   Application → AI Adapter → Provider (gemini | nvidia)
-//
-// - Gemini: API oficial generativelanguage.googleapis.com (secret GEMINI_API_KEY).
-// - NVIDIA NIM: endpoint compatível OpenAI (secret NVIDIA_API_KEY), modelo
-//   deepseek-ai/deepseek-v4-flash-0731.
-//
-// Nenhuma edge function implementa HTTP específico de provider.
+// AI Gateway — camada única e desacoplada de provedores (nvidia|deepseek|openai|gemini).
+// Config por secrets/edge env: AI_PROVIDER, AI_FALLBACK_PROVIDER, AI_MODEL,
+// AI_TEMPERATURE, AI_TOP_P, AI_MAX_TOKENS, AI_REASONING_EFFORT, AI_TIMEOUT_MS,
+// AI_MAX_RETRIES e por provider (<PROVIDER>_API_KEY/<PROVIDER>_MODEL).
+// Funções de negócio usam apenas generateText/extractJson.
 
 export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 export const DEFAULT_NVIDIA_MODEL = "deepseek-ai/deepseek-v4-flash-0731";
+export const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
+export const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 export const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
-
+export const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+export const OPENAI_BASE_URL = "https://api.openai.com/v1";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_REQUEST_TIMEOUT_MS = 55_000;
-const NVIDIA_REQUEST_TIMEOUT_MS = 150_000;
 
-export type ProviderName = "gemini" | "nvidia";
-export type AiKind = "missing_key" | "rate_limit" | "auth" | "bad_request" | "timeout" | "empty" | "upstream";
+export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini";
+export type AiKind = "missing_key" | "rate_limit" | "auth" | "bad_request" | "timeout" | "empty" | "upstream" | "config";
+export interface AIMessage { role: "system" | "user"; content: string }
 
 export class AiError extends Error {
-  status: number;
-  kind: AiKind;
-  detail?: string;
-  provider?: string;
-
+  status: number; kind: AiKind; detail?: string; provider?: string;
   constructor(message: string, status: number, kind: AiKind, detail?: string, provider?: string) {
-    super(message);
-    this.status = status;
-    this.kind = kind;
-    this.detail = detail;
-    this.provider = provider;
+    super(message); this.status = status; this.kind = kind; this.detail = detail; this.provider = provider;
   }
 }
+export class AIProviderError extends AiError {}
+export class AIProviderTimeoutError extends AIProviderError {
+  constructor(detail?: string, provider?: string) { super("O provedor de IA excedeu o tempo de resposta.", 504, "timeout", detail, provider); }
+}
+export class AIProviderRateLimitError extends AIProviderError {
+  constructor(detail?: string, provider?: string) { super("Limite de uso do provedor de IA atingido. Tente novamente em instantes.", 429, "rate_limit", detail, provider); }
+}
+export class AIProviderUnavailableError extends AIProviderError {
+  constructor(status: number, detail?: string, provider?: string) { super(`Provedor de IA indisponível (HTTP ${status}).`, status, "upstream", detail, provider); }
+}
+export class AIProviderConfigurationError extends AIProviderError {
+  constructor(message: string, provider?: string) { super(message, 500, "config", undefined, provider); }
+}
 
+export interface NormalizedAIResponse { content: string; provider: ProviderName; model: string; usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }; }
 export interface GenerateTextOptions {
-  system?: string;
-  user: string;
-  temperature?: number;
-  json?: boolean;
-  maxOutputTokens?: number;
-  model?: string;
-  provider?: ProviderName | "auto";
-  timeoutMs?: number;
+  system?: string; user: string; temperature?: number; topP?: number; json?: boolean;
+  maxOutputTokens?: number; model?: string; provider?: ProviderName | "auto";
+  timeoutMs?: number; reasoningEffort?: "low" | "medium" | "high"; fallbackProvider?: ProviderName;
 }
+export interface GenerateTextResult { text: string; model: string; provider: ProviderName; fallbackUsed?: boolean }
 
-export interface GenerateTextResult {
-  text: string;
-  model: string;
-  provider: ProviderName;
-}
-
+const TRANSIENT = new Set<AiKind>(["rate_limit", "upstream", "timeout"]);
 function getEnv(key: string): string | undefined {
   const deno = (globalThis as unknown as { Deno?: { env: { get(k: string): string | undefined } } }).Deno;
   return deno?.env?.get(key);
 }
-
-function isObj(v: unknown): v is Record<string, unknown> {
-  return !!v && typeof v === "object" && !Array.isArray(v);
+function numEnv(key: string, fallback: number): number {
+  const raw = Number(getEnv(key) ?? ""); return Number.isFinite(raw) && raw > 0 ? raw : fallback;
 }
-
-function asTextFromParts(content: unknown): string {
-  // OpenAI-compatible content pode vir como string ou array de parts.
+function textFrom(content: unknown): string {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((p) => {
-        if (typeof p === "string") return p;
-        if (isObj(p) && typeof p.text === "string") return p.text;
-        return "";
-      })
-      .join("");
-  }
+  if (Array.isArray(content)) return content.map((p) => (typeof p === "string" ? p : p && typeof p === "object" && typeof (p as { text?: unknown }).text === "string" ? (p as { text: string }).text : "")).join("");
   return "";
 }
-
-function normalizeStatusError(provider: ProviderName, status: number, rawDetail: string): AiError {
-  const detail = (rawDetail || "").slice(0, 400);
-  if (status === 401 || status === 403) {
-    return new AiError(
-      provider === "nvidia" ? "Credencial NVIDIA inválida ou sem autorização. Verifique a secret NVIDIA_API_KEY." : "Credencial Gemini inválida ou sem permissão para este modelo.",
-      status,
-      "auth",
-      detail,
-      provider,
-    );
-  }
-  if (status === 429) {
-    return new AiError("Limite de uso do provedor de IA atingido. Tente novamente em instantes.", 429, "rate_limit", detail, provider);
-  }
-  if (status === 408 || status === 504) {
-    return new AiError("O provedor de IA excedeu o tempo de resposta.", status, "timeout", detail, provider);
-  }
-  if (status >= 500) {
-    return new AiError(`Provedor de IA indisponível (HTTP ${status}).`, status, "upstream", detail, provider);
-  }
-  if (status === 400) {
-    return new AiError("Requisição de IA rejeitada (verifique o modelo/configuração).", 400, "bad_request", detail, provider);
-  }
-  return new AiError(`Falha na chamada do provedor de IA (HTTP ${status}).`, status, "upstream", detail, provider);
+function normError(provider: ProviderName, status: number, raw: string): AIProviderError {
+  const d = (raw || "").slice(0, 400);
+  if (status === 401 || status === 403) return new AIProviderError(`Credencial ${provider} inválida ou sem autorização.`, status, "auth", d, provider);
+  if (status === 429) return new AIProviderRateLimitError(d, provider);
+  if (status === 408 || status === 504) return new AIProviderTimeoutError(d, provider);
+  if (status >= 500 || status === 529) return new AIProviderUnavailableError(status, d, provider);
+  if (status === 400) return new AIProviderError("Requisição de IA rejeitada (verifique o modelo/configuração).", 400, "bad_request", d, provider);
+  return new AIProviderError(`Falha no provedor (HTTP ${status}).`, status, "upstream", d, provider);
 }
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// ---------------------------------------------------------------------------
-// GEMINI
-// ---------------------------------------------------------------------------
-
-async function geminiGenerateText(opts: GenerateTextOptions, model: string): Promise<GenerateTextResult> {
-  const apiKey = getEnv("GEMINI_API_KEY");
-  if (!apiKey) {
-    throw new AiError("GEMINI_API_KEY ausente. Configure o secret GEMINI_API_KEY nas Edge Functions do Supabase.", 500, "missing_key", undefined, "gemini");
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GEMINI_REQUEST_TIMEOUT_MS);
-  try {
-    const generationConfig: Record<string, unknown> = {
-      temperature: opts.temperature ?? 0.85,
-      maxOutputTokens: opts.maxOutputTokens ?? 4096,
-    };
-    if (opts.json) generationConfig.responseMimeType = "application/json";
-
-    const payload: Record<string, unknown> = {
-      contents: [{ role: "user", parts: [{ text: opts.user }] }],
-      generationConfig,
-    };
-    if (opts.system) payload.systemInstruction = { parts: [{ text: opts.system }] };
-
-    const res = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const detail = (await res.text().catch(() => "")).slice(0, 600);
-      throw normalizeStatusError("gemini", res.status, detail);
+async function fetchRetry(url: string, init: RequestInit, provider: ProviderName, timeoutMs: number, maxRetries: number): Promise<Response> {
+  const retries = Math.max(0, Math.min(maxRetries, 3));
+  for (let attempt = 0; ; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    let res: Response | null = null;
+    let err: AIProviderError | null = null;
+    try {
+      res = await fetch(url, { ...init, signal: ctrl.signal });
+    } catch (e) {
+      const aborted = e instanceof Error && (e.name === "AbortError" || ctrl.signal.aborted);
+      err = aborted ? new AIProviderTimeoutError(undefined, provider) : new AIProviderError("Erro de rede no provedor de IA.", 0, "upstream", e instanceof Error ? e.message : "network", provider);
+    } finally {
+      clearTimeout(timer);
     }
-
-    const data = await res.json().catch(() => null);
-    const candidates = Array.isArray((data as { candidates?: unknown })?.candidates)
-      ? (data as { candidates: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates
-      : [];
-    const raw = candidates
-      .map((c) => c?.content?.parts?.map((p) => p?.text ?? "").join("") ?? "")
-      .join("")
-      .trim();
-    if (!raw) throw new AiError("O provedor retornou resposta vazia.", 502, "empty", undefined, "gemini");
-    return { text: raw, model, provider: "gemini" };
-  } catch (e) {
-    if (e instanceof AiError) throw e;
-    if (controller.signal.aborted) throw new AiError("Tempo limite da requisição de IA excedido. Tente novamente.", 504, "timeout", undefined, "gemini");
-    throw new AiError(e instanceof Error ? e.message : "Erro inesperado na chamada de IA", 500, "upstream", undefined, "gemini");
-  } finally {
-    clearTimeout(timer);
+    if (err) {
+      if (attempt >= retries) throw err;
+      await sleep(500 * (attempt + 1));
+      continue;
+    }
+    const transient = res!.status === 429 || res!.status === 529 || res!.status === 408 || res!.status === 504 || res!.status >= 500;
+    if (!transient || attempt >= retries) return res!;
+    const d = await res!.text().catch(() => "");
+    err = normError(provider, res!.status, d);
+    if (attempt < retries) await sleep(500 * (attempt + 1));
+    else throw err;
   }
 }
 
-// ---------------------------------------------------------------------------
-// NVIDIA NIM (DeepSeek V4 Flash 0731) — compatível com OpenAI Chat Completions
-// ---------------------------------------------------------------------------
+function cfgFor(provider: ProviderName): { apiKeyEnv: string; modelEnv: string; defaultModel: string; baseUrl: string; defaultTimeout: number; type: "openai" | "gemini" } {
+  switch (provider) {
+    case "nvidia": return { apiKeyEnv: "NVIDIA_API_KEY", modelEnv: "NVIDIA_MODEL", defaultModel: DEFAULT_NVIDIA_MODEL, baseUrl: NVIDIA_BASE_URL, defaultTimeout: 150_000, type: "openai" };
+    case "deepseek": return { apiKeyEnv: "DEEPSEEK_API_KEY", modelEnv: "DEEPSEEK_MODEL", defaultModel: DEFAULT_DEEPSEEK_MODEL, baseUrl: DEEPSEEK_BASE_URL, defaultTimeout: 120_000, type: "openai" };
+    case "openai": return { apiKeyEnv: "OPENAI_API_KEY", modelEnv: "OPENAI_MODEL", defaultModel: DEFAULT_OPENAI_MODEL, baseUrl: OPENAI_BASE_URL, defaultTimeout: 120_000, type: "openai" };
+    case "gemini": return { apiKeyEnv: "GEMINI_API_KEY", modelEnv: "GEMINI_MODEL", defaultModel: DEFAULT_GEMINI_MODEL, baseUrl: GEMINI_BASE, defaultTimeout: 55_000, type: "gemini" };
+  }
+}
 
-function nvidiaBody(opts: GenerateTextOptions, model: string): Record<string, unknown> {
-  const messages: Array<{ role: string; content: string }> = [];
-  if (opts.system) messages.push({ role: "system", content: opts.system });
-  messages.push({ role: "user", content: opts.user });
+async function parseOpenAi(res: Response, provider: ProviderName, model: string): Promise<NormalizedAIResponse> {
+  const data = (await res.json().catch(() => null)) as { choices?: Array<{ message?: Record<string, unknown> }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } } | null;
+  if (!data) throw new AIProviderError("Resposta inválida do provedor.", 502, "empty", undefined, provider);
+  const msg = data.choices?.[0]?.message && typeof data.choices[0].message === "object" ? data.choices[0].message : {};
+  const content = textFrom(msg.content).trim();
+  if (!content) throw new AIProviderError("O provedor retornou resposta vazia.", 502, "empty", undefined, provider);
+  return { content, provider, model, usage: data.usage ? { inputTokens: data.usage.prompt_tokens, outputTokens: data.usage.completion_tokens, totalTokens: data.usage.total_tokens } : undefined };
+}
 
-  return {
-    model,
-    messages,
-    temperature: 1,
-    top_p: 0.95,
-    max_tokens: opts.maxOutputTokens ?? 16384,
-    stream: false,
+async function openAiLike(opts: { messages: AIMessage[]; temperature: number; topP: number; maxTokens: number; json: boolean; provider: ProviderName; apiKey: string; baseUrl: string; model: string; timeoutMs: number; maxRetries: number; reasoningEffort?: string }): Promise<NormalizedAIResponse> {
+  const body: Record<string, unknown> = { model: opts.model, messages: opts.messages, temperature: opts.temperature, top_p: opts.topP, max_tokens: opts.maxTokens, stream: false };
+  if (opts.json && (opts.provider === "openai" || opts.provider === "deepseek")) body.response_format = { type: "json_object" };
+  if (opts.provider === "nvidia") {
+    const kwargs: Record<string, unknown> = {};
+    if (getEnv("NVIDIA_THINKING") !== "false") {
+      kwargs[getEnv("NVIDIA_THINKING_PARAM") ?? "enable_thinking"] = true;
+      if (opts.reasoningEffort === "high" || opts.reasoningEffort === "medium" || opts.reasoningEffort === "low") kwargs.reasoning_effort = opts.reasoningEffort;
+    }
+    if (Object.keys(kwargs).length) body.chat_template_kwargs = kwargs;
+  }
+  const endpoint = `${opts.baseUrl}/chat/completions`;
+  const call = async (b: Record<string, unknown>): Promise<NormalizedAIResponse> => {
+    const res = await fetchRetry(endpoint, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.apiKey}` }, body: JSON.stringify(b) }, opts.provider, opts.timeoutMs, opts.maxRetries);
+    if (res.ok) return parseOpenAi(res, opts.provider, opts.model);
+    const detail = await res.text().catch(() => "");
+    if (opts.provider === "nvidia" && res.status === 400 && /chat_template_kwargs|unknown argument|reasoning_effort|extra_for_body/i.test(detail)) {
+      const b2 = { ...b }; delete b2.chat_template_kwargs;
+      const res2 = await fetchRetry(endpoint, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.apiKey}` }, body: JSON.stringify(b2) }, opts.provider, opts.timeoutMs, 0);
+      if (res2.ok) return parseOpenAi(res2, opts.provider, opts.model);
+    }
+    throw normError(opts.provider, res.status, detail);
   };
+  return call(body);
 }
 
-async function nvidiaGenerateText(opts: GenerateTextOptions, model: string): Promise<GenerateTextResult> {
-  const apiKey = getEnv("NVIDIA_API_KEY");
-  if (!apiKey) {
-    throw new AiError("NVIDIA_API_KEY ausente. Configure o secret NVIDIA_API_KEY nas Edge Functions do Supabase.", 500, "missing_key", undefined, "nvidia");
-  }
-
-  const baseUrl = getEnv("NVIDIA_BASE_URL") ?? NVIDIA_BASE_URL;
-  const controller = new AbortController();
-  const timeoutMs = opts.timeoutMs ?? (Number(getEnv("NVIDIA_TIMEOUT_MS") ?? "") || NVIDIA_REQUEST_TIMEOUT_MS);
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  const base = nvidiaBody(opts, model);
-  // Thinking configurável. O parâmetro correto depende do modelo NIM:
-  //   - Nemotron: enable_thinking (padrão)
-  //   - DeepSeek: thinking
-  // Ajuste via NVIDIA_THINKING_PARAM quando necessário.
-  const thinkingEnabled = getEnv("NVIDIA_THINKING") !== "false";
-  let chatTemplateKwargs: Record<string, unknown> | undefined;
-  if (thinkingEnabled) {
-    const param = getEnv("NVIDIA_THINKING_PARAM") ?? "enable_thinking";
-    chatTemplateKwargs = { [param]: true };
-    const effort = getEnv("NVIDIA_REASONING_EFFORT");
-    if (effort === "high" || effort === "medium" || effort === "low") {
-      chatTemplateKwargs.reasoning_effort = effort;
-    }
-  }
-  const withReasoning = chatTemplateKwargs ? { ...base, chat_template_kwargs: chatTemplateKwargs } : base;
-
-  const doPost = async (body: Record<string, unknown>): Promise<Response> =>
-    fetch(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-
-  try {
-    let res = await doPost(withReasoning);
-    if (res.status === 400) {
-      const errText = await res.text().catch(() => "");
-      const lower = errText.toLowerCase();
-      // Parâmetro de reasoning não suportado → tenta sem ele (uma única vez).
-      if (lower.includes("chat_template_kwargs") || lower.includes("unknown argument") || lower.includes("extra_for_body") || lower.includes("reasoning_effort")) {
-        res = await doPost(base);
-      } else {
-        throw normalizeStatusError("nvidia", 400, errText);
-      }
-    }
-
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      throw normalizeStatusError("nvidia", res.status, detail);
-    }
-
-    const data = await res.json().catch(() => null);
-    const choice = Array.isArray((data as { choices?: unknown })?.choices)
-      ? (data as { choices: Array<{ message?: Record<string, unknown> }> }).choices[0]
-      : undefined;
-    const message = isObj(choice?.message) ? choice.message : {};
-    const raw = asTextFromParts(message.content).trim();
-    // reasoning / reasoning_content podem existir — são descartados de propósito.
-    if (!raw) throw new AiError("O provedor retornou resposta vazia.", 502, "empty", undefined, "nvidia");
-    return { text: raw, model, provider: "nvidia" };
-  } catch (e) {
-    if (e instanceof AiError) throw e;
-    if (controller.signal.aborted) throw new AiError("Tempo limite da requisição de IA excedido.", 504, "timeout", undefined, "nvidia");
-    throw new AiError(e instanceof Error ? e.message : "Erro inesperado na chamada de IA", 500, "upstream", undefined, "nvidia");
-  } finally {
-    clearTimeout(timer);
-  }
+async function geminiLike(opts: { messages: AIMessage[]; temperature: number; maxTokens: number; json: boolean; provider: ProviderName; apiKey: string; model: string; timeoutMs: number; maxRetries: number }): Promise<NormalizedAIResponse> {
+  const gen: Record<string, unknown> = { temperature: opts.temperature, maxOutputTokens: opts.maxTokens };
+  if (opts.json) gen.responseMimeType = "application/json";
+  const payload: Record<string, unknown> = { contents: [{ role: "user", parts: [{ text: opts.messages[opts.messages.length - 1]?.content ?? "" }] }], generationConfig: gen };
+  const sys = opts.messages.find((m) => m.role === "system")?.content;
+  if (sys) payload.systemInstruction = { parts: [{ text: sys }] };
+  const res = await fetchRetry(`${GEMINI_BASE}/models/${opts.model}:generateContent`, { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": opts.apiKey }, body: JSON.stringify(payload) }, opts.provider, opts.timeoutMs, opts.maxRetries);
+  if (!res.ok) { const d = await res.text().catch(() => ""); throw normError(opts.provider, res.status, d); }
+  const data = (await res.json().catch(() => null)) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> } | null;
+  const raw = Array.isArray(data?.candidates) ? data.candidates.map((c) => c?.content?.parts?.map((p) => p?.text ?? "").join("") ?? "").join("") : "";
+  const content = raw.trim();
+  if (!content) throw new AIProviderError("O provedor retornou resposta vazia.", 502, "empty", undefined, opts.provider);
+  return { content, provider: opts.provider, model: opts.model };
 }
 
-// ---------------------------------------------------------------------------
-// ADAPTER (ponto único)
-// ---------------------------------------------------------------------------
-
-function resolveProvider(opts: GenerateTextOptions): { provider: ProviderName; model: string } {
+function resolveProvider(opts: GenerateTextOptions): ProviderName {
   const asked = opts.provider === "auto" || !opts.provider ? (getEnv("AI_PROVIDER") ?? "gemini") : opts.provider;
-  if (asked === "nvidia") {
-    return { provider: "nvidia", model: opts.model ?? getEnv("NVIDIA_MODEL") ?? DEFAULT_NVIDIA_MODEL };
-  }
-  return { provider: "gemini", model: opts.model ?? getEnv("GEMINI_MODEL") ?? DEFAULT_GEMINI_MODEL };
+  if (asked === "nvidia" || asked === "deepseek" || asked === "openai" || asked === "gemini") return asked;
+  throw new AIProviderConfigurationError(`AI_PROVIDER inválido: ${asked}`);
+}
+
+async function runProvider(provider: ProviderName, opts: GenerateTextOptions, temperature: number, topP: number, maxTokens: number, maxRetries: number, reasoningEffort: string | undefined, messages: AIMessage[]): Promise<NormalizedAIResponse> {
+  const cfg = cfgFor(provider);
+  const key = getEnv(cfg.apiKeyEnv);
+  if (!key) throw new AIProviderConfigurationError(`${cfg.apiKeyEnv} ausente. Configure o secret nas Edge Functions do Supabase.`, provider);
+  const model = opts.model ?? getEnv("AI_MODEL") ?? getEnv(cfg.modelEnv) ?? cfg.defaultModel;
+  const timeoutMs = opts.timeoutMs ?? numEnv("AI_TIMEOUT_MS", cfg.defaultTimeout);
+  const common = { model, timeoutMs, maxRetries, provider, apiKey: key };
+  if (cfg.type === "gemini") return geminiLike({ messages, temperature, maxTokens, json: !!opts.json, ...common });
+  return openAiLike({ messages, temperature, topP, maxTokens, json: !!opts.json, baseUrl: cfg.baseUrl, reasoningEffort, ...common });
 }
 
 export async function generateText(opts: GenerateTextOptions): Promise<GenerateTextResult> {
-  const { provider, model } = resolveProvider(opts);
+  const primary = resolveProvider(opts);
+  if (!getEnv(cfgFor(primary).apiKeyEnv)) throw new AIProviderConfigurationError(`${cfgFor(primary).apiKeyEnv} ausente.`, primary);
+  const temperature = opts.temperature ?? numEnv("AI_TEMPERATURE", 0.85);
+  const topP = opts.topP ?? numEnv("AI_TOP_P", 0.95);
+  const maxTokens = opts.maxOutputTokens ?? numEnv("AI_MAX_TOKENS", 4096);
+  const maxRetries = numEnv("AI_MAX_RETRIES", 1);
+  const reasoningEffort = opts.reasoningEffort ?? getEnv("AI_REASONING_EFFORT");
+  const messages: AIMessage[] = [];
+  if (opts.system) messages.push({ role: "system", content: opts.system });
+  messages.push({ role: "user", content: opts.user });
+
   try {
-    const result = provider === "nvidia"
-      ? await nvidiaGenerateText(opts, model)
-      : await geminiGenerateText(opts, model);
-    // Log de resumo apenas — nunca conteúdo, nunca chaves, nunca authorization.
-    console.info("[ai] ok", { provider, model, len: result.text.length });
-    return result;
+    const r = await runProvider(primary, opts, temperature, topP, maxTokens, maxRetries, reasoningEffort, messages);
+    console.info("[ai] ok", { provider: r.provider, model: r.model, len: r.content.length, fallback_used: false });
+    return { text: r.content, model: r.model, provider: r.provider, fallbackUsed: false };
   } catch (e) {
-    const err = e instanceof AiError ? e : new AiError(e instanceof Error ? e.message : "erro", 500, "upstream", undefined, provider);
-    console.warn("[ai] error", { provider, kind: err.kind, status: err.status });
+    const err = e instanceof AiError ? e : new AIProviderError(e instanceof Error ? e.message : "erro", 500, "upstream");
+    const fallbackName = opts.fallbackProvider ?? (getEnv("AI_FALLBACK_PROVIDER") as ProviderName | undefined);
+    if (fallbackName && TRANSIENT.has(err.kind) && (fallbackName === "nvidia" || fallbackName === "deepseek" || fallbackName === "openai" || fallbackName === "gemini")) {
+      try {
+        const r = await runProvider(fallbackName, opts, temperature, topP, maxTokens, maxRetries, reasoningEffort, messages);
+        console.info("[ai] ok", { provider: r.provider, model: r.model, len: r.content.length, fallback_used: true, primary });
+        return { text: r.content, model: r.model, provider: r.provider, fallbackUsed: true };
+      } catch (fb) {
+        console.warn("[ai] error", { provider: primary, fallback: fallbackName, kind: err.kind, status: err.status });
+        throw fb instanceof AiError ? fb : err;
+      }
+    }
+    console.warn("[ai] error", { provider: primary, kind: err.kind, status: err.status });
     throw err;
   }
 }
 
-// Extrai um objeto JSON da resposta (aceita JSON puro ou texto embrulhado,
-// inclusive quando precedido de reasoning/blocos de código).
 export function extractJson(raw: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-  } catch { /* tenta bloco abaixo */ }
+  } catch { /* noop */ }
   const match = raw.match(/\{[\s\S]*\}/);
   if (match) {
     try {
       const parsed = JSON.parse(match[0]);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-    } catch { /* não é JSON */ }
+    } catch { /* noop */ }
   }
   return {};
 }
