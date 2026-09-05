@@ -10,6 +10,7 @@ import { BrowserSession } from "./browser-session";
 import { readWorkspace, type FileMap } from "./workspace";
 import { GENERATION_SYSTEM_PROMPT } from "./generation-prompt";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision";
+import { decideFinishBlock } from "./completion-guard";
 
 export interface AgentRunOutcome {
   ok: boolean;
@@ -20,6 +21,10 @@ export interface AgentRunOutcome {
   events: AgentRuntimeEvent[];
   activity?: Array<{ phase: string; detail: string }>;
   error?: string;
+  /** Evidência da conclusão: o finish_task foi bloqueado pelo guard até a
+   * qualidade passar (número de bloqueios) ou finalizou direto. */
+  finishSkips?: number;
+  finishBlocked?: boolean;
 }
 
 export interface ProspectorAgentOptions {
@@ -79,6 +84,8 @@ export class ProspectorSiteAgent {
   private browserSession: BrowserSession | null = null;
   private vision: VisionConfig;
   private pendingScreenshotPath: string | null = null;
+  private finishSkips = 0;
+  private finishBlocked = false;
 
   constructor(options: ProspectorAgentOptions) {
     this.options = options;
@@ -134,6 +141,26 @@ export class ProspectorSiteAgent {
       return { ...input, messages };
     };
 
+    // COMPLETION GUARD (arquitetural): impede finish_task sem evidência/qualidade.
+    // No modo generate, bloqueia a conclusão enquanto o Quality Gate falhar.
+    const beforeTool = async (ctx: { tool?: { name?: string } | undefined; toolCall?: { name?: string } | undefined; toolName?: string }) => {
+      const name = ctx?.tool?.name ?? (ctx as { toolCall?: { toolName?: string } }).toolCall?.toolName ?? ctx?.toolName ?? "";
+      if (name !== "finish_task") return undefined;
+      const decision = decideFinishBlock({
+        mode: options.mode ?? "edit",
+        files: readWorkspace(options.workspaceRoot),
+        segment: options.business?.segment ?? undefined,
+        name: options.business?.name ?? undefined,
+        finishSkips: this.finishSkips,
+      });
+      if (decision.block) {
+        this.finishSkips += 1;
+        this.finishBlocked = true;
+        return { skip: true, reason: decision.reason ?? "Revisão automática reprovou a finalização." };
+      }
+      return undefined;
+    };
+
     this.agent = new (Agent as unknown as new (cfg: Record<string, unknown>) => unknown)({
       providerId: options.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
       modelId: options.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
@@ -142,7 +169,7 @@ export class ProspectorSiteAgent {
       systemPrompt,
       tools: [...tools, ...browserTools, complete],
       maxIterations: options.maxIterations ?? 40,
-      hooks: { beforeModel },
+      hooks: { beforeModel, beforeTool },
     });
   }
 
@@ -204,20 +231,34 @@ export class ProspectorSiteAgent {
   async runTask(instruction: string, opts?: { continueSession?: boolean }): Promise<AgentRunOutcome> {
     const events: AgentRuntimeEvent[] = [];
     const unsub = this.agent.subscribe((event: AgentRuntimeEvent) => events.push(event));
+    const shouldContinue = opts?.continueSession === true && this.conversationStarted;
+    // Nova missão → reset do guard (retentativas de finish por missão).
+    if (!shouldContinue) {
+      this.finishSkips = 0;
+      this.finishBlocked = false;
+      this.pendingScreenshotPath = null;
+    }
     try {
-      const shouldContinue = opts?.continueSession === true && this.conversationStarted;
+      // Estado "antes" real (para touched correto em continuações).
+      const stateBefore = shouldContinue || this.conversationStarted ? readWorkspace(this.options.workspaceRoot) : this.beforeFiles;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = (await (shouldContinue ? this.agent.continue(instruction) : this.agent.run(instruction))) as { messages?: unknown[] };
       this.conversationStarted = true;
       const files = readWorkspace(this.options.workspaceRoot);
-      const before = this.beforeFiles;
-      const touched = Object.keys(files).filter((p) => before[p] !== files[p]);
+      const touched = Object.keys(files).filter((p) => stateBefore[p] !== files[p]);
       const reply = extractLastAssistantText(result?.messages ?? []) || "Concluído.";
       const activity = ProspectorSiteAgent.operationalEvents(events as unknown as never[]);
-      return { ok: true, reply, files, touched, iterations: 0, events, activity };
+      return {
+        ok: true, reply, files, touched, iterations: 0, events, activity,
+        finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
+      };
     } catch (e) {
       const files = readWorkspace(this.options.workspaceRoot);
-      return { ok: false, reply: "", files, touched: [], iterations: 0, events, error: e instanceof Error ? e.message : String(e) };
+      return {
+        ok: false, reply: "", files, touched: [], iterations: 0, events,
+        error: e instanceof Error ? e.message : String(e),
+        finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
+      };
     } finally {
       unsub();
       if (this.browserSession) {

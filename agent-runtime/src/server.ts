@@ -206,6 +206,8 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           mode: "generate",
           gate_ok: gateResult.ok,
           gate_issues: gateResult.issues,
+          finish_skips: finalOutcome.finishSkips,
+          finish_blocked: finalOutcome.finishBlocked,
           events: events.slice(0, 200),
           activity,
         });

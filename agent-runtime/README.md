@@ -88,6 +88,30 @@ analisador visual de screenshots, via edge function `gemini-vision` (chave
 Honestidade: se o Gemini falhar/503 ou não receber a imagem, a tool devolve
 "VISUAL REVIEW NÃO EXECUTADO" e o agente informa honestamente.
 
+## Completion Guard (5.24) — conclusão com evidência
+
+O agente NÃO pode afirmar que terminou sem prova. O `finish_task` é validado por
+hook (`beforeTool`) ANTES de completar a run:
+
+- No modo `generate`, se o Quality Gate falhar (imagens em segmento visual, CTA,
+  `@media`, nav, footer, placeholders…), a finalização é **bloqueada** (`skip`) e
+  os problemas voltam ao modelo para corrigir. Limite de retentativas evita loop.
+- No modo `edit`, mudanças cirúrgicas não são bloqueadas por gate de geração.
+- Evidência exposta: `finish_skips` / `finish_blocked` no resultado (quantas vezes
+  o guard impediu conclusão prematura).
+
+Prova: `scripts/e2e-completion-guard.ts` (agente tentou finalizar cedo → 1 bloqueio
+→ resultado final completo com 5 `<img>`, `@media`, CTA).
+
+## Backlog — seletor multi-provider por projeto (NÃO implementado)
+
+Requisito futuro registrado: cadastrar providers/modelos no Supabase (DeepSeek,
+Gemini, NVIDIA, OpenAI, outros) com modelo/status/prioridade/fallback/capacidade
+multimodal/custo; seletor `🤖 IA` no chat por projeto e troca sem tocar código. A
+arquitetura atual não impede isso: o runtime resolve provider/modelo por env
+(`PROSPECTOR_PROVIDER`/`PROSPECTOR_MODEL`) — basta passar esses campos no
+`/generate`/`/run` por projeto.
+
 ## Segurança
 
 - Cada projeto tem um diretório isolado (`sha256(projectId)`), criado em `tmp` ou em `PROSPECTOR_WORKSPACES`.

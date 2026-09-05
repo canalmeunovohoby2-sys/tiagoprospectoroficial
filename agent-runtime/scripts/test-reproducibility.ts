@@ -7,7 +7,7 @@ const CTX = {
   whatsapp: "5511944443333", phone: "(11) 4444-3333",
   services: ["MusculaÃ§Ã£o", "Aulas coletivas", "Personal trainer", "AvaliaÃ§Ã£o fÃ­sica"],
 };
-const N = 2;
+const N = 3;
 
 async function generate(run: number) {
   const pid = `acad-repro-${run}`;
@@ -38,6 +38,7 @@ async function generate(run: number) {
     run, pid, ms, status: d.status, files: Object.keys(files), htmlBytes: html.length,
     hasImages, imgTags, hasHero, hasForm, hasCta, hasMedia, reviewCount,
     gate_ok: d.gate_ok, gate_issues: (d.gate_issues ?? []).length,
+    finish_skips: d.finish_skips, finish_blocked: d.finish_blocked,
     reply: (d.reply ?? "").slice(0, 160),
   };
 }
@@ -54,9 +55,10 @@ async function main() {
   const formVariation = new Set(out.map((o) => o.hasForm)).size;
   const browserVariation = new Set(out.map((o) => o.reviewCount)).size;
   console.log("\n=== resumo ===");
-  for (const o of out) console.log(`run${o.run}: status=${o.status} files=${o.files.length} imgs=${o.hasImages} form=${o.hasForm} media=${o.hasMedia} review=${o.reviewCount} ms=${o.ms}`);
+  for (const o of out) console.log(`run${o.run}: status=${o.status} files=${o.files.length} imgs=${o.hasImages} form=${o.hasForm} media=${o.hasMedia} review=${o.reviewCount} gate_ok=${o.gate_ok} finish_skips=${o.finish_skips} ms=${o.ms}`);
   console.log("variaÃ§Ã£o imagens:", imgVariation, "| variaÃ§Ã£o form:", formVariation, "| variaÃ§Ã£o revisÃµes:", browserVariation);
   out.forEach((o) => cleanupWorkspace(o.pid));
 }
 main().catch((e) => { console.error(e); process.exit(1); });
+
 
