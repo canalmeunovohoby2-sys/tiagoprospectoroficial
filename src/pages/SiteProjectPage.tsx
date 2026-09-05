@@ -141,7 +141,17 @@ export default function SiteProjectPage() {
     if (!specData || !project?.id) { toast.error("Gere o site antes de publicar."); return; }
     setPublishing(true);
     try {
-      await publishSiteProject(project.id, specData);
+      // Publica o CÓDIGO REAL (workspace) como snapshot publicado — a URL pública
+      // renderiza o generated_code quando existir (code-first).
+      const persistedCode = project.generated_code && typeof project.generated_code === "object"
+        ? project.generated_code as Record<string, unknown>
+        : {};
+      const persistedFiles = Object.keys(persistedCode).length
+        ? Object.fromEntries(Object.entries(persistedCode).filter(([, v]) => typeof v === "string")) as Record<string, string>
+        : null;
+      const hasDraft = !!draftFiles && Object.keys(draftFiles).length > 0;
+      const code = hasDraft ? draftFiles! : persistedFiles ?? materializeProjectFiles(specData);
+      await publishSiteProject(project.id, specData, code);
       toast.success("Site publicado");
       await load();
     } catch (e) {

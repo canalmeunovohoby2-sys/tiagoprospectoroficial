@@ -315,11 +315,14 @@ export async function appendSiteChatMessages(projectId: string, userId: string, 
   if (error) throw new Error(error.message);
 }
 
-// Publicação atômica: copia o draft atual para published_spec e marca publicado.
-export async function publishSiteProject(projectId: string, spec: SiteSpec): Promise<void> {
+// Publicação atômica: copia o draft (spec + código real) para published_*.
+// A URL pública renderiza o published_code quando existir (code-first).
+export async function publishSiteProject(projectId: string, spec: SiteSpec, generatedFiles?: Record<string, string>): Promise<void> {
   const payload = {
     published_status: "published" as const,
     published_spec: spec as unknown as Json,
+    // Snapshot imutável do código real no momento da publicação (code-first).
+    published_code: (generatedFiles && Object.keys(generatedFiles).length ? generatedFiles : null) as unknown as Json | null,
     published_at: new Date().toISOString(),
   };
   const { error } = await supabase.from("site_projects").update(payload).eq("id", projectId);
@@ -335,6 +338,7 @@ export interface PublicSiteData {
   slug: string;
   name: string;
   published_spec: SiteSpec;
+  published_code?: Record<string, string> | null;
   published_at: string | null;
 }
 
@@ -344,10 +348,14 @@ export async function fetchPublicSite(slug: string): Promise<PublicSiteData | nu
   if (error) throw new Error(error.message);
   if (!Array.isArray(data) || data.length === 0 || !data[0]?.published_spec) return null;
   const row = data[0];
+  const code = row.published_code;
   return {
     slug: String(row.slug ?? slug),
     name: String(row.name ?? ""),
     published_spec: row.published_spec as SiteSpec,
+    published_code: code && typeof code === "object" && !Array.isArray(code)
+      ? (Object.fromEntries(Object.entries(code as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>)
+      : null,
     published_at: row.published_at ? String(row.published_at) : null,
   };
 }
