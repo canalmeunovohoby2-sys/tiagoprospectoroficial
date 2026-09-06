@@ -655,15 +655,6 @@ export default function SiteProjectPage() {
     setAiMessages((m) => [...m, { role: "assistant", text: "↶ Voltei para o estado anterior (conteúdo e código restaurados e salvos no editor)." }]);
   }
 
-  function exitEditing() {
-    if (dirty && !window.confirm("Há alterações não salvas. Descartar e sair do editor?")) return;
-    setEditMode(false);
-    setDirty(false);
-    setAiMessages([]);
-    setAiHistory([]);
-    setAiError(null);
-  }
-
   // AUTOSAVE (5.24): persiste o estado REAL (spec + arquivos) e cria versão
   // somente quando houve mudança real. NUNCA lança: retorna { ok, created, error }.
   async function persistAutosave(
@@ -805,9 +796,6 @@ export default function SiteProjectPage() {
                   <CircleDot className={`h-3 w-3 ${dirty ? "animate-pulse" : ""}`} />
                   {dirty ? "Alterações não salvas" : "Tudo salvo"}
                 </span>
-                <Button variant="outline" size="sm" onClick={exitEditing} disabled={saving}>
-                  <X className="h-3.5 w-3.5 mr-1" /> Sair do editor
-                </Button>
                 <Button size="sm" onClick={saveEdits} disabled={saving || !dirty}>
                   {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Save className="h-3.5 w-3.5 mr-1" />} Salvar
                 </Button>
