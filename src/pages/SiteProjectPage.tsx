@@ -26,6 +26,7 @@ import { GitHubProjectButton } from "@/components/app/GitHubProjectButton";
 import { buildStrategyInstruction, strategyById } from "@/lib/siteStrategies";
 import { buildWorkTimeline } from "@/lib/agentWorkActivity";
 import { captureWorkspaceScreenshotsClient } from "@/lib/clientScreenshots";
+import { extractSitePalette } from "@/lib/sitePalette";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -244,8 +245,9 @@ export default function SiteProjectPage() {
         throw new Error("Não foi possível capturar o site para gerar a proposta (desktop/mobile). Verifique se o Agent Runtime está no ar e com memória suficiente, e tente novamente.");
       }
       toast.info("Montando apresentação…");
+      const realPalette = extractSitePalette(codeFiles);
       const screenshots = [shots.desktop, shots.mobile];
-      const { buffer, fileName } = await buildCommercialPdf(specData as never, null, screenshots);
+      const { buffer, fileName } = await buildCommercialPdf(specData as never, null, screenshots, realPalette);
       saveBlob(new Blob([buffer], { type: "application/pdf" }), fileName);
       toast.success("Proposta em PDF gerada com capturas reais do site");
     } catch (e) {

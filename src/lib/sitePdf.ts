@@ -93,10 +93,12 @@ function footer(doc: jsPDF, W: number, label: string, pageNo: number) {
   text(doc, String(pageNo).padStart(2, "0"), W - 54, 826, 6.5, MUT, "normal", "right");
 }
 
-export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: string } | null, screenshots?: string[]): Promise<{ buffer: ArrayBuffer; fileName: string }> {
+export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: string } | null, screenshots?: string[], realPalette?: Partial<Record<string, string>>): Promise<{ buffer: ArrayBuffer; fileName: string }> {
   const b = obj(spec.business);
   const ds = obj(spec.design_system);
-  const colors = obj(ds.colors) as Record<string, string>;
+  const specColors = obj(ds.colors) as Record<string, string>;
+  // Paleta REAL extraída do site tem prioridade sobre design_system.
+  const colors: Record<string, string> = { ...specColors, ...(realPalette ?? {}) };
   const typo = obj(ds.typography);
   const content = obj(spec.content);
   const hero = obj(content.hero);
@@ -249,7 +251,7 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
     ["URL pública e estável", "O endereço do site não muda — edições futuras são aplicadas no mesmo link."],
     ["Hospedagem inclusa", "Publicação e configuração cuidadas pela nossa equipe, sem mensalidade."],
     ["Sem mensalidade", "Você paga só pelo desenvolvimento. O domínio custa cerca de R$ 40,00/ano."],
-    ["Edições simples", "Peça ajustes pelo próprio painel; a identidade e o endereço são preservados."],
+    ["Edições simples", "Peça ajustes a qualquer momento; a identidade e o endereço são preservados."],
     ["Identidade preservada", "Cores, tipografia e estrutura seguem o conceito aprovado por você."],
   ];
   let ay = 108;
@@ -277,7 +279,7 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
     "Versão responsiva (desktop, tablet e celular)",
     "Imagens contextuais integradas ao layout",
     "Conteúdo real e estratégico, sem invenções",
-    "Publicação online + arquivo completo do projeto",
+    "Publicação online + projeto completo entregue",
     "Edições futuras no mesmo endereço público",
   ];
   for (const it of inc) {
