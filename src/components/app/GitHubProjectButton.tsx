@@ -41,6 +41,18 @@ export function GitHubProjectButton({ projectId, userId }: { projectId: string; 
 
   useEffect(() => { if (open) void refresh(); }, [open, refresh]);
 
+  useEffect(() => {
+    const onMsg = (ev: MessageEvent) => {
+      if (ev.data && (ev.data as { type?: string }).type === "github_oauth_success") {
+        setNotice("Conta GitHub conectada.");
+        setBusy(false);
+        void refresh();
+      }
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, [refresh]);
+
   async function connect() {
     setBusy(true); setNotice(null);
     try {

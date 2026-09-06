@@ -79,7 +79,16 @@ Deno.serve(async (req) => {
       const ident = await ghJson<{ login: string; id: number }>(accessToken, "/user");
       if (!ident.ok || !ident.data) return json({ error: "Não foi possível obter identidade GitHub" }, 400);
       await admin.from("github_connections").upsert({ user_id: st.user_id, github_login: ident.data.login, access_token: accessToken, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-      return new Response("<html><body><script>window.close();</script><p>Conta GitHub conectada. Pode fechar esta aba.</p></body></html>", { status: 200, headers: { ...corsHeaders, "Content-Type": "text/html" } });
+      const appOrigin = (env("PUBLIC_SITE_URL") || env("PROSPECTOR_APP_URL") || "").replace(/\/$/, "");
+      const html = `<html><body><script>
+(function(){
+  var origin = ${JSON.stringify(appOrigin || "")};
+  try { if (origin && window.opener) window.opener.postMessage({ type: "github_oauth_success" }, origin); } catch (e) {}
+  try { window.close(); } catch (e) {}
+  setTimeout(function(){ document.body.innerHTML = "<p style='font-family:sans-serif'>Conta GitHub conectada. Pode fechar esta aba.</p>"; }, 400);
+})();
+</script><p style="font-family:sans-serif">Conta GitHub conectada. Pode fechar esta aba.</p></body></html>`;
+      return new Response(html, { status: 200, headers: { ...corsHeaders, "Content-Type": "text/html" } });
     }
 
     // ── Resto das ações exige conexão ativa ──
