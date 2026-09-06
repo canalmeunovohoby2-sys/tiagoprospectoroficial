@@ -184,11 +184,12 @@ Deno.serve(async (req) => {
 
       if (isInitial) {
         // ── PRIMEIRO SYNC: UM ÚNICO COMMIT INICIAL (Git Trees API) ──
-        const ref = await ghJson<{ object?: { sha?: string } }>(token, `/git/ref/heads/${link.branch}`);
+        const repoPath = `/repos/${link.owner}/${link.repo}`;
+        const ref = await ghJson<{ object?: { sha?: string } }>(token, `${repoPath}/git/ref/heads/${link.branch}`);
         const head = ref.ok ? ref.data?.object?.sha : undefined; // repo vazio → sem head
         let baseTree = "";
         if (head) {
-          const baseCommit = await ghJson<{ tree?: { sha?: string } }>(token, `/git/commits/${head}`);
+          const baseCommit = await ghJson<{ tree?: { sha?: string } }>(token, `${repoPath}/git/commits/${head}`);
           baseTree = baseCommit.data?.tree?.sha ?? "";
         }
         const entries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
@@ -196,22 +197,22 @@ Deno.serve(async (req) => {
           const utf8 = new TextEncoder().encode(f.content);
           let binary = "";
           utf8.forEach((byte) => { binary += String.fromCharCode(byte); });
-          const blob = await ghJson<{ sha?: string }>(token, "/git/blobs", { method: "POST", body: JSON.stringify({ content: btoa(binary), encoding: "base64" }) });
+          const blob = await ghJson<{ sha?: string }>(token, `${repoPath}/git/blobs`, { method: "POST", body: JSON.stringify({ content: btoa(binary), encoding: "base64" }) });
           if (!blob.ok || !blob.data?.sha) return json({ status: "error", error: `Falha ao criar blob de ${f.path} (${blob.message ?? "erro"})` }, 502);
           const blobSha = blob.data.sha;
           entries.push({ path: f.path, mode: "100644", type: "blob", sha: blobSha });
           newSync[f.path] = { sha: blobSha, updated_at: new Date().toISOString() };
         }
-        const treeResp = await ghJson<{ sha?: string }>(token, "/git/trees", { method: "POST", body: JSON.stringify({ base_tree: baseTree || undefined, tree: entries }) });
+        const treeResp = await ghJson<{ sha?: string }>(token, `${repoPath}/git/trees`, { method: "POST", body: JSON.stringify({ base_tree: baseTree || undefined, tree: entries }) });
         if (!treeResp.ok || !treeResp.data?.sha) return json({ status: "error", error: "Falha ao criar árvore do commit inicial" }, 502);
-        const commitResp = await ghJson<{ sha?: string }>(token, "/git/commits", { method: "POST", body: JSON.stringify({ message: "Initial project sync", tree: treeResp.data.sha, parents: head ? [head] : [] }) });
+        const commitResp = await ghJson<{ sha?: string }>(token, `${repoPath}/git/commits`, { method: "POST", body: JSON.stringify({ message: "Initial project sync", tree: treeResp.data.sha, parents: head ? [head] : [] }) });
         if (!commitResp.ok || !commitResp.data?.sha) return json({ status: "error", error: "Falha ao criar o commit inicial" }, 502);
         if (head) {
-          const updateRef = await ghJson<{ ref?: string }>(token, `/git/refs/heads/${link.branch}`, { method: "PATCH", body: JSON.stringify({ sha: commitResp.data.sha, force: false }) });
+          const updateRef = await ghJson<{ ref?: string }>(token, `${repoPath}/git/refs/heads/${link.branch}`, { method: "PATCH", body: JSON.stringify({ sha: commitResp.data.sha, force: false }) });
           if (!updateRef.ok) return json({ status: "error", error: `Falha ao atualizar a branch ${link.branch}` }, 502);
         } else {
           // Repositório vazio: cria a ref main a partir do commit inicial.
-          const createRef = await ghJson<{ ref?: string }>(token, "/git/refs", { method: "POST", body: JSON.stringify({ ref: `refs/heads/${link.branch}`, sha: commitResp.data.sha }) });
+          const createRef = await ghJson<{ ref?: string }>(token, `${repoPath}/git/refs`, { method: "POST", body: JSON.stringify({ ref: `refs/heads/${link.branch}`, sha: commitResp.data.sha }) });
           if (!createRef.ok) return json({ status: "error", error: `Falha ao criar a branch ${link.branch}` }, 502);
         }
         commitSha = commitResp.data.sha;
