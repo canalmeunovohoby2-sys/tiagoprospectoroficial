@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
-  normalizeItemList, matchLeadWebsite, textMentionsGeo, extractContactsFromMarkdown,
-  runWebSources, enrichLeadsWithWeb,
+  normalizeItemList, matchLeadWebsite, textMentionsGeo, extractContactsFromMarkdown, matchInstagramHandle,
+  runWebSources, enrichLeadsWithWeb, extractWhatsAppExplicit,
 } from "../../supabase/functions/_shared/lead-web";
 
 const TAVILY_ITEMS = [
@@ -101,5 +101,88 @@ describe("lead-web (Tavily + Firecrawl)", () => {
     const web = { tavily: normalizeItemList(TAVILY_ITEMS, "tavily"), firecrawl: [] };
     const { leads: out } = await enrichLeadsWithWeb({ leads: [...leads], web, city: "Suzano", state: "SP" });
     expect(out.map((l) => l.name)).toEqual(["Um", "Dois", "Três"]);
+  });
+
+  it("(5.31) lead JÁ com site (Google) também tem o site oficial enriquecido (instagram + contato)", async () => {
+    const leads = [{ name: "Pet Care Banho e Tosa", city: "Guarulhos", state: "SP", website: "https://petcareguarulhos.com.br", has_website: true, instagram: null, phone: null, whatsapp: null }];
+    const web = { tavily: [], firecrawl: [] };
+    const scrape = vi.fn(async () => "Somos a Pet Care. Atendimento (11) 912345678 · instagram.com/petcareguarulhos");
+    const { leads: out, summary } = await enrichLeadsWithWeb({ leads: [...leads], web, city: "Guarulhos", state: "SP", scrape, maxScrape: 2 });
+    expect(summary.scrapeAttempted).toBe(1);
+    expect(out[0].whatsapp).toBe("5511912345678");
+    expect(out[0].instagram).toBe("petcareguarulhos");
+    // lead não foi duplicado nem removido
+    expect(out.length).toBe(1);
+  });
+
+  it("(5.31) instagram é encontrado direto nos resultados web (sem scrape)", () => {
+    const items = [
+      { title: "Pet Care Banho e Tosa (@petcareguarulhos) • Fotos", url: "https://instagram.com/petcareguarulhos", description: "Pet Care Guarulhos" },
+    ];
+    expect(matchInstagramHandle("Pet Care Banho e Tosa", items)).toBe("petcareguarulhos");
+  });
+
+  it("(5.31) NÃO atribui instagram de outro negócio ao lead", () => {
+    const items = [
+      { title: "Cobasi Guarulhos", url: "https://instagram.com/cobasiloja", description: "Rede de pets" },
+    ];
+    expect(matchInstagramHandle("Pet Care Banho e Tosa", items)).toBeNull();
+  });
+
+  it("(5.31) telefone da página oficial é aceito mesmo sem texto de cidade (geografia veio do Google)", () => {
+    const page = "Fale conosco: (11) 912345678";
+    const c = extractContactsFromMarkdown(page, "Guarulhos", "SP", { requireGeo: false });
+    expect(c.phone).toBe("+55 11 91234 5678");
+    expect(c.whatsapp).toBe("5511912345678");
+    // comportamento antigo (sem o flag) continua exigindo cidade
+    const strict = extractContactsFromMarkdown(page, "Guarulhos", "SP");
+    expect(strict.phone).toBeNull();
+  });
+
+  it("(5.33) WhatsApp explícito (wa.me / api.whatsapp.com / rótulo) é encontrado", () => {
+    expect(extractWhatsAppExplicit("https://wa.me/5511912345678?text=Oi")).toBe("5511912345678");
+    expect(extractWhatsAppExplicit("https://api.whatsapp.com/send?phone=5511987654321&text=ola")).toBe("5511987654321");
+    expect(extractWhatsAppExplicit("WhatsApp: (11) 91234-5678")).toBe("5511912345678");
+    const page = "Fale pelo WhatsApp no wa.me/5511912345678 — atendemos em Guarulhos/SP.";
+    const c = extractContactsFromMarkdown(page, "Guarulhos", "SP");
+    expect(c.whatsapp).toBe("5511912345678");
+    expect(c.whatsappEvidence).toBe("link");
+  });
+
+  it("(5.33) telefone FIXO não vira WhatsApp sem evidência explícita", () => {
+    const page = "Telefone: (11) 3456-7890 — em Guarulhos/SP";
+    const c = extractContactsFromMarkdown(page, "Guarulhos", "SP");
+    expect(c.phone).toBe("+55 11 3456 7890");
+    expect(c.whatsapp).toBeNull();
+  });
+
+  it("(5.33) lead sem WhatsApp/site/Instagram continua válido e não é eliminado", async () => {
+    const leads = [{ name: "Mercadinho Bom Preço", city: "Guarulhos", state: "SP", address: "Rua X", phone: null, whatsapp: null, instagram: null, website: null, has_website: false }];
+    const { leads: out } = await enrichLeadsWithWeb({ leads: [...leads], web: { tavily: [], firecrawl: [] }, city: "Guarulhos", state: "SP" });
+    expect(out.length).toBe(1);
+    expect(out[0].whatsapp).toBeNull();
+    expect(out[0].instagram).toBeNull();
+    expect(out[0].website).toBeNull();
+  });
+
+  it("(5.33) proveniência fica registrada em sources/score_reasons", async () => {
+    const leads = [{ name: "Pet Care Banho e Tosa", city: "Guarulhos", state: "SP", website: "https://petcareguarulhos.com.br", has_website: true, phone: null, whatsapp: null, instagram: null }];
+    const scrape = vi.fn(async () => "Instagram: instagram.com/petcareguarulhos · WhatsApp (11) 912345678");
+    const { leads: out } = await enrichLeadsWithWeb({ leads, web: { tavily: [], firecrawl: [] }, city: "Guarulhos", state: "SP", scrape, maxScrape: 2 });
+    const src = (out[0] as unknown as { sources?: Record<string, string> }).sources ?? {};
+    expect(out[0].whatsapp).toBe("5511912345678");
+    expect(src.whatsapp).toMatch(/website oficial/);
+    expect(src.instagram).toMatch(/website oficial/);
+  });
+
+  it("(5.33) instagram usa evidência combinada nome+cidade (sem atribuir filial de outra cidade)", () => {
+    const rj = [
+      { title: "Rede de padarias no Rio de Janeiro", url: "https://instagram.com/confrariadopao", description: "nossa filial carioca" },
+    ];
+    expect(matchInstagramHandle("Padaria Real", rj, { city: "Guarulhos", state: "SP" })).toBeNull();
+    const sp = [
+      { title: "Padaria Real Guarulhos", url: "https://instagram.com/padariarealguarulhos", description: "nossa unidade em Guarulhos" },
+    ];
+    expect(matchInstagramHandle("Padaria Real", sp, { city: "Guarulhos", state: "SP" })).toBe("padariarealguarulhos");
   });
 });

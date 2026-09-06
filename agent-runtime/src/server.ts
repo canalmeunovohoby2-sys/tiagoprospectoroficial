@@ -5,8 +5,10 @@
 // SESSÃO PERSISTENTE POR PROJETO: um Agent (Cline) fica vivo por projectId em
 // memória; cada nova mensagem chama agent.continue() para manter o contexto.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
 import { ProspectorSiteAgent } from "./prospector-site-agent";
-import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot } from "./workspace";
+import { BrowserSession } from "./browser-session";
+import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace } from "./workspace";
 import type { BusinessContext } from "./tools";
 import { assertGenerationQuality } from "./generation-gate";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction";
@@ -92,6 +94,33 @@ export function startServer(port = PORT, host = HOST) {
         const projectId = String(body.projectId ?? "").trim();
         if (projectId) sessions.delete(projectId);
         send(res, 200, { ok: true });
+        return;
+      }
+
+      // Captura screenshots REAIS (desktop + mobile) do site para o PDF de proposta.
+      if (url.pathname === "/capture" && req.method === "POST") {
+        const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
+        const files = (body.files && typeof body.files === "object" ? body.files : {}) as Record<string, string>;
+        const hasIndex = Object.keys(files).some((k) => k.endsWith("index.html"));
+        if (!hasIndex) { send(res, 400, { ok: false, error: "Nenhum arquivo index.html para capturar." }); return; }
+        const pid = `capture-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const root = ensureWorkspaceDir(pid, files);
+        const session = new BrowserSession(root);
+        const toDataUrl = (p: string) => `data:image/png;base64,${readFileSync(p).toString("base64")}`;
+        try {
+          const base = await session.startServer();
+          await session.open(base, { width: 1366, height: 850 });
+          const desktop = await session.screenshot("desktop", { fullPage: false });
+          await session.setViewport(390, 844);
+          await session.reload();
+          const mobile = await session.screenshot("mobile", { fullPage: false });
+          send(res, 200, { ok: true, desktop: toDataUrl(desktop), mobile: toDataUrl(mobile) });
+        } catch (e) {
+          send(res, 500, { ok: false, error: e instanceof Error ? e.message : "falha na captura" });
+        } finally {
+          await session.close().catch(() => {});
+          cleanupWorkspace(pid);
+        }
         return;
       }
 

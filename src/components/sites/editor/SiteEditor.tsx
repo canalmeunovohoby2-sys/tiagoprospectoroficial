@@ -190,6 +190,8 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
   const [listening, setListening] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const recRef = useRef<{ stop: () => void } | null>(null);
+  const keepMicRef = useRef(false);
+  const lastFinalRef = useRef("");
 
   const chatMsgs = aiPanel?.messages ?? [];
 
@@ -232,39 +234,67 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
     }
   }
 
+  function stopMic() {
+    keepMicRef.current = false;
+    const rec = recRef.current;
+    recRef.current = null;
+    if (rec) {
+      try { rec.stop(); } catch { /* já parado */ }
+    }
+    setListening(false);
+  }
+
+  // Gravação contínua: grava ao clicar e SÓ PARA quando clicar de novo. Se o
+  // navegador encerrar a sessão após uma fala, ela reinicia automaticamente.
   function toggleMic() {
-    const SR = (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition
-      ?? (window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
-    if (!SR) {
-      if (aiPanel) { /* informa de forma silenciosa */ }
-      return;
-    }
-    if (recRef.current) {
-      recRef.current.stop();
-      recRef.current = null;
-      setListening(false);
-      return;
-    }
-    try {
-      const Rec = SR as new () => { lang: string; interimResults: boolean; onresult: (ev: unknown) => void; onend: () => void; onerror: () => void; start: () => void; stop: () => void };
-      const rec = new Rec();
-      rec.lang = "pt-BR";
-      rec.interimResults = false;
-      rec.onresult = (ev: unknown) => {
-        const results = (ev as { results?: ArrayLike<ArrayLike<{ transcript?: string }>> }).results;
-        if (results) {
-          const text = Array.from(results).map((r) => r[0]?.transcript ?? "").join(" ");
-          setAiInstruction((prev) => (prev ? `${prev} ${text}` : text).trim());
-        }
-      };
-      rec.onend = () => { recRef.current = null; setListening(false); };
-      rec.onerror = () => { recRef.current = null; setListening(false); };
-      rec.start();
-      recRef.current = rec;
-      setListening(true);
-    } catch {
-      setListening(false);
-    }
+    if (keepMicRef.current) { stopMic(); return; }
+    const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+    const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!SR) { if (aiPanel) { /* sem suporte */ } return; }
+    const Rec = SR as new () => {
+      lang: string; continuous: boolean; interimResults: boolean;
+      onresult: (ev: unknown) => void; onend: () => void; onerror: (e: { error?: string }) => void;
+      start: () => void; stop: () => void;
+    };
+    lastFinalRef.current = "";
+    keepMicRef.current = true;
+
+    const startSession = () => {
+      if (!keepMicRef.current) return;
+      try {
+        const rec = new Rec();
+        rec.lang = "pt-BR";
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.onresult = (ev: unknown) => {
+          const results = (ev as { results?: ArrayLike<ArrayLike<{ transcript?: string }> & { isFinal?: boolean }> }).results;
+          if (!results) return;
+          const finals = Array.from(results).filter((r) => r?.isFinal).map((r) => r[0]?.transcript ?? "").join(" ").trim();
+          if (finals && finals !== lastFinalRef.current) {
+            lastFinalRef.current = finals;
+            setAiInstruction((prev) => (prev ? `${prev} ${finals}` : finals).trim());
+          }
+        };
+        rec.onend = () => {
+          if (keepMicRef.current) startSession();
+          else { recRef.current = null; setListening(false); }
+        };
+        rec.onerror = (e) => {
+          const err = e?.error ?? "";
+          if (err === "not-allowed" || err === "service-not-allowed" || err === "not-supported") {
+            stopMic();
+          } else if (keepMicRef.current) {
+            startSession();
+          }
+        };
+        recRef.current = rec;
+        rec.start();
+        setListening(true);
+      } catch {
+        stopMic();
+      }
+    };
+    startSession();
   }
 
   function handleAiSend() {
@@ -368,9 +398,18 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
               type="button"
               onClick={toggleMic}
               title={listening ? "Parar gravação" : "Gravar com voz"}
-              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${listening ? "border-red-400/70 bg-red-500/10 text-red-500 animate-pulse" : "border-border text-muted-foreground hover:text-foreground hover:border-primary/50"}`}
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${listening ? "border-red-400/70 bg-red-500/10 text-red-500" : "border-border text-muted-foreground hover:text-foreground hover:border-primary/50"}`}
             >
-              <Mic className="h-4 w-4" />
+              {listening ? (
+                <span className="voice-bars" aria-hidden>
+                  <span style={{ animationDelay: "0ms" }} />
+                  <span style={{ animationDelay: "160ms" }} />
+                  <span style={{ animationDelay: "320ms" }} />
+                  <span style={{ animationDelay: "80ms" }} />
+                </span>
+              ) : (
+                <Mic className="h-4 w-4" />
+              )}
             </button>
             <Button size="sm" className="h-8 flex-1" disabled={aiPanel.running || (!aiInstruction.trim() && !aiAttachment)} onClick={handleAiSend}>
               {aiPanel.running ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Send className="h-3.5 w-3.5 mr-1" />}

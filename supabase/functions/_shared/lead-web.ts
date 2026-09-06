@@ -121,11 +121,10 @@ export function textMentionsGeo(text: string, city: string, state: string): bool
 }
 
 export function extractPhoneBR(text: string): string | null {
-  const m = text.match(/(?:\+?55)?\s*\(?(\d{2})\)?[\s.-]?(\d{8,9})/);
+  const m = text.match(/(?:\+?55)?\s*\(?(\d{2})\)?[\s.-]*(\d{4,5})[\s.-]*(\d{4})/);
   if (!m) return null;
-  const ddd = m[1];
-  const num = m[2];
-  return `+55 ${ddd} ${num.slice(0, num.length - 4)} ${num.slice(-4)}`.replace(/  +/g, " ");
+  const digits = `${m[1]}${m[2]}${m[3]}`;
+  return `+55 ${digits.slice(0, 2)} ${digits.slice(2, digits.length - 4)} ${digits.slice(-4)}`.replace(/  +/g, " ");
 }
 
 export function extractWhatsappBR(text: string): string | null {
@@ -133,6 +132,27 @@ export function extractWhatsappBR(text: string): string | null {
   if (!m) return null;
   const digits = `55${m[1]}${m[2]}`;
   return digits;
+}
+
+// Evidência EXPLÍCITA de WhatsApp (links wa.me/wa.link/api.whatsapp.com e
+// rótulos "whatsapp:" antes de um número). Número fixo só vira WhatsApp se
+// houver essa evidência — nunca pela ausência de dados.
+export function extractWhatsAppExplicit(text: string): string | null {
+  if (!text) return null;
+  // wa.me / wa.link / api.whatsapp.com?phone=
+  const link = text.match(/wa\.(?:me|link)\/(?:\+?55)?(\d{10,13})/i) || text.match(/api\.whatsapp\.com\/send[^"'\s]*[?&]phone=(\d{10,13})/i);
+  if (link) {
+    const digits = link[1].replace(/\D/g, "");
+    if (digits.length === 10 || digits.length === 11) return `55${digits}`;
+    if (digits.length === 12 || digits.length === 13) return digits.startsWith("55") ? digits : `55${digits}`;
+    return null;
+  }
+  // Rótulo explícito: "WhatsApp: (11) 91234-5678", "whatsapp (11) 3456-7890"
+  const labeled = text.match(/whatsapp[^\d]{0,16}\s*\(?(\d{2})\)?[\s.-]*(\d{4,5})[\s.-]*(\d{4})/i);
+  if (labeled) {
+    return `55${labeled[1]}${labeled[2]}${labeled[3]}`;
+  }
+  return null;
 }
 
 export function extractInstagramFromText(text: string): string | null {
@@ -143,16 +163,63 @@ export function extractInstagramFromText(text: string): string | null {
   return handle;
 }
 
+// Instagram do próprio negócio a partir dos itens web (sem inventar): exige
+// sinal forte do nome no título OU handle compatível com token forte do nome.
+// `city` é usada como evidência COMBINADA (nome + cidade) para não associar o
+// Instagram de outra unidade/filial só por nome parecido.
+export function matchInstagramHandle(leadName: string, items: WebItem[], opts?: { city?: string | null; state?: string | null }): string | null {
+  const name = norm(leadName);
+  if (!name) return null;
+  const geoCity = opts?.city ? norm(opts.city) : "";
+  const tokens = name.split(/\s+/).filter((t) => t.length >= 4);
+  const strong = name.split(/\s+/).filter((t) => t.length >= 6);
+  if (tokens.length === 0) return null;
+
+  let best: { handle: string; score: number; why: string } | null = null;
+  for (const item of items) {
+    if (hostOf(item.url) !== "instagram.com") continue;
+    const rawHandle = extractInstagramFromText(item.url);
+    if (!rawHandle) continue;
+    const handle = norm(rawHandle);
+    const title = norm(item.title ?? "");
+    const desc = norm(item.description ?? "");
+    const context = `${title} ${desc}`;
+    let score = 0;
+    // Handle contém token forte do nome (ex.: petcareguarulhos ⊃ petcare).
+    if (strong.some((t) => handle.includes(t))) score = 95;
+    const matchedTitle = tokens.filter((t) => context.includes(t));
+    if (matchedTitle.length >= 2) score = Math.max(score, 75);
+    // Sinal combinado NOME + CIDADE: 1 token do nome E a cidade no contexto —
+    // resolve casos com múltiplos resultados parecidos (rede/filial).
+    if (score === 0 && geoCity) {
+      const oneName = tokens.some((t) => context.includes(t));
+      if (oneName && context.includes(geoCity)) score = 70;
+    }
+    if (score >= 70 && (!best || score > best.score)) {
+      best = { handle: rawHandle, score, why: matchedTitle.join("_") || handle };
+    }
+  }
+  return best?.handle ?? null;
+}
+
 // Extrai contatos do conteúdo de uma página. Só aceita telefone/whatsapp se a
 // página mencionar a cidade/estado alvo (não aceita contato de outra cidade).
-export function extractContactsFromMarkdown(md: string, city: string, state: string): { phone: string | null; whatsapp: string | null; instagram: string | null; geoConfirmed: boolean } {
+// Quando `requireGeo=false` (página oficial já confirmada pela fonte — Google/
+// OSM ou domínio próprio do negócio), o telefone/whatsapp são aceitos porque a
+// localização já veio da fonte estruturada; o Instagram sempre é extraído.
+export function extractContactsFromMarkdown(md: string, city: string, state: string, opts?: { requireGeo?: boolean }): { phone: string | null; whatsapp: string | null; instagram: string | null; geoConfirmed: boolean; whatsappEvidence: "link" | "label" | "mobile" | null } {
+  const requireGeo = opts?.requireGeo ?? true;
   const geoConfirmed = textMentionsGeo(md, city, state);
   const phone = extractPhoneBR(md);
-  const whatsappRaw = extractWhatsappBR(md);
+  const explicitWa = extractWhatsAppExplicit(md);
+  const whatsappRaw = explicitWa ?? extractWhatsappBR(md);
   const instagram = extractInstagramFromText(md);
-  const acceptedPhone = geoConfirmed ? phone : null;
-  const acceptedWa = geoConfirmed ? whatsappRaw : null;
-  return { phone: acceptedPhone, whatsapp: acceptedWa, instagram, geoConfirmed };
+  const trust = !requireGeo && (phone !== null || whatsappRaw !== null);
+  const accepted = geoConfirmed || trust;
+  const evidence: "link" | "label" | "mobile" | null = explicitWa
+    ? (md.includes("wa.me") || md.includes("wa.link") || md.includes("api.whatsapp.com") ? "link" : "label")
+    : whatsappRaw ? "mobile" : null;
+  return { phone: accepted ? phone : null, whatsapp: accepted ? whatsappRaw : null, instagram, geoConfirmed: geoConfirmed || trust, whatsappEvidence: accepted ? evidence : null };
 }
 
 export interface EnrichSummary {
@@ -173,6 +240,8 @@ export interface PublicLeadLike {
   state?: string | null;
   has_website?: boolean;
   score_reasons?: string[];
+  /** Proveniência segura: campo -> fonte (ex.: whatsapp → website oficial). */
+  sources?: Record<string, string>;
   [key: string]: unknown;
 }
 
@@ -215,19 +284,43 @@ export async function enrichLeadsWithWeb(opts: {
   };
 
   const items = [...web.tavily, ...web.firecrawl];
-  if (items.length === 0) return { leads, summary };
+  if (leads.length === 0) return { leads, summary };
 
   const seenDomain = new Set<string>();
-  const toScrape: Array<{ lead: PublicLeadLike; url: string }> = [];
+  const toScrape: Array<{ lead: PublicLeadLike; url: string; trustGeo: boolean }> = [];
 
   for (const lead of leads) {
+    const name = typeof lead.name === "string" ? lead.name : "";
+    if (!name.trim()) continue;
+
+    // (5.31) Instagram do próprio negócio também sai dos RESULTADOS de busca —
+    // nunca "chuta" (exige sinal do nome no título/handle).
+    if (!lead.instagram) {
+      const ig = matchInstagramHandle(name, items, { city, state });
+      if (ig) {
+        lead.instagram = ig;
+        const reasons = Array.isArray(lead.score_reasons) ? [...lead.score_reasons] : [];
+        reasons.push("Instagram → pesquisa web");
+        lead.score_reasons = reasons;
+        const src = (lead.sources as Record<string, string> | undefined) ?? {};
+        src.instagram = "pesquisa web";
+        lead.sources = src;
+      }
+    }
+
+    // Lead JÁ COM website (ex.: veio do Google Places/OSM): o site oficial era
+    // ignorado e o Instagram/contatos nunca eram extraídos. Agora o site oficial
+    // entra na fila de enriquecimento (geografia já confiável pela fonte).
     if (lead.website) {
       const d = hostOf(lead.website);
       if (d) seenDomain.add(d);
+      const needsContact = (!lead.phone && !lead.whatsapp) || !lead.instagram;
+      if (scrape && needsContact && toScrape.length < maxScrape) {
+        toScrape.push({ lead, url: lead.website, trustGeo: true });
+      }
       continue;
     }
-    const name = typeof lead.name === "string" ? lead.name : "";
-    if (!name.trim()) continue;
+
     const match = matchLeadWebsite(name, items);
     if (!match) continue;
     if (seenDomain.has(match.domain)) continue;
@@ -238,8 +331,11 @@ export async function enrichLeadsWithWeb(opts: {
     reasons.push(`Site encontrado via web (${match.evidence})`);
     lead.score_reasons = reasons;
     summary.websitesEnriched += 1;
-    if (!lead.phone && !lead.whatsapp && scrape && toScrape.length < maxScrape) {
-      toScrape.push({ lead, url: match.website });
+    // Só confia no contato sem texto de cidade quando o DOMÍNIO comprova o nome
+    // (senão mantém a exigência de geografia para não misturar filiais).
+    const trustGeo = match.evidence.startsWith("dominio_contem");
+    if (scrape && (!lead.phone && !lead.whatsapp) && toScrape.length < maxScrape) {
+      toScrape.push({ lead, url: match.website, trustGeo });
     }
   }
 
@@ -248,14 +344,28 @@ export async function enrichLeadsWithWeb(opts: {
     try {
       const md = await scrape?.(item.url);
       if (!md) continue;
-      const contacts = extractContactsFromMarkdown(md, city, state);
-      if (contacts.phone && !item.lead.phone) item.lead.phone = contacts.phone;
-      if (contacts.whatsapp && !item.lead.whatsapp) item.lead.whatsapp = contacts.whatsapp;
-      if (contacts.instagram && !item.lead.instagram) item.lead.instagram = contacts.instagram;
-      if (contacts.phone || contacts.whatsapp || contacts.instagram) {
+      const contacts = extractContactsFromMarkdown(md, city, state, { requireGeo: !item.trustGeo });
+      const reasons = Array.isArray(item.lead.score_reasons) ? [...item.lead.score_reasons] : [];
+      const src = (item.lead.sources as Record<string, string> | undefined) ?? {};
+      const origin = item.trustGeo ? "website oficial" : "website";
+      if (contacts.whatsapp && !item.lead.whatsapp) {
+        item.lead.whatsapp = contacts.whatsapp;
+        src.whatsapp = `${origin} (${contacts.whatsappEvidence === "mobile" ? "número móvel" : "evidência explícita de WhatsApp"})`;
+        reasons.push(`WhatsApp → ${src.whatsapp}`);
+      }
+      if (contacts.phone && !item.lead.phone) {
+        item.lead.phone = contacts.phone;
+        src.phone = `${origin} (telefone)`;
+        reasons.push(`Telefone → ${src.phone}`);
+      }
+      if (contacts.instagram && !item.lead.instagram) {
+        item.lead.instagram = contacts.instagram;
+        src.instagram = `${origin} (link na página)`;
+        reasons.push(`Instagram → ${src.instagram}`);
+      }
+      if (contacts.whatsapp || contacts.phone || contacts.instagram) {
         summary.contactsApplied += 1;
-        const reasons = Array.isArray(item.lead.score_reasons) ? [...item.lead.score_reasons] : [];
-        reasons.push(contacts.geoConfirmed ? "Contato confirmado na página oficial" : "Contato extraído da página oficial");
+        item.lead.sources = src;
         item.lead.score_reasons = reasons;
       }
     } catch {

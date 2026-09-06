@@ -170,12 +170,16 @@ export function validateOrvixLeadSegment(lead: Lead, targetSegment: string | nul
       rejectionCategory: "reject_term_hit",
     };
   }
+  // (5.31) Ausência de termo do segmento no NOME não é motivo para ocultar o
+  // lead: a fonte (Google/OSM) já filtrou pela busca do segmento, e nomes de
+  // marca ("Casa Aurora", "Empório do Zé") são reais sem carregar a palavra do
+  // nicho. Mantém o lead (com confiança menor), em vez de fechar o resultado.
   return {
-    valid: false,
-    reason: "sem termos do segmento no nome/categoria",
+    valid: true,
+    reason: "sem termo do segmento no nome/categoria — mantido pelo contexto da busca",
     ruleKey: key,
     matchedTerm: null,
-    rejectionCategory: "no_accept_match",
+    rejectionCategory: null,
   };
 }
 

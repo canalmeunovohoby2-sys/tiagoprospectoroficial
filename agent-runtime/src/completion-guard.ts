@@ -12,6 +12,7 @@
 import { assertGenerationQuality } from "./generation-gate";
 import { readWorkspace } from "./workspace";
 import type { WorkEvidence } from "./work-evidence";
+import { editRegressionIssues } from "../../supabase/functions/_shared/regression-guard";
 
 export interface FinishDecision {
   block: boolean;
@@ -101,7 +102,21 @@ export function decideFinishBlock(opts: {
     }
   }
 
-  // 3) QUALITY GATE (generate): estrutura mínima obrigatória.
+  // 3) REGRESSION GUARD (5.30, modo edit): EDITAR ≠ RECONSTRUIR. Uma edição não
+  //    pode desmontar o site existente (imagens, seções, nav, footer, CTAs,
+  //    efeitos, responsividade, conteúdo). Se houver regressão grave, bloqueia a
+  //    conclusão e o agente deve corrigir/restaurar antes de finalizar.
+  if (opts.mode === "edit" && hasStart && changed && opts.startFiles) {
+    const regressions = editRegressionIssues(opts.startFiles, files, opts.instruction ?? "");
+    if (regressions.length > 0) {
+      return {
+        block: true,
+        reason: `REGRESSÃO detectada na edição — você NÃO pode finalizar assim. EDITAR ≠ RECONSTRUIR: preserve o trabalho existente e modifique só o necessário. Corrija/restaure antes de chamar finish_task novamente:\n${regressions.map((r) => `- ${r}`).join("\n")}`,
+      };
+    }
+  }
+
+  // 4) QUALITY GATE (generate): estrutura mínima obrigatória.
   if (opts.mode !== "generate") return { block: false };
   const gate = assertGenerationQuality(files, {
     segment: opts.segment ?? "",

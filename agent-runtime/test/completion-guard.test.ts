@@ -145,3 +145,42 @@ describe("Depth Guard (5.28) — pedidos amplos não finalizam com mínimo esfor
     expect(d.block).toBe(false);
   });
 });
+
+describe("Regression Guard (5.30) — edição não pode desmontar o site", () => {
+  const RICH = {
+    "index.html": `<!doctype html><html><head><title>Barbearia Nobre</title></head><body>
+      <nav><a href="#inicio">Início</a><a href="#servicos">Serviços</a><a href="#contato">Contato</a></nav>
+      <section class="hero" id="inicio"><h1>Barbearia Nobre</h1><p>Texto de conteúdo generoso para o site da barbearia, com bastante informação para não ser considerada uma página pequena nesta análise de regressão.</p><a class="cta" href="https://wa.me/5511">Agendar horário</a></section>
+      <img src="https://images.unsplash.com/photo-1" alt="a"/><img src="https://images.unsplash.com/photo-2" alt="b"/><img src="https://images.unsplash.com/photo-3" alt="c"/><img src="https://images.unsplash.com/photo-4" alt="d"/>
+      <footer>© Barbearia Nobre · (11) 99999-0000</footer>
+    </body></html>`,
+    "src/site.css": ".hero{background:#111}@media(max-width:900px){.hero{width:100%}}@keyframes fade{from{opacity:0}to{opacity:1}}@keyframes slide{from{transform:none}to{transform:translateY(10px)}}",
+  };
+
+  it("edição destrutiva (perde imagens/nav/footer/responsividade) BLOQUEIA finish", () => {
+    const gutted = {
+      ...RICH,
+      "index.html": `<!doctype html><html><head><title>X</title></head><body><h2>Novo</h2><p>curto</p></body></html>`,
+      "src/site.css": "body{}",
+    };
+    const d = decideFinishBlock({ mode: "edit", files: gutted, startFiles: RICH, instruction: "muda a cor do botão", finishSkips: 0 });
+    expect(d.block).toBe(true);
+    expect(d.reason ?? "").toContain("REGRESSÃO");
+  });
+
+  it("edição preservando estrutura NÃO bloqueia (mesmo com arquivo reescrito)", () => {
+    const edited = {
+      ...RICH,
+      "index.html": RICH["index.html"].replace("#inicio", "#home").replace("Agendar horário", "Agende agora"),
+      "src/site.css": RICH["src/site.css"] + ".cta{transition:all .3s}",
+    };
+    const d = decideFinishBlock({ mode: "edit", files: edited, startFiles: RICH, instruction: "deixa o CTA com hover e texto 'Agende agora'", finishSkips: 0 });
+    expect(d.block).toBe(false);
+  });
+
+  it("reescrita do zero EXPLÍCITA não passa pelo Regression Guard", () => {
+    const novo = { ...RICH, "index.html": "<h1>Site novo</h1>" };
+    const d = decideFinishBlock({ mode: "edit", files: novo, startFiles: RICH, instruction: "reescreva o site do zero com nova identidade", finishSkips: 0 });
+    expect(d.block).toBe(false);
+  });
+});

@@ -6,6 +6,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useOptionalSidebar } from "@/components/ui/sidebar";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -35,6 +36,10 @@ interface Props {
 
 function OrvixLeadCardBase({ lead: l, isRejected, confidence, opportunity, segmentConfidence, onDiagnostic, onApproach, onCrm }: Props) {
   const [moreOpen, setMoreOpen] = useState(false);
+  // Com o menu lateral recolhido, os botões do card viram ícones (layout limpo).
+  const compact = useOptionalSidebar().isCollapsed;
+  const iconOnlyCls = compact ? "!w-8 !px-0 !justify-center" : "";
+  const iconCls = compact ? "h-4 w-4" : "h-3.5 w-3.5 mr-1";
 
   const diag = useMemo(() => computeOrvixDiagnostic(l), [l]);
   const prio = useMemo(() => computeOrvixPriority(l, diag), [l, diag]);
@@ -237,27 +242,28 @@ function OrvixLeadCardBase({ lead: l, isRejected, confidence, opportunity, segme
         {/* Linha 4: Ações principais */}
         <div className="flex flex-wrap items-center gap-1.5 shrink-0">
           {waHref && (
-            <Button asChild size="sm" className="h-8">
+            <Button asChild size="sm" className={`h-8 ${iconOnlyCls}`} title="Abrir WhatsApp">
               <a href={waHref} target="_blank" rel="noreferrer">
-                <MessageSquare className="h-3.5 w-3.5 mr-1" /> WhatsApp
+                <MessageSquare className={iconCls} />
+                {!compact && "WhatsApp"}
               </a>
             </Button>
           )}
           <Button
             size="sm"
             variant="outline"
-            className="h-8"
+            className={`h-8 ${iconOnlyCls}`}
             onClick={() => onCrm(l)}
             title="Abrir no CRM"
           >
-            <Kanban className="h-3.5 w-3.5 mr-1" />
-            CRM {l.in_crm && <span className="ml-1 h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />}
+            <Kanban className={iconCls} />
+            {!compact && <>CRM {l.in_crm && <span className="ml-1 h-1.5 w-1.5 rounded-full bg-emerald-500 inline-block" />}</>}
           </Button>
-          <Button size="sm" variant="outline" className="h-8" onClick={() => onDiagnostic(l)}>
-            <Stethoscope className="h-3.5 w-3.5 mr-1" /> Diagnóstico
+          <Button size="sm" variant="outline" className={`h-8 ${iconOnlyCls}`} onClick={() => onDiagnostic(l)} title="Ver diagnóstico">
+            <Stethoscope className={iconCls} /> {!compact && "Diagnóstico"}
           </Button>
-          <Button size="sm" variant="outline" className="h-8" onClick={() => onApproach(l)}>
-            <MessagesSquare className="h-3.5 w-3.5 mr-1" /> IA
+          <Button size="sm" variant="outline" className={`h-8 ${iconOnlyCls}`} onClick={() => onApproach(l)} title="Abordagem com IA">
+            <MessagesSquare className={iconCls} /> {!compact && "IA"}
           </Button>
 
           <DropdownMenu open={moreOpen} onOpenChange={setMoreOpen}>

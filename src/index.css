@@ -223,3 +223,23 @@ div[style*="Edit with Lovable"],
   z-index: -9999 !important;
 }
 
+
+/* Voice recorder equalizer (5.31) — ondas sonoras enquanto grava */
+@keyframes kilo-eq {
+  0%, 100% { transform: scaleY(0.25); }
+  50% { transform: scaleY(1); }
+}
+.voice-bars {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
+}
+.voice-bars > span {
+  width: 3px;
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: center;
+  animation: kilo-eq 0.8s ease-in-out infinite;
+}

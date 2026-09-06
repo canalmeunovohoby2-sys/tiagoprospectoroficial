@@ -196,12 +196,12 @@ export class BrowserSession {
     return this.inspectCurrent();
   }
 
-  async screenshot(name = "site"): Promise<string> {
+  async screenshot(name = "site", opts?: { fullPage?: boolean }): Promise<string> {
     if (!this.page) throw new Error("Página não aberta.");
     const fs = await import("node:fs");
     fs.mkdirSync(this.screenshotDir, { recursive: true });
     const file = join(this.screenshotDir, `${name}-${Date.now()}.png`);
-    await this.page.screenshot({ path: file, fullPage: true });
+    await this.page.screenshot({ path: file, fullPage: opts?.fullPage ?? true });
     return file;
   }
 

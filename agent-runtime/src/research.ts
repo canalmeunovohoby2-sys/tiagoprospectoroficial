@@ -35,6 +35,15 @@ export interface ResearchOutcome {
   error?: string;
 }
 
+/** Telemetria segura de pesquisa (sem secrets/conteúdo sensível) — prova de que
+ * web_search foi REALMENTE executado (5.32), com consultas e contagens. */
+export interface ResearchTraceItem {
+  query: string;
+  ok: boolean;
+  resultsCount: number;
+  source: string;
+}
+
 export function buildResearchQueries(businessName: string, segment: string, city?: string | null): string[] {
   const name = businessName || segment || "negócio";
   const place = city ? ` ${city}` : "";

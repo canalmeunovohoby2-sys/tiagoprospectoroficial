@@ -177,6 +177,13 @@ export async function editSiteWithAI(
   return { spec: data.spec, model: data.model ?? "deepseek-chat", changed: data.changed !== false, reply: data.reply, mode: data.mode };
 }
 
+export interface ResearchTraceItem {
+  query: string;
+  ok: boolean;
+  resultsCount: number;
+  source: string;
+}
+
 export interface AgentExecuteResult {
   status: "ok" | "error";
   reply?: string;
@@ -190,6 +197,8 @@ export interface AgentExecuteResult {
   runtime?: "cline" | "edge-fallback";
   resumed_session?: boolean;
   activity?: Array<{ phase: string; detail: string }>;
+  /** Prova de execução real da pesquisa web (sem secrets). */
+  researchTrace?: ResearchTraceItem[];
 }
 
 // Code-first: invoca o agent-execute que opera sobre os ARQUIVOS reais do projeto.
@@ -208,6 +217,8 @@ export async function invokeAgentExecute(input: {
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null };
   memory?: string[];
   attachments?: ChatAttachmentInput[];
+  /** Conversa recente (contexto de continuidade) — usada no prompt do agente. */
+  conversation?: string[];
 }): Promise<AgentExecuteResult> {
   // Anexos → arquivos reais no workspace (mapa), para o agente ler/usar.
   const files = { ...(input.files ?? {}) };
@@ -243,6 +254,7 @@ export async function invokeAgentExecute(input: {
       files,
       context: input.context,
       memory: input.memory ?? [],
+      conversation: (input.conversation ?? []).slice(-8),
       runtime: "static",
     },
   });
@@ -261,6 +273,27 @@ export interface ChatAttachmentInput {
   label?: string;
 }
 
+// Captura screenshots REAIS do site (desktop + mobile) no Agent Runtime para o
+// PDF de proposta. Sem runtime configurado ou em falha → {} (o PDF usa o hero).
+export async function captureWorkspaceScreenshots(files: Record<string, string>): Promise<{ desktop?: string; mobile?: string }> {
+  const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
+  if (!runtimeUrl || !files || !Object.keys(files).some((k) => k.endsWith("index.html"))) return {};
+  try {
+    const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/capture`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ files }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!res.ok) return {};
+    const data = (await res.json()) as { ok?: boolean; desktop?: string; mobile?: string; error?: string };
+    if (!data.ok || typeof data.desktop !== "string") return {};
+    return { desktop: data.desktop, mobile: typeof data.mobile === "string" ? data.mobile : undefined };
+  } catch {
+    return {};
+  }
+}
+
 export async function invokeProspectorAgent(input: {
   instruction: string;
   files: Record<string, string>;
@@ -268,6 +301,7 @@ export async function invokeProspectorAgent(input: {
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null };
   memory?: string[];
   attachments?: ChatAttachmentInput[];
+  conversation?: string[];
 }): Promise<AgentExecuteResult> {
   const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
   if (runtimeUrl) {
@@ -282,6 +316,7 @@ export async function invokeProspectorAgent(input: {
           context: input.context,
           memory: input.memory ?? [],
           attachments: input.attachments ?? [],
+          conversation: (input.conversation ?? []).slice(-8),
         }),
         signal: AbortSignal.timeout(180_000),
       });

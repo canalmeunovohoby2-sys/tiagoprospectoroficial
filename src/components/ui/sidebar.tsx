@@ -40,6 +40,19 @@ function useSidebar() {
   return context;
 }
 
+// Hook seguro para componentes que podem existir FORA do SidebarProvider:
+// retorna se a barra lateral está recolhida (para botões virarem ícones quando
+// o menu recolhe, mantendo o layout dos cards bonito).
+export function useOptionalSidebar(): { isCollapsed: boolean; isMobile: boolean } {
+  try {
+    const ctx = React.useContext(SidebarContext);
+    if (!ctx) return { isCollapsed: false, isMobile: false };
+    return { isCollapsed: ctx.state === "collapsed", isMobile: ctx.isMobile };
+  } catch {
+    return { isCollapsed: false, isMobile: false };
+  }
+}
+
 const SidebarProvider = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div"> & {
@@ -633,5 +646,6 @@ export {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
+  useOptionalSidebar,
   useSidebar,
 };

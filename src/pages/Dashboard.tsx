@@ -9,8 +9,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
-import {
-  AlertDialog,
+import { AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
@@ -20,6 +19,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { useOptionalSidebar } from "@/components/ui/sidebar";
 
 interface Stats {
   total: number;
@@ -45,6 +45,7 @@ function loadOffsets(): Record<MetricKey, number> {
 
 function Dashboard() {
   const { user } = useAuth();
+  const sidebarCompact = useOptionalSidebar().isCollapsed;
   const [stats, setStats] = useState<Stats>({ total: 0, favorites: 0, contacted: 0, proposals: 0, clients: 0 });
   const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
   const [recentContacts, setRecentContacts] = useState<RecentLead[]>([]);
@@ -141,7 +142,7 @@ function Dashboard() {
                       className="inline-flex items-center gap-1 text-[10px] px-1.5 py-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-background/60 border border-transparent hover:border-border/60 transition-colors"
                     >
                       <Trash2 className="h-3 w-3" />
-                      Zerar
+                      {!sidebarCompact && "Zerar"}
                     </button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>

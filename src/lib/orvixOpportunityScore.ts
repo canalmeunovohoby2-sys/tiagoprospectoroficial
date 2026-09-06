@@ -94,17 +94,34 @@ export function computeOpportunityScore(
   }
 
   // --- Canais de contato ---
-  if (lead.phone) { score += 4; reasons.push("Telefone disponível"); }
+  const hasPhone = !!lead.phone;
+  if (hasPhone) { score += 4; reasons.push("Telefone disponível"); }
   else { score -= 3; warnings.push("Sem telefone"); }
   if (lead.whatsapp) { score += 6; reasons.push("WhatsApp encontrado"); }
 
-  // --- Presença digital ---
-  let digitalChannels = 0;
-  if (lead.website) { score += 7; digitalChannels++; reasons.push("Site próprio"); }
-  if (lead.instagram) { score += 5; digitalChannels++; reasons.push("Instagram ativo"); }
-  if (lead.facebook) { score += 3; digitalChannels++; reasons.push("Facebook"); }
-  if (digitalChannels >= 3) { score += 4; reasons.push("Forte presença digital"); }
-  else if (digitalChannels === 0) { score -= 3; warnings.push("Sem presença digital identificada"); }
+  // --- Presença digital vs. OPORTUNIDADE (5.31) ---
+  // O Prospector vende presença digital: quem JÁ TEM site tem menos urgência,
+  // quem NÃO TEM site é a oportunidade — desde que o negócio pareça real e
+  // ativo (avaliações/canais/horário). Nunca elimina; só re-prioriza.
+  const hasIg = !!lead.instagram;
+  const hasFb = !!lead.facebook;
+  const hasHoursArr = Array.isArray(lead.opening_hours) ? lead.opening_hours.length > 0 : false;
+  const digitalChannels = (lead.website ? 1 : 0) + (hasIg ? 1 : 0) + (hasFb ? 1 : 0);
+  if (lead.website) {
+    score -= 4;
+    warnings.push("Já possui site próprio — menor urgência comercial");
+  } else {
+    const realSignals = (lead.reviews_count ?? 0) > 0 || hasPhone || !!lead.whatsapp || hasIg || hasFb || hasHoursArr;
+    if (realSignals) {
+      score += 10;
+      reasons.push("Sem site próprio — oportunidade de landing page");
+    } else {
+      score += 3;
+      warnings.push("Sem site — confirmar se o negócio está ativo antes de abordar");
+    }
+  }
+  if (hasIg) { score += 5; reasons.push("Instagram encontrado"); }
+  if (hasFb) { score += 2; reasons.push("Facebook encontrado"); }
 
   // --- Horário de funcionamento (operação ativa) ---
   const hours = Array.isArray(lead.opening_hours) ? lead.opening_hours : null;

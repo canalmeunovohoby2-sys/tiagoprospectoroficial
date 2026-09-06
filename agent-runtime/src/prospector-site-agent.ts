@@ -12,7 +12,7 @@ import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vi
 import { decideFinishBlock } from "./completion-guard";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity";
 import { computeWorkEvidence, type WorkEventLike } from "./work-evidence";
-import { researchEnabled, runSearchQuery } from "./research";
+import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research";
 
 export interface AgentRunOutcome {
   ok: boolean;
@@ -27,6 +27,8 @@ export interface AgentRunOutcome {
    * qualidade passar (número de bloqueios) ou finalizou direto. */
   finishSkips?: number;
   finishBlocked?: boolean;
+  /** Telemetria segura da pesquisa web REALMENTE executada nesta missão. */
+  researchTrace?: ResearchTraceItem[];
 }
 
 export interface ProspectorAgentOptions {
@@ -60,10 +62,14 @@ export class ProspectorSiteAgent {
   private pendingScreenshotPath: string | null = null;
   private finishSkips = 0;
   private finishBlocked = false;
+  /** Retentativas da barreira anti-reescrita destrutiva (write_file encolhedor). */
+  private writeSkips = 0;
   private runStartFiles: Record<string, string> | null = null;
   private currentInstruction = "";
   /** Sequência de tool-started da run atual — evidência real para o Depth Guard. */
   private currentToolEvents: WorkEventLike[] = [];
+  /** Pesquisas web REALMENTE executadas nesta missão (prova de não-simulação). */
+  private researchTrace: ResearchTraceItem[] = [];
 
   constructor(options: ProspectorAgentOptions) {
     this.options = options;
@@ -110,8 +116,10 @@ export class ProspectorSiteAgent {
         description:
           "Pesquisa na web por referências, tendências e técnicas de design do segmento (ex.: 'melhores sites de restaurante premium 2026', 'tendências web design gastronomia'). Use quando a pesquisa agregar valor à direção criativa ou à copy. NUNCA copie sites/layouts/textos encontrados — use apenas como referência para criar algo próprio e contextualizado.",
         inputSchema: z.object({ query: z.string().describe("consulta curta e específica (máx. ~60 palavras)") }),
-        async execute(input) {
+        execute: async (input: { query: string }) => {
           const r = await runSearchQuery(input.query);
+          // Prova real de execução (sem expor secrets/conteúdo sensível).
+          this.researchTrace.push({ query: input.query.slice(0, 200), ok: r.ok, resultsCount: r.results.length, source: "tavily" });
           return r.ok
             ? JSON.stringify({ ok: true, query: input.query, results: r.results })
             : JSON.stringify({ ok: false, error: r.error ?? "web_search indisponível" });
@@ -139,8 +147,26 @@ export class ProspectorSiteAgent {
 
     // COMPLETION GUARD (arquitetural): impede finish_task sem evidência/qualidade.
     // No modo generate, bloqueia a conclusão enquanto o Quality Gate falhar.
+    // (5.30) BARREIRA ANTI-REESCRITA: em EDIÇÃO, um write_file que reduziria
+    // drasticamente um arquivo existente é bloqueado — EDITAR ≠ RECONSTRUIR.
+    const REBUILD_RE = /reconstru|reescrev[ae]|refa[çc]a|do zero|rewrite/i;
     const beforeTool = async (ctx: { tool?: { name?: string } | undefined; toolCall?: { name?: string } | undefined; toolName?: string }) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const input: any = (ctx as { toolCall?: { input?: unknown } }).toolCall?.input ?? (ctx as { input?: unknown }).input ?? {};
       const name = ctx?.tool?.name ?? (ctx as { toolCall?: { toolName?: string } }).toolCall?.toolName ?? ctx?.toolName ?? "";
+      if (name === "write_file" && options.mode !== "generate" && !REBUILD_RE.test(this.currentInstruction) && this.writeSkips < 4) {
+        const path = typeof input?.path === "string" ? input.path : "";
+        const content = typeof input?.content === "string" ? input.content : "";
+        const clean = path.replace(/^\/+/, "").replace(/\.\//, "");
+        const current = readWorkspace(options.workspaceRoot)[clean];
+        if (current !== undefined && content.length < current.length * 0.55) {
+          this.writeSkips += 1;
+          return {
+            skip: true,
+            reason: `"write_file" reduziria ${clean} de ${current.length} para ${content.length} caracteres (remoção de mais de 45% num ARQUIVO EXISTENTE). EDITAR ≠ RECONSTRUIR: prefira "edit_file" (alteração localizada, preservando o resto) ou devolva o arquivo COMPLETO preservando todo o conteúdo existente que não faz parte do pedido.`,
+          };
+        }
+      }
       if (name !== "finish_task") return undefined;
       const decision = decideFinishBlock({
         mode: options.mode ?? "edit",
@@ -212,6 +238,17 @@ export class ProspectorSiteAgent {
           case "finish_task":
             out.push({ phase: "done", detail: "Concluído" });
             break;
+          case "web_search":
+            out.push({ phase: "researching", detail: `Pesquisando na web: ${String(input?.query ?? "").slice(0, 140)}` });
+            break;
+          case "visual_review":
+            out.push({ phase: "verifying", detail: "Análise visual (Gemini)" });
+            break;
+          case "browser_open":
+          case "browser_reload":
+          case "browser_inspect":
+            out.push({ phase: "verifying", detail: "Abrindo/verificando o site no navegador" });
+            break;
           default:
             out.push({ phase: "working", detail: String(e.toolCall?.toolName ?? e.toolName ?? "trabalhando…") });
         }
@@ -243,6 +280,8 @@ export class ProspectorSiteAgent {
     if (!shouldContinue) {
       this.finishSkips = 0;
       this.finishBlocked = false;
+      this.writeSkips = 0;
+      this.researchTrace = [];
       this.pendingScreenshotPath = null;
     }
     // Snapshot do início desta execução (para detectar "disse que alterou mas nada mudou").
@@ -261,6 +300,7 @@ export class ProspectorSiteAgent {
       return {
         ok: true, reply, files, touched, iterations: 0, events, activity,
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
+        researchTrace: this.researchTrace.slice(),
       };
     } catch (e) {
       const files = readWorkspace(this.options.workspaceRoot);
@@ -268,6 +308,7 @@ export class ProspectorSiteAgent {
         ok: false, reply: "", files, touched: [], iterations: 0, events,
         error: e instanceof Error ? e.message : String(e),
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
+        researchTrace: this.researchTrace.slice(),
       };
     } finally {
       unsub();

@@ -12,6 +12,7 @@ import {
   fetchSiteProject, generateSiteSpec, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
   createSiteVersion, invokeAgentExecute, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
+  captureWorkspaceScreenshots,
 } from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
@@ -23,6 +24,7 @@ import { buildConversationContext, buildDesignMemory } from "@/lib/aiEditContext
 import { materializeProjectFiles, GENERATION_STEPS, EDIT_STEPS, type AgentProgress } from "@/lib/agentProject";
 import { LiveProjectPreview } from "@/components/sites/LiveProjectPreview";
 import { buildStrategyInstruction, strategyById } from "@/lib/siteStrategies";
+import { buildWorkTimeline } from "@/lib/agentWorkActivity";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -225,9 +227,17 @@ export default function SiteProjectPage() {
         : heroRaw && typeof heroRaw === "object" && typeof (heroRaw as Record<string, unknown>).url === "string" ? (heroRaw as Record<string, unknown>).url as string
         : null;
       const heroData = heroUrl ? await fetchImageAsDataUrl(heroUrl) : null;
-      const { buffer, fileName } = await buildCommercialPdf(specData as never, heroData ? { dataUrl: heroData } : null);
+      // Screenshots REAIS do site (desktop + mobile) quando o runtime Node existe;
+      // sem runtime, o PDF usa o hero (imagem real do projeto) como fallback.
+      const codeFiles = draftFiles && Object.keys(draftFiles).length ? draftFiles
+        : project?.generated_code && typeof project.generated_code === "object"
+          ? Object.fromEntries(Object.entries(project.generated_code as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
+          : null;
+      const shots = codeFiles ? await captureWorkspaceScreenshots(codeFiles) : {};
+      const screenshots = [shots.desktop, shots.mobile].filter((s): s is string => typeof s === "string");
+      const { buffer, fileName } = await buildCommercialPdf(specData as never, heroData ? { dataUrl: heroData } : null, screenshots);
       saveBlob(new Blob([buffer], { type: "application/pdf" }), fileName);
-      toast.success("Proposta em PDF gerada");
+      toast.success(screenshots.length >= 2 ? "Proposta em PDF gerada com capturas reais do site" : "Proposta em PDF gerada");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao gerar PDF");
     } finally {
@@ -433,12 +443,8 @@ export default function SiteProjectPage() {
     const snapshot = draftSpec;
     appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }]).catch(() => {});
     const hasWorkspace = !!draftFiles && Object.keys(draftFiles).length > 0;
-    const pushReply = (msg: string, activity?: Array<{ phase: string; detail: string }>) => {
-      const activityLines = (activity ?? [])
-        .filter((a) => a.phase === "editing" || a.phase === "done")
-        .map((a) => `✓ ${a.detail}`)
-        .slice(0, 8);
-      const full = activityLines.length ? `${msg}\n\n${activityLines.join("\n")}` : msg;
+    const pushReply = (msg: string, activity?: Array<{ phase: string; detail: string }>, changedFiles?: string[]) => {
+      const full = `${msg}${buildWorkTimeline(activity, changedFiles)}`;
       setAiMessages((prev) => [...prev, { role: "assistant", text: full }]);
       appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: full }]).catch(() => {});
     };
@@ -465,6 +471,7 @@ export default function SiteProjectPage() {
             },
             memory: designMemory(),
             attachments: attachment ? [{ name: attachment.label, dataUrl: attachment.dataUrl, mediaType: guessMediaType(attachment.dataUrl), label: attachment.label }] : [],
+            conversation: chatConversation(),
           });
         } catch (e) {
           agentErr = e;
@@ -486,7 +493,8 @@ export default function SiteProjectPage() {
           else if (autosave.ok) savedNote = "\n\n(estado já era o mais recente — nenhuma versão duplicada)";
           else savedNote = `\n\n⚠ Não foi possível salvar automaticamente: ${autosave.error || "erro desconhecido"}. A edição está no preview — clique em Salvar para persistir.`;
           const valErrors = agentRes.status === "error" && agentRes.errors?.length ? `\n(Validação reportou: ${agentRes.errors.slice(0, 2).join("; ")})` : "";
-          pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}${valErrors}`, agentRes.activity);
+          const changedKeys = Object.keys(agentRes.files).filter((p) => draftFiles?.[p] !== agentRes.files?.[p]);
+          pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}${valErrors}`, agentRes.activity, changedKeys);
           stopProgress();
           setAgentStep(null);
           setAiRunning(false);

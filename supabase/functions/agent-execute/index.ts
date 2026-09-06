@@ -18,6 +18,7 @@ import {
   type WorkspaceMap,
 } from "../_shared/agent-workspace.ts";
 import { createExecutionRuntime, type ExecutionResult } from "../_shared/agent-execution.ts";
+import { editRegressionIssues } from "../_shared/regression-guard.ts";
 
 const MAX_FILE_OPS = 24;
 const MAX_ITERATIONS = 3;
@@ -65,6 +66,13 @@ REGRAS DE ENTREGA:
   exato (ex.: fechamento de uma seção, a classe do hero) e use "edit". Você pode usar
   "edit" múltiplas vezes no mesmo arquivo em uma mesma resposta.
  - Antes de decidir, leia os arquivos fornecidos no bloco CONTEÚDO ATUAL.
+
+COMUNICAÇÃO PROFISSIONAL (5.28):
+- O "reply" é a mensagem ao usuário (pt-BR, tom humano de dev sênior — nunca robótico).
+- Quando a tarefa tiver várias etapas, escreva a resposta estruturada conforme o trabalho (use os que fizerem sentido; tarefas pequenas: 1–2 frases):
+  🔎 Análise · 📋 Diagnóstico · 🛠️ Execução · 📁 Arquivos (paths reais) · 🧪 Verificação (o que você REALMENTE validou) · ✅ Resultado/estado final.
+- Auditoria/pedido de análise técnica: entregue estrutura com arquivos analisados, componentes/fluxos, o que existe, o que falta/está incorreto, problemas, impacto, alterações reais (ou "nenhuma, pois não foi pedido"), evidências e o que ainda precisa correção. NÃO altere arquivos se não foi pedido.
+- Nunca invente arquivos/alterações/testes/resultados. Se algo falhou ou não foi verificado, diga explicitamente. Diferencie conversa de execução: conversa → responda sem alterar.
 
 LIBERDADE CRIATIVA E INICIATIVA (5.26):
 - Você é o cérebro criativo e decisor. Não espere instruções detalhando cada decisão de design.
@@ -142,6 +150,7 @@ function buildAgentPrompt(input: {
   filesContent: string;
   buildErrors: string[];
   researchBlock?: string;
+  conversationBlock?: string;
 }): string {
   const errBlock = input.buildErrors.length
     ? `\nERROS DA VALIDAÇÃO ANTERIOR (corrija NA PRÓXIMA rodada de operações):\n- ${input.buildErrors.join("\n- ")}\n`
@@ -149,6 +158,7 @@ function buildAgentPrompt(input: {
   return `CONTEXTO DA EMPRESA (dados reais — não invente):
 ${input.contextLines || "(sem contexto adicional)"}
 ${input.memoryBlock ? `MEMÓRIA DE DECISÕES (preserve):\n${input.memoryBlock}\n` : ""}
+${input.conversationBlock ? `${input.conversationBlock}\n` : ""}
 INSTRUÇÃO DO USUÁRIO:
 "${input.instruction}"
 ${errBlock}
@@ -228,7 +238,7 @@ async function edgeSearchOnce(query: string, key: string): Promise<Array<{ title
 }
 
 // Retorna um bloco enxuto de referências ou "" (nunca lança).
-async function edgeResearchBlock(opts: { name?: string; segment?: string; city?: string }): Promise<string> {
+async function edgeResearchBlock(opts: { name?: string; segment?: string; city?: string }, meta?: { trace: Array<{ query: string; ok: boolean; resultsCount: number; source: string }> }): Promise<string> {
   const keys = edgeTavilyKeys();
   if (keys.length === 0) return "";
   const seg = opts.segment || "negócio local";
@@ -239,10 +249,12 @@ async function edgeResearchBlock(opts: { name?: string; segment?: string; city?:
   ];
   const lines: string[] = [];
   for (const q of queries) {
+    let queryCount = 0;
     for (const key of keys) {
       try {
         const results = await edgeSearchOnce(q, key);
         if (!results.length) continue;
+        queryCount = results.length;
         lines.push(`Queries: "${q}"`);
         for (const r of results.slice(0, 4)) {
           lines.push(`- ${r.title || r.url}`);
@@ -251,6 +263,7 @@ async function edgeResearchBlock(opts: { name?: string; segment?: string; city?:
         break;
       } catch { /* tenta próxima chave/query */ }
     }
+    if (queryCount > 0 && meta) meta.trace.push({ query: q.slice(0, 160), ok: true, resultsCount: queryCount, source: "tavily" });
   }
   if (!lines.length) return "";
   const body = lines.join("\n");
@@ -270,6 +283,7 @@ Deno.serve(async (req) => {
     const files = fromSnapshot(body?.files ?? {});
     const context = (body?.context && typeof body?.context === "object" ? body.context : {}) as Record<string, unknown>;
     const memory = Array.isArray(body?.memory) ? (body.memory as unknown[]).filter((x): x is string => typeof x === "string").slice(-6) : [];
+    const conversation = Array.isArray(body?.conversation) ? (body.conversation as unknown[]).filter((x): x is string => typeof x === "string").slice(-8) : [];
     const companyName = String(context.name ?? context.company_name ?? "").trim();
     const ctxLines = [
       context.name && `Empresa: ${context.name}`,
@@ -291,17 +305,24 @@ Deno.serve(async (req) => {
     // Geração (workspace sem index.html): pesquisa referências antes da missão.
     const isGenerate = Object.keys(files).length === 0 || !listFiles(files).some((p) => p.endsWith("index.html"));
     let researchBlock = "";
+    const researchTrace: Array<{ query: string; ok: boolean; resultsCount: number; source: string }> = [];
     if (isGenerate) {
       try {
         researchBlock = await edgeResearchBlock({
           name: String(context.name ?? context.company_name ?? ""),
           segment: String(context.segment ?? ""),
           city: String(context.city ?? ""),
-        });
+        }, { trace: researchTrace });
       } catch { researchBlock = ""; }
     }
 
+    // Conversa recente (continuidade) — contexto, não nova instrução.
+    const conversationBlock = conversation.length
+      ? `CONVERSA RECENTE (contexto para continuidade — a INSTRUÇÃO acima é a mensagem atual; entenda referências a mensagens anteriores sem exigir repetição e não desfaça o que já foi feito):\n- ${conversation.join("\n- ").slice(0, 3000)}`
+      : "";
+
     let current = files;
+    const baseline = files; // estado ORIGINAL (para detecção de regressão)
     let lastOps: AgentOp[] = [];
     let lastReply = "";
     let usedModel = DEFAULT_DEEPSEEK_MODEL;
@@ -321,6 +342,7 @@ Deno.serve(async (req) => {
         filesContent: summarizeContent(current, companyName),
         buildErrors: firstRound ? (emptyOpsNudge ? ["VOCÊ RESPONDEU QUE FEZ A MUDANÇA MAS DEVOLVEU ZERO OPERATIONS. ISSO É ENTREGA INCOMPLETA — devolva write/edit reais agora."] : []) : buildResult.errors,
         researchBlock,
+        conversationBlock,
       });
       firstRound = false;
 
@@ -362,13 +384,41 @@ Deno.serve(async (req) => {
       current = applied.files;
       lastOps = ops;
       buildResult = await runtime.build(current);
-      if (buildResult.verdict === "ok") break; // build passou
-      // build com erro → próxima iteração corrige
+      if (buildResult.verdict !== "ok") continue; // build com erro → corrige
+      if (isGenerate) break; // geração: regressão não se aplica (site do zero)
+      // (5.30) REGRESSION GUARD: EDITAR ≠ RECONSTRUIR — impede que a edição
+      // desmonte o site existente e devolve os problemas para o agente corrigir.
+      const regressions = editRegressionIssues(baseline, current, instruction);
+      if (regressions.length) {
+        buildResult = { verdict: "error", errors: regressions.slice(0, 4), logs: ["regressão detectada — restaure/corrija antes de concluir"] };
+        continue;
+      }
+      break; // build passou e sem regressão
     }
 
     const finalBuild = buildResult.verdict === "ok"
       ? buildResult
       : await runtime.build(current);
+    const regressions = isGenerate ? [] : editRegressionIssues(baseline, current, instruction);
+    if (regressions.length) {
+      // Restauração defensiva: devolve o ESTADO ORIGINAL (nada de edição
+      // destrutiva) + explicação honesta; o front mostra o bloqueio.
+      return new Response(
+        JSON.stringify({
+          status: "error",
+          reply: lastReply,
+          errors: regressions.slice(0, 4),
+          logs: ["Edição descartada para preservar o site (regressão detectada)."],
+          changed: false,
+          touched: [],
+          files: baseline,
+          spec: null,
+          model: usedModel,
+          researchTrace,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // Precisamos também devolver a "spec" derivada do site.json (compatibilidade),
     // se presente e JSON válido, para o front conseguir sincronizar dados.
@@ -392,6 +442,7 @@ Deno.serve(async (req) => {
         files: current,
         spec: derivedSpec,
         model: usedModel,
+        researchTrace,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
