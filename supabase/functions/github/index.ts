@@ -92,18 +92,9 @@ Deno.serve(async (req) => {
       const ident = await ghJson<{ login: string; id: number }>(accessToken, "/user");
       if (!ident.ok || !ident.data) return json({ error: "Não foi possível obter identidade GitHub" }, 400);
       await admin.from("github_connections").upsert({ user_id: st.user_id, github_login: ident.data.login, access_token: accessToken, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-      const html = `<html><body><script>
-(function(){
-  var origin = ${JSON.stringify(appOrigin || "")};
-  try { if (origin && window.opener) window.opener.postMessage({ type: "github_oauth_success" }, origin); } catch (e) {}
-  // Fallback robusto: fecha se possível; senão redireciona para o app.
-  try { window.close(); } catch (e) {}
-  setTimeout(function(){
-    if (origin) { try { window.location.replace(origin + "/?github_connected=1"); } catch (e) {} }
-    document.body.innerHTML = "<p style='font-family:sans-serif'>Conta GitHub conectada. Pode fechar esta aba.</p>";
-  }, 600);
-})();
-</script><p style="font-family:sans-serif">Conta GitHub conectada. Pode fechar esta aba.</p></body></html>`;
+      const html = appOrigin
+        ? `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0.6; url=${appOrigin}/?github_connected=1"><title>GitHub conectado</title></head><body style="font-family:sans-serif;text-align:center;padding-top:60px"><p>Conta GitHub conectada.</p><p>Redirecionando… <a href="${appOrigin}/?github_connected=1">Abrir o app</a></p></body></html>`
+        : `<!doctype html><html><head><meta charset="utf-8"><title>GitHub conectado</title></head><body style="font-family:sans-serif;text-align:center;padding-top:60px"><p>Conta GitHub conectada. Pode fechar esta aba.</p></body></html>`;
       return new Response(html, { status: 200, headers: { ...corsHeaders, "Content-Type": "text/html" } });
     }
 
