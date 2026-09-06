@@ -163,7 +163,7 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   const ds = obj(spec.design_system);
   const specColors = obj(ds.colors) as Record<string, string>;
   // Paleta REAL extraída do site tem prioridade sobre design_system.
-  const colors: Record<string, string> = { ...specColors, ...(realPalette ?? {}) };
+  const colors = { ...specColors, ...(realPalette ?? {}) } as Record<string, string>;
   const typo = obj(ds.typography);
   const content = obj(spec.content);
   const hero = obj(content.hero);

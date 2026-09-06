@@ -382,7 +382,7 @@ export function buildGenerationMission(ctx: { name?: string | null; segment?: st
     Array.isArray(ctx.services) && ctx.services.length ? `Serviços: ${ctx.services.join(", ")}` : "",
   ].filter(Boolean).join("\n");
   const extra = briefing && Object.keys(briefing).length ? `\nBriefing adicional (use o que for real; não invente):\n${JSON.stringify(briefing).slice(0, 1800)}` : "";
-  return `CRIE UM SITE COMPLETO E PREMIUM para este negócio, direto no workspace (site estático autocontido: index.html completo, CSS em <style> inline ou src/site.css, dados em src/site.json). Você é um Senior UI/UX Director + Art Director + Frontend Engineer especialista em landing pages de alta conversão.
+  const mission = `CRIE UM SITE COMPLETO E PREMIUM para este negócio, direto no workspace (site estático autocontido: index.html completo, CSS em <style> inline ou src/site.css, dados em src/site.json). Você é um Senior UI/UX Director + Art Director + Frontend Engineer especialista em landing pages de alta conversão.
 
 CONTEXTO REAL DO NEGÓCIO:
 ${ctxLines || "(poucos dados — não invente o resto)"}
@@ -401,6 +401,10 @@ REGRAS:
 - NÃO invente endereço/telefone/WhatsApp/horários/preços/avaliações/certificações/resultados/serviços não fornecidos.
 - NÃO deixe placeholders ("lorem", "adicione aqui") — código 100% integral do <!DOCTYPE html> ao </html>.
 - Faça o site COMPLETO (não curto): hero forte + pelo menos 4-5 seções com função + footer rico.`;
+  if (ctx?.whatsapp && String(ctx.whatsapp).trim()) {
+    mission += `\nWHATSAPP REAL DO CLIENTE: ${String(ctx.whatsapp).trim()} — inclua um botão natural para https://wa.me/${String(ctx.whatsapp).replace(/\D/g, "")} no local mais adequado do design (hero/contato/CTA) e mantenha esse número nas futuras edições. NÃO use outro número nem crie botão se não houver WhatsApp.`;
+  }
+  return mission;
 }
 
 /** URL do Agent Runtime (editor completo/Cline). Uma única fonte do roteamento.

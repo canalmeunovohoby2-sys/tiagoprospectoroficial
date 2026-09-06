@@ -55,6 +55,11 @@ CÓDIGO (regras de execução):
 
 IMAGENS DO USUÁRIO (arquivos em assets/, anexados no chat):
 - São fotos/logo reais do cliente. A regra "não repetir a mesma imagem" vale para banco de imagens (ex.: Unsplash), NÃO para fotos fornecidas pelo usuário.
+
+WHATSAPP DO CLIENTE (obrigatório quando fornecido):
+- Se o contexto trouxer um WHATSAPP real do cliente/projeto, o site deve incluir um botão de WhatsApp natural no local que melhor combina com o design (hero, contato, CTA final ou botão flutuante), apontando para https://wa.me/NUMERO (só dígitos, formato 55+DDD+número).
+- PRESERVE esse número e o botão em TODAS as edições futuras — mudanças visuais/textuais/estruturais não podem apagá-los sem pedido explícito.
+- Nunca use outro número, telefone fixo ou o seu próprio WhatsApp. Se NÃO houver WhatsApp real, NÃO crie botão (o site funciona normalmente sem ele).
 - PRESERVE A TRANSPARÊNCIA: logos/PNG sem fundo devem continuar sem fundo. NUNCA adicione fundo preto/branco atrás da imagem transparente, nunca converta para JPG e não envolva o logo em caixa com fundo escuro apenas para "combinar" — deixe a área transparente.
 - Quando o usuário pedir para usar a foto dele em vários lugares (hero + cards + sobre...), REUTILIZE o MESMO arquivo de assets/ quantas vezes fizer sentido — isso é o esperado, não é preguiça.
 - Para usar: referencie o arquivo real (<img src="assets/seu-arquivo.png"> ou url(...)) — o preview do produto embute automaticamente. NÃO embuta o data URL gigante inline no HTML (deixa o arquivo enorme e quebra edições futuras). Só embuta inline se for indispensável para exportar em um único arquivo.
