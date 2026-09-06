@@ -59,8 +59,14 @@ Deno.serve(async (req) => {
 
     // ── OAUTH CALLBACK ──
     if (action === "oauth_callback") {
-      const code = String(body.code ?? ""); const state = String(body.state ?? "");
-      if (!code || !state) return json({ error: "state/code ausentes" }, 400);
+      // O GitHub redireciona via GET com parâmetros na URL:
+      //   /functions/v1/github?action=oauth_callback&code=...&state=...
+      const url = new URL(req.url);
+      const code = url.searchParams.get("code") ?? "";
+      const state = url.searchParams.get("state") ?? "";
+      const oauthError = url.searchParams.get("error");
+      if (oauthError) return json({ error: `Autorização negada no GitHub (${oauthError}).`, denied: true }, 400);
+      if (!code || !state) return json({ error: "state/code ausentes na URL do callback" }, 400);
       const { data: st } = await admin.from("github_oauth_states").select("user_id").eq("state", state).single();
       if (!st) return json({ error: "state inválido ou reutilizado" }, 400);
       await admin.from("github_oauth_states").delete().eq("state", state);

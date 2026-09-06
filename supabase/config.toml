@@ -1,1 +1,4 @@
 project_id = "okgbisysqcbaloereqdb"
+
+[functions.github]
+verify_jwt = false
