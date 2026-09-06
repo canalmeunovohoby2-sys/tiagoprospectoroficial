@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -34,6 +34,24 @@ const RouteFallback = () => (
   <div className="min-h-screen flex items-center justify-center text-muted-foreground">Carregando…</div>
 );
 
+// Fecha o popup do OAuth do GitHub quando ele volta ao app via ?github_connected=1
+// e avisa a janela original (que atualiza o painel e fecha a conexão visual).
+const OAuthPopupCloser = () => {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("github_connected") !== "1") return;
+    try {
+      if (window.opener) {
+        window.opener.postMessage({ type: "github_oauth_success" }, window.location.origin);
+        setTimeout(() => { try { window.close(); } catch { /* não fecha em alguns browsers */ } }, 250);
+      } else {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    } catch { /* ignore */ }
+  }, []);
+  return null;
+};
+
 const App = () => (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
@@ -42,6 +60,7 @@ const App = () => (
         <Sonner />
         <AuthProvider>
           <BrowserRouter>
+            <OAuthPopupCloser />
             <Suspense fallback={<RouteFallback />}>
               <Routes>
                 <Route path="/auth" element={<Navigate to="/" replace />} />
