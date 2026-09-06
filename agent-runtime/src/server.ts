@@ -74,7 +74,7 @@ function makeAgent(sessionKey: string, projectId: string, files: Record<string, 
     baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
     modelId,
     providerId,
-    maxIterations: typeof body.maxIterations === "number" ? body.maxIterations : undefined,
+    maxIterations: typeof body.maxIterations === "number" ? body.maxIterations : Math.min(80, Math.max(8, Number(process.env.AGENT_MAX_ITERATIONS ?? 40))),
     initialFiles: files,
     mode: typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit",
     enableBrowser: body.enableBrowser !== false, // default ligado (browser QA disponível)
@@ -153,7 +153,9 @@ export function startServer(port = PORT, host = HOST) {
         const genKey = `generate:${projectId}`;
         pruneSessions();
         const existingGen = sessions.get(genKey);
-        const agent = existingGen?.agent ?? makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate" });
+        const genIter = Math.min(80, Math.max(10, Number(body.maxIterations ?? process.env.GENERATE_MAX_ITERATIONS ?? 45)));
+        const genBrowser = body.enableBrowser !== false && process.env.GENERATE_BROWSER !== "0";
+        const agent = existingGen?.agent ?? makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser });
         if (!existingGen) sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "" });
 
         // ANEXOS (5.26) na geração: materializa no workspace (ex.: logo/foto real do cliente).
@@ -240,7 +242,7 @@ IMPORTANTE: a "Direção criativa sugerida" é apenas um PONTO DE PARTIDA entre 
           name: business.name ?? "",
           businessHas: (f) => f === "hours" ? false : true,
         });
-        const gateCycles = 2;
+        const gateCycles = Math.min(3, Math.max(0, Number(process.env.GENERATE_GATE_CYCLES ?? 1)));
         for (let g = 0; g < gateCycles && !gateResult.ok; g++) {
           const fixMission = `Antes de finalizar, você precisa corrigir os problemas técnicos abaixo apontados pela revisão automática da geração. Continue trabalhando no código (pode abrir o navegador para validar) e corrija TODOS:
 ${gateResult.issues.map((i) => `- ${i}`).join("\n")}
