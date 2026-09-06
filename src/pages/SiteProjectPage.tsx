@@ -225,22 +225,25 @@ export default function SiteProjectPage() {
     if (!specData) { toast.error("Gere o site antes de exportar a proposta."); return; }
     setBusyAction("pdf");
     try {
-      const heroRaw = (specData.content?.hero as Record<string, unknown> | undefined)?.image;
-      const heroUrl = typeof heroRaw === "string" ? heroRaw
-        : heroRaw && typeof heroRaw === "object" && typeof (heroRaw as Record<string, unknown>).url === "string" ? (heroRaw as Record<string, unknown>).url as string
-        : null;
-      const heroData = heroUrl ? await fetchImageAsDataUrl(heroUrl) : null;
-      // Screenshots REAIS do site (desktop + mobile) quando o runtime Node existe;
-      // sem runtime, o PDF usa o hero (imagem real do projeto) como fallback.
+      toast.info("Capturando versão desktop e mobile do site…");
+      // Fonte de verdade = estado ATUAL do editor (draftFiles), senão generated_code.
       const codeFiles = draftFiles && Object.keys(draftFiles).length ? draftFiles
         : project?.generated_code && typeof project.generated_code === "object"
           ? Object.fromEntries(Object.entries(project.generated_code as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
           : null;
-      const shots = codeFiles ? await captureWorkspaceScreenshots(codeFiles) : {};
-      const screenshots = [shots.desktop, shots.mobile].filter((s): s is string => typeof s === "string");
-      const { buffer, fileName } = await buildCommercialPdf(specData as never, heroData ? { dataUrl: heroData } : null, screenshots);
+      if (!codeFiles || !Object.keys(codeFiles).some((k) => k.endsWith("index.html"))) {
+        throw new Error("Nenhum arquivo de site disponível para capturar.");
+      }
+      const shots = await captureWorkspaceScreenshots(codeFiles);
+      if (!shots.desktop || !shots.mobile) {
+        // NUNCA gerar PDF genérico: sem captura real, falha de forma explícita.
+        throw new Error("Não foi possível capturar o site para gerar a proposta (desktop/mobile). Verifique se o Agent Runtime está no ar e com memória suficiente, e tente novamente.");
+      }
+      toast.info("Montando apresentação…");
+      const screenshots = [shots.desktop, shots.mobile];
+      const { buffer, fileName } = await buildCommercialPdf(specData as never, null, screenshots);
       saveBlob(new Blob([buffer], { type: "application/pdf" }), fileName);
-      toast.success(screenshots.length >= 2 ? "Proposta em PDF gerada com capturas reais do site" : "Proposta em PDF gerada");
+      toast.success("Proposta em PDF gerada com capturas reais do site");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao gerar PDF");
     } finally {
