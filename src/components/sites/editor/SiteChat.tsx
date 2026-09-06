@@ -279,7 +279,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
             {(() => {
               const current = liveActivity[liveActivity.length - 1];
               return (
-                <p className="mt-1 flex items-start gap-1.5 text-xs font-medium leading-snug text-foreground" key={current.detail}>
+                <p className="mt-1 flex items-start gap-1.5 text-xs font-medium leading-snug text-foreground" key={`${liveActivity.length}-${current.detail}`}>
                   <span className="shrink-0" aria-hidden>{liveIcon(current.phase, current.detail)}</span>
                   <span className="min-w-0 break-words">{current.detail}</span>
                 </p>
