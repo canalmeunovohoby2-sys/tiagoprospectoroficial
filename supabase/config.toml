@@ -2,3 +2,6 @@ project_id = "okgbisysqcbaloereqdb"
 
 [functions.github]
 verify_jwt = false
+
+[functions.runtime-config]
+verify_jwt = false
