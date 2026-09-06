@@ -330,7 +330,7 @@ export async function invokeProspectorAgent(input: {
         execution: input.execution ?? null,
         stream: onLiveActivity ? true : false,
       }),
-      signal: AbortSignal.timeout(300_000),
+      signal: AbortSignal.timeout(600_000),
     });
     if (!res.ok) {
       return { status: "error", executor: "cline-editor", runtime: "cline", errors: [`Editor completo indisponível (HTTP ${res.status}).`] };
@@ -450,7 +450,7 @@ export async function invokeProspectorGenerate(input: {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {}, user_id: input.userId ?? undefined }),
-      signal: AbortSignal.timeout(300_000),
+      signal: AbortSignal.timeout(600_000),
     });
     if (res.ok) {
       const data = (await res.json()) as AgentExecuteResult & { error?: string };
