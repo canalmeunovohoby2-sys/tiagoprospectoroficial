@@ -56,7 +56,7 @@ export function GitHubProjectButton({ projectId, userId }: { projectId: string; 
   async function connect() {
     setBusy(true); setNotice(null);
     try {
-      const r = (await call("oauth_start")) as { authorizeUrl?: string };
+      const r = (await call("oauth_start", { appOrigin: window.location.origin.replace(/\/$/, "") })) as { authorizeUrl?: string };
       if (!r.authorizeUrl) throw new Error("OAuth não configurado no servidor");
       const w = window.open(r.authorizeUrl, "_blank", "width=640,height=720");
       if (!w) throw new Error("Bloqueio de pop-up — permita pop-ups");

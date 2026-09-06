@@ -9,7 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual } from "@/data/siteProjects";
 import {
-  fetchSiteProject, generateSiteSpec, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
+  fetchSiteProject, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
   createSiteVersion, invokeAgentExecute, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
   captureWorkspaceScreenshots,
@@ -380,16 +380,9 @@ export default function SiteProjectPage() {
         return;
       }
 
-      // FALLBACK: gerador clássico (spec) quando o Cline não está disponível.
-      const { spec, model } = await generateSiteSpec(briefing);
-      const files = materializeProjectFiles(spec);
-      await saveGeneratedSite(project.id, spec, model, files);
-      if (user?.id) {
-        await createSiteVersion(project.id, user.id, spec, pendingSummary).catch(() => {});
-        setPendingSummary(undefined);
-      }
-      toast.success("Site criado e salvo");
-      await load();
+      // SEM FALLBACK para o gerador clássico: se o editor completo (Agent Runtime
+      // + Cline) não estiver disponível, o erro é explícito — igual à edição.
+      throw new Error((genRes.errors ?? ["Editor completo indisponível."]).join(" "));
     } catch (e) {
       const message = friendlyAiError(e);
       setGenError(message);

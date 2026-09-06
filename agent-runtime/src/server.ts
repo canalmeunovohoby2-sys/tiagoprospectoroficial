@@ -6,14 +6,14 @@
 // memória; cada nova mensagem chama agent.continue() para manter o contexto.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
-import { ProspectorSiteAgent } from "./prospector-site-agent";
-import { BrowserSession } from "./browser-session";
-import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace } from "./workspace";
-import type { BusinessContext } from "./tools";
-import { assertGenerationQuality } from "./generation-gate";
-import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction";
-import { materializeAttachments, type ChatAttachment } from "./attachments";
-import { researchBusiness, formatResearch, type ResearchOutcome } from "./research";
+import { ProspectorSiteAgent } from "./prospector-site-agent.js";
+import { BrowserSession } from "./browser-session.js";
+import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace } from "./workspace.js";
+import type { BusinessContext } from "./tools.js";
+import { assertGenerationQuality } from "./generation-gate.js";
+import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js";
+import { materializeAttachments, type ChatAttachment } from "./attachments.js";
+import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "127.0.0.1";

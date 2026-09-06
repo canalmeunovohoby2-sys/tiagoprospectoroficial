@@ -4,15 +4,15 @@
 import { Agent, createTool } from "@cline/agents";
 import type { AgentRuntimeEvent } from "@cline/agents";
 import { z } from "zod";
-import { buildSiteTools, type BusinessContext } from "./tools";
-import { buildBrowserTools } from "./browser-tools";
-import { BrowserSession } from "./browser-session";
-import { readWorkspace, type FileMap } from "./workspace";
-import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision";
-import { decideFinishBlock } from "./completion-guard";
-import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity";
-import { computeWorkEvidence, type WorkEventLike } from "./work-evidence";
-import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research";
+import { buildSiteTools, type BusinessContext } from "./tools.js";
+import { buildBrowserTools } from "./browser-tools.js";
+import { BrowserSession } from "./browser-session.js";
+import { readWorkspace, type FileMap } from "./workspace.js";
+import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
+import { decideFinishBlock } from "./completion-guard.js";
+import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
+import { computeWorkEvidence, type WorkEventLike } from "./work-evidence.js";
+import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
 
 export interface AgentRunOutcome {
   ok: boolean;

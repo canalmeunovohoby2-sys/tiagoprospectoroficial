@@ -2,8 +2,8 @@
 // Loop como tool result. Usa um BrowserSession único por agente.
 import { z } from "zod";
 import { createTool } from "@cline/sdk";
-import { BrowserSession, type BrowserInspection } from "./browser-session";
-import { visualReviewWithGemini, formatVisualReview, type VisualReviewResult } from "./vision-gemini";
+import { BrowserSession, type BrowserInspection } from "./browser-session.js";
+import { visualReviewWithGemini, formatVisualReview, type VisualReviewResult } from "./vision-gemini.js";
 
 export const DESKTOP_VIEWPORT = { width: 1366, height: 768 };
 export const MOBILE_VIEWPORT = { width: 390, height: 844 };

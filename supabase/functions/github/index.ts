@@ -48,7 +48,11 @@ Deno.serve(async (req) => {
     if (action === "oauth_start") {
       const uid = await userFrom(auth); if (!uid) return json({ error: "autenticação inválida" }, 401);
       const clientId = env("GITHUB_CLIENT_ID"); if (!clientId) return json({ error: "GitHub OAuth não configurado (GITHUB_CLIENT_ID ausente)" }, 500);
-      const state = randomState();
+      const random = randomState();
+      // Origem oficial do app viajando DENTRO do state (sem migration; não é segredo).
+      const appRaw = String((body.appOrigin ?? "") || env("PUBLIC_SITE_URL") || "").trim().replace(/\/$/, "");
+      const originKey = /^https?:\/\//i.test(appRaw) ? btoa(appRaw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "") : "";
+      const state = originKey ? `${random}__${originKey}` : random;
       await admin.from("github_oauth_states").insert({ state, user_id: uid }).select().single().then((r) => { if (r.error) throw r.error; });
       const siteUrl = (env("PUBLIC_SITE_URL") || env("SUPABASE_URL") || "").replace(/\/$/, "");
       const redirectUri = `${siteUrl}/functions/v1/github?action=oauth_callback`;
@@ -70,6 +74,15 @@ Deno.serve(async (req) => {
       const { data: st } = await admin.from("github_oauth_states").select("user_id").eq("state", state).single();
       if (!st) return json({ error: "state inválido ou reutilizado" }, 400);
       await admin.from("github_oauth_states").delete().eq("state", state);
+      // Origem oficial do app, se viajou no state (nunca é segredo).
+      const sep = state.lastIndexOf("__");
+      let appOrigin = (env("PUBLIC_SITE_URL") || env("PROSPECTOR_APP_URL") || "").replace(/\/$/, "");
+      if (!appOrigin && sep > 0) {
+        try {
+          const raw = atob(state.slice(sep + 2).replace(/-/g, "+").replace(/_/g, "/"));
+          if (/^https?:\/\//i.test(raw)) appOrigin = raw;
+        } catch { /* state sem origem → sem postMessage */ }
+      }
       const clientId = env("GITHUB_CLIENT_ID"); const secret = env("GITHUB_CLIENT_SECRET");
       if (!clientId || !secret) return json({ error: "GitHub OAuth não configurado" }, 500);
       const siteUrl = (env("PUBLIC_SITE_URL") || env("SUPABASE_URL") || "").replace(/\/$/, "");
@@ -79,7 +92,6 @@ Deno.serve(async (req) => {
       const ident = await ghJson<{ login: string; id: number }>(accessToken, "/user");
       if (!ident.ok || !ident.data) return json({ error: "Não foi possível obter identidade GitHub" }, 400);
       await admin.from("github_connections").upsert({ user_id: st.user_id, github_login: ident.data.login, access_token: accessToken, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-      const appOrigin = (env("PUBLIC_SITE_URL") || env("PROSPECTOR_APP_URL") || "").replace(/\/$/, "");
       const html = `<html><body><script>
 (function(){
   var origin = ${JSON.stringify(appOrigin || "")};

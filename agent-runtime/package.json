@@ -9,6 +9,8 @@
   },
   "scripts": {
     "dev": "tsx src/server.ts",
+    "build": "node scripts/build-entry.mjs",
+    "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "demo": "tsx scripts/demo.ts"

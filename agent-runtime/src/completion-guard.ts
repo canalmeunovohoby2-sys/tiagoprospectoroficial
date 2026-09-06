@@ -9,10 +9,10 @@
 // estado atual antes da primeira alteração e VERIFICOU o resultado depois da
 // última alteração. NÃO impõe quantidade fixa de alterações nem número
 // artificial de ferramentas — a complexidade real decide o trabalho.
-import { assertGenerationQuality } from "./generation-gate";
-import { readWorkspace } from "./workspace";
-import type { WorkEvidence } from "./work-evidence";
-import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap } from "../../supabase/functions/_shared/regression-guard";
+import { assertGenerationQuality } from "./generation-gate.js";
+import { readWorkspace } from "./workspace.js";
+import type { WorkEvidence } from "./work-evidence.js";
+import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap } from "../../supabase/functions/_shared/regression-guard.js";
 
 export interface FinishDecision {
   block: boolean;

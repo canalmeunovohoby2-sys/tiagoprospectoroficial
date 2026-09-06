@@ -2,7 +2,7 @@
 // DeepSeek continua executando o site; o Gemini é chamado SOMENTE para avaliar
 // screenshots e devolver diagnóstico estruturado, que volta ao Agent Loop como
 // tool result (texto). A chave vive no Supabase (gemini-vision edge function).
-import { imageToDataUrl } from "./vision";
+import { imageToDataUrl } from "./vision.js";
 
 export interface VisualIssue {
   severity: "alta" | "media" | "baixa";
