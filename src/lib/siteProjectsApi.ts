@@ -247,7 +247,7 @@ export async function invokeAgentExecute(input: {
       materialized.push(`${path} (${mime})`);
     });
     attachHint = materialized.length
-      ? `\nANEXOS (arquivos reais no workspace — leia com read_file e use):\n${materialized.map((m) => `- ${m}`).join("\n")}\nPara usar uma imagem do usuário no site: referencie o arquivo real (<img src="assets/<nome>"> ou background url) — o preview do produto embute automaticamente; NÃO embuta o data URL gigante inline.\nReutilizar a MESMA foto do usuário em vários pontos é ESPERADO quando o usuário pedir.`
+      ? `\nANEXOS (arquivos reais no workspace — leia com read_file e use):\n${materialized.map((m) => `- ${m}`).join("\n")}\nPara usar uma imagem do usuário no site: referencie o arquivo real (<img src="assets/<nome>"> ou background url) — o preview do produto embute automaticamente; NÃO embuta o data URL gigante inline.\nPRESERVE A TRANSPARÊNCIA de logos/PNG sem fundo — nunca adicione fundo preto/branco, não converta para JPG e não ponha caixa escura atrás de imagem transparente.\nReutilizar a MESMA foto do usuário em vários pontos é ESPERADO quando o usuário pedir.`
       : "";
     if (rejected.length) attachHint += `\nAnexos rejeitados (tipo/tamanho): ${rejected.join(", ")}`;
   }

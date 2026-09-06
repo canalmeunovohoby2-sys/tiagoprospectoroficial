@@ -51,6 +51,7 @@ export interface SiteMetrics {
   hasFooter: boolean;
   mediaQueries: number;
   keyframes: number;
+  motionRules: number;
   hasH1: boolean;
   ctaLinks: number;
   colorCount: number;
