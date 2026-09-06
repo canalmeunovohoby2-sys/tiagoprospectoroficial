@@ -263,7 +263,7 @@ const GOOGLE_INCLUDED_TYPE: Array<{ match: string[]; types: string[] }> = [
   { match: ["distribuidora", "distribuidor", "fornecedor"], types: ["wholesaler", "store"] },
   { match: ["otica", "ótica"], types: ["optician"] },
   { match: ["cafeteria", "café", "cafe"], types: ["cafe"] },
-  { match: ["advogado", "advogados", "advocacia", "escritório de advocacia"], types: ["attorney", "lawyer"] },
+  { match: ["advogado", "advogados", "advocacia", "escritório de advocacia"], types: ["lawyer"] },
   { match: ["hotel", "pousada"], types: ["lodging"] },
   { match: ["mecanica", "mecânica", "oficina"], types: ["car_repair"] },
   { match: ["dentista", "odontologia"], types: ["dental_clinic"] },
