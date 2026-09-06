@@ -49,9 +49,19 @@ export function GitHubProjectButton({ projectId, userId }: { projectId: string; 
         void refresh();
       }
     };
+    const onFocus = () => {
+      // Fallback: quando o usuário volta do popup, atualiza o status da conexão.
+      if (open) setTimeout(() => void refresh(), 600);
+    };
     window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
-  }, [refresh]);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("message", onMsg);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [open, refresh]);
 
   async function connect() {
     setBusy(true); setNotice(null);

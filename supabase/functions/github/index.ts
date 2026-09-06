@@ -96,8 +96,12 @@ Deno.serve(async (req) => {
 (function(){
   var origin = ${JSON.stringify(appOrigin || "")};
   try { if (origin && window.opener) window.opener.postMessage({ type: "github_oauth_success" }, origin); } catch (e) {}
+  // Fallback robusto: fecha se possível; senão redireciona para o app.
   try { window.close(); } catch (e) {}
-  setTimeout(function(){ document.body.innerHTML = "<p style='font-family:sans-serif'>Conta GitHub conectada. Pode fechar esta aba.</p>"; }, 400);
+  setTimeout(function(){
+    if (origin) { try { window.location.replace(origin + "/?github_connected=1"); } catch (e) {} }
+    document.body.innerHTML = "<p style='font-family:sans-serif'>Conta GitHub conectada. Pode fechar esta aba.</p>";
+  }, 600);
 })();
 </script><p style="font-family:sans-serif">Conta GitHub conectada. Pode fechar esta aba.</p></body></html>`;
       return new Response(html, { status: 200, headers: { ...corsHeaders, "Content-Type": "text/html" } });
