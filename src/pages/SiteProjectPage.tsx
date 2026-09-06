@@ -12,8 +12,7 @@ import {
   fetchSiteProject, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
   createSiteVersion, invokeAgentExecute, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
-  captureWorkspaceScreenshots,
-} from "@/lib/siteProjectsApi";
+  captureWorkspaceScreenshots,} from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
 import { SiteVersionsDialog } from "@/components/sites/editor/SiteVersionsDialog";
@@ -26,6 +25,7 @@ import { LiveProjectPreview } from "@/components/sites/LiveProjectPreview";
 import { GitHubProjectButton } from "@/components/app/GitHubProjectButton";
 import { buildStrategyInstruction, strategyById } from "@/lib/siteStrategies";
 import { buildWorkTimeline } from "@/lib/agentWorkActivity";
+import { captureWorkspaceScreenshotsClient } from "@/lib/clientScreenshots";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -234,7 +234,11 @@ export default function SiteProjectPage() {
       if (!codeFiles || !Object.keys(codeFiles).some((k) => k.endsWith("index.html"))) {
         throw new Error("Nenhum arquivo de site disponível para capturar.");
       }
-      const shots = await captureWorkspaceScreenshots(codeFiles);
+      const serverShots = await captureWorkspaceScreenshots(codeFiles);
+      // Fallback de captura SEM servidor/custo: renderiza no navegador do cliente.
+      const shots = serverShots.desktop && serverShots.mobile
+        ? serverShots
+        : await captureWorkspaceScreenshotsClient(codeFiles);
       if (!shots.desktop || !shots.mobile) {
         // NUNCA gerar PDF genérico: sem captura real, falha de forma explícita.
         throw new Error("Não foi possível capturar o site para gerar a proposta (desktop/mobile). Verifique se o Agent Runtime está no ar e com memória suficiente, e tente novamente.");
