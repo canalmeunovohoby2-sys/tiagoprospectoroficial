@@ -185,13 +185,14 @@ Deno.serve(async (req) => {
       if (isInitial) {
         // ── PRIMEIRO SYNC: UM ÚNICO COMMIT INICIAL (Git Trees API) ──
         const ref = await ghJson<{ object?: { sha?: string } }>(token, `/git/ref/heads/${link.branch}`);
-        const head = ref.data?.object?.sha;
-        if (!ref.ok || !head) return json({ status: "error", error: `Não foi possível ler a branch ${link.branch}` }, 502);
-        const baseCommit = await ghJson<{ tree?: { sha?: string } }>(token, `/git/commits/${head}`);
-        const baseTree = baseCommit.data?.tree?.sha ?? "";
+        const head = ref.ok ? ref.data?.object?.sha : undefined; // repo vazio → sem head
+        let baseTree = "";
+        if (head) {
+          const baseCommit = await ghJson<{ tree?: { sha?: string } }>(token, `/git/commits/${head}`);
+          baseTree = baseCommit.data?.tree?.sha ?? "";
+        }
         const entries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
         for (const f of files) {
-          const b64 = btoa(f.content);
           const blob = await ghJson<{ sha?: string }>(token, "/git/blobs", { method: "POST", body: JSON.stringify({ content: f.content, encoding: "utf-8" }) });
           if (!blob.ok || !blob.data?.sha) return json({ status: "error", error: `Falha ao criar blob de ${f.path}` }, 502);
           const blobSha = blob.data.sha;
@@ -200,10 +201,16 @@ Deno.serve(async (req) => {
         }
         const treeResp = await ghJson<{ sha?: string }>(token, "/git/trees", { method: "POST", body: JSON.stringify({ base_tree: baseTree || undefined, tree: entries }) });
         if (!treeResp.ok || !treeResp.data?.sha) return json({ status: "error", error: "Falha ao criar árvore do commit inicial" }, 502);
-        const commitResp = await ghJson<{ sha?: string }>(token, "/git/commits", { method: "POST", body: JSON.stringify({ message: "Initial project sync", tree: treeResp.data.sha, parents: [head] }) });
+        const commitResp = await ghJson<{ sha?: string }>(token, "/git/commits", { method: "POST", body: JSON.stringify({ message: "Initial project sync", tree: treeResp.data.sha, parents: head ? [head] : [] }) });
         if (!commitResp.ok || !commitResp.data?.sha) return json({ status: "error", error: "Falha ao criar o commit inicial" }, 502);
-        const updateRef = await ghJson<{ ref?: string }>(token, `/git/refs/heads/${link.branch}`, { method: "PATCH", body: JSON.stringify({ sha: commitResp.data.sha, force: false }) });
-        if (!updateRef.ok) return json({ status: "error", error: `Falha ao atualizar a branch ${link.branch}` }, 502);
+        if (head) {
+          const updateRef = await ghJson<{ ref?: string }>(token, `/git/refs/heads/${link.branch}`, { method: "PATCH", body: JSON.stringify({ sha: commitResp.data.sha, force: false }) });
+          if (!updateRef.ok) return json({ status: "error", error: `Falha ao atualizar a branch ${link.branch}` }, 502);
+        } else {
+          // Repositório vazio: cria a ref main a partir do commit inicial.
+          const createRef = await ghJson<{ ref?: string }>(token, "/git/refs", { method: "POST", body: JSON.stringify({ ref: `refs/heads/${link.branch}`, sha: commitResp.data.sha }) });
+          if (!createRef.ok) return json({ status: "error", error: `Falha ao criar a branch ${link.branch}` }, 502);
+        }
         commitSha = commitResp.data.sha;
       } else {
         // ── SINCRONIZAÇÕES POSTERIORES: incremental (só o que mudou) ──
