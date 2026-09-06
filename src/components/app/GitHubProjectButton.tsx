@@ -11,9 +11,29 @@ interface LinkState { owner: string; repo: string; branch: string; synced_commit
 type Status = { connected?: boolean; login?: string; repo?: Repo | null; link?: LinkState | null; error?: string } | null;
 
 async function call(action: string, body: Record<string, unknown> = {}) {
-  const { data, error } = await supabase.functions.invoke("github", { body: { action, ...body } });
-  if (error) throw new Error(error.message || "Erro no GitHub");
-  return data as Record<string, unknown>;
+  try {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token ?? "";
+    const res = await fetch(`${supabaseUrl.replace(/\/$/, "")}/functions/v1/github`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...body }),
+    });
+    const text = await res.text();
+    let parsed: Record<string, unknown> | null = null;
+    try { parsed = text ? (JSON.parse(text) as Record<string, unknown>) : null; } catch { /* resposta não-JSON */ }
+    if (!res.ok || parsed?.error) {
+      const msg = (parsed && typeof parsed.error === "string" ? parsed.error : text) || `HTTP ${res.status}`;
+      const err = new Error(msg) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
+    return (parsed ?? {}) as Record<string, unknown>;
+  } catch (e) {
+    if (e instanceof Error && (e as Error & { status?: number }).status) throw e;
+    throw new Error(e instanceof Error ? e.message : "Erro no GitHub");
+  }
 }
 
 export function GitHubProjectButton({ projectId, userId }: { projectId: string; userId?: string }) {
