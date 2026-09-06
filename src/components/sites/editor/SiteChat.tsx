@@ -297,7 +297,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
               </span>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+          <div className="grid grid-cols-1 gap-1.5 [grid-auto-rows:1fr] min-[420px]:grid-cols-2 lg:grid-cols-4">
             {QUICK_STRATEGIES.map((s) => {
               const disabled = running || quickStrategyDisabled;
               return (
@@ -307,10 +307,10 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
                   disabled={disabled}
                   onClick={() => onQuickStrategy?.(s.id)}
                   title={`${s.label}${s.analyzeOnly ? " (só análise)" : ""} — ${s.hint}`}
-                  className="flex min-w-0 flex-col items-center gap-1 rounded-xl border border-border/70 bg-card/60 px-1 py-2 text-center transition-colors hover:border-primary/45 hover:bg-primary/[0.07] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border/70 disabled:hover:bg-card/60"
+                  className="flex h-full w-full min-w-0 flex-col items-center justify-center gap-1 overflow-hidden rounded-xl border border-border/70 bg-card/60 px-1.5 py-2 text-center transition-colors hover:border-primary/45 hover:bg-primary/[0.07] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border/70 disabled:hover:bg-card/60"
                 >
-                  <span className="text-base leading-none" aria-hidden>{s.emoji}</span>
-                  <span className="w-full truncate text-[10px] font-medium leading-tight text-foreground/90">
+                  <span className="text-base leading-none shrink-0" aria-hidden>{s.emoji}</span>
+                  <span className="w-full min-h-0 text-[10px] font-medium leading-snug text-foreground/90">
                     {s.label}
                   </span>
                 </button>

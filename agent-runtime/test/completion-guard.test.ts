@@ -184,3 +184,36 @@ describe("Regression Guard (5.30) — edição não pode desmontar o site", () =
     expect(d.block).toBe(false);
   });
 });
+
+describe("Image Swap Guard (5.35) — troca de imagem exige evidência real", () => {
+  const BEFORE = {
+    "index.html": `<!doctype html><html><body><nav><a>x</a><a>y</a><a>z</a></nav><section class="hero"><img src="https://img.com/hero-velha.jpg" alt="hero"/></section><img src="https://img.com/b.jpg" alt="b"/><img src="https://img.com/c.jpg" alt="c"/><footer>f</footer></body></html>`,
+  };
+
+  it("pede troca de imagem mas NENHUMA URL mudou → BLOQUEIA", () => {
+    const d = decideFinishBlock({
+      mode: "edit", files: BEFORE, startFiles: BEFORE, instruction: "troque a imagem do hero por uma mais profissional", finishSkips: 0,
+    });
+    expect(d.block).toBe(true);
+    expect(d.reason ?? "").toMatch(/nenhuma URL de imagem foi substituída|NENHUM arquivo foi modificado/i);
+  });
+
+  it("mudou texto mas a imagem continua a mesma → BLOQUEIA (não aceita 'fingir')", () => {
+    const after = { "index.html": BEFORE["index.html"].replace("hero-velha.jpg", "hero-velha.jpg").replace(">hero</", ">Héroi novo</") };
+    const d = decideFinishBlock({ mode: "edit", files: after, startFiles: BEFORE, instruction: "troque a imagem do hero", finishSkips: 0 });
+    expect(d.block).toBe(true);
+  });
+
+  it("URL da imagem realmente trocada → NÃO bloqueia", () => {
+    const after = { "index.html": BEFORE["index.html"].replace("hero-velha.jpg", "hero-nova-profissional.jpg") };
+    const d = decideFinishBlock({ mode: "edit", files: after, startFiles: BEFORE, instruction: "troque a imagem do hero por uma mais profissional", finishSkips: 0 });
+    expect(d.block).toBe(false);
+  });
+
+  it("pedido sem intenção de imagem (ex.: cor) não passa pelo Image Swap Guard", () => {
+    const d = decideFinishBlock({ mode: "edit", files: BEFORE, startFiles: BEFORE, instruction: "troque a cor do botão", finishSkips: 0 });
+    // sem alteração → regra de EVIDÊNCIA continua bloqueando (nenhum arquivo mudou)
+    expect(d.block).toBe(true);
+    expect(d.reason ?? "").toContain("NENHUM arquivo foi modificado");
+  });
+});

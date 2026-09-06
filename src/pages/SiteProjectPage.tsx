@@ -495,8 +495,8 @@ export default function SiteProjectPage() {
           const autosave = await persistAutosave(derivedSpec, agentRes.files, `Alteração via chat: ${displayText}`);
           const runtime = agentRes.runtime === "cline" ? "" : " (modo compatível)";
           let savedNote;
-          if (autosave.ok && autosave.created) savedNote = "\n\n✓ Alterações salvas automaticamente";
-          else if (autosave.ok) savedNote = "\n\n(estado já era o mais recente — nenhuma versão duplicada)";
+          if (autosave.ok && autosave.created) savedNote = "\n\n_(já ficou salvo no projeto.)_";
+          else if (autosave.ok) savedNote = "\n\n_(o estado já era o mais recente — nenhuma versão duplicada.)_";
           else savedNote = `\n\n⚠ Não foi possível salvar automaticamente: ${autosave.error || "erro desconhecido"}. A edição está no preview — clique em Salvar para persistir.`;
           const valErrors = agentRes.status === "error" && agentRes.errors?.length ? `\n(Validação reportou: ${agentRes.errors.slice(0, 2).join("; ")})` : "";
           const changedKeys = Object.keys(agentRes.files).filter((p) => draftFiles?.[p] !== agentRes.files?.[p]);

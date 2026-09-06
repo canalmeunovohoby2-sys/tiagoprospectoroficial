@@ -12,7 +12,7 @@
 import { assertGenerationQuality } from "./generation-gate";
 import { readWorkspace } from "./workspace";
 import type { WorkEvidence } from "./work-evidence";
-import { editRegressionIssues } from "../../supabase/functions/_shared/regression-guard";
+import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap } from "../../supabase/functions/_shared/regression-guard";
 
 export interface FinishDecision {
   block: boolean;
@@ -30,7 +30,7 @@ export const MAX_FINISH_SKIPS_DEFAULT = 4;
 export function instructionRequestsChange(instruction: string): boolean {
   const text = String(instruction ?? "").trim();
   if (!text) return false;
-  const asks = /adiciona|adicionar|inclui|incluir|cria|criar|coloca|muda|mudar|troca|trocar|deixa|deixar|faz|fazer|fazer\s+um|transforma|reconstruir|refina|refinar|refine|melhora|melhore|melhorar|aprimor|otimiz|reescreve|substitui|remove|apaga|insere|edita|implementa|aplica|aplicar|corrige|corrigir|arruma|arrumar|monta|montar|premium|profissional|sofisticad|primeiro\s+mundo|site\s+completo|site\s+novo/i;
+  const asks = /adiciona|adicionar|inclui|incluir|cria|criar|coloca|muda|mudar|troca|trocar|troque|remove|remover|deixa|deixar|faz|fazer|fazer\s+um|transforma|reconstruir|refina|refinar|refine|melhora|melhore|melhorar|aprimor|otimiz|reescreve|substitui|apaga|apague|insere|edita|implementa|aplica|aplicar|corrige|corrigir|arruma|arrumar|monta|montar|premium|profissional|sofisticad|primeiro\s+mundo|site\s+completo|site\s+novo/i;
   const justAsks = /^(o\s+que|como|qual|quando|onde|por\s+que|pode|poderia|voc[eê]\s+acha|diga|explique|resuma|liste)/i;
   if (justAsks.test(text)) return false;
   return asks.test(text);
@@ -83,7 +83,19 @@ export function decideFinishBlock(opts: {
     };
   }
 
-  // 2) DEPTH GUARD (5.28, modo edit): tarefas amplas não finalizam sem evidência
+  // 2) IMAGE SWAP GUARD (5.35): pedido explícito de trocar/substituir imagem só
+  //    finaliza com evidência de que uma referência de imagem MUDOU no código.
+  if (opts.mode === "edit" && hasStart && changed && opts.startFiles && requestedChange) {
+    const wantsSwap = requestsImageSwap(opts.instruction ?? "");
+    if (wantsSwap && !hasImageReferenceChange(opts.startFiles, files)) {
+      return {
+        block: true,
+        reason: `Você foi solicitado a TROCAR/SUBSTITUIR uma imagem, mas o CONJUNTO de imagens no código não mudou (nenhuma URL de imagem foi substituída). Localize o elemento solicitado, altere de verdade a URL/path da imagem com edit_file e verifique no navegador antes de chamar finish_task. Se a imagem já era a correta, explique sem afirmar que trocou.`,
+      };
+    }
+  }
+
+  // 3) DEPTH GUARD (5.28, modo edit): tarefas amplas não finalizam sem evidência
   //    de que o agente ENTENDEU o estado atual (inspeção antes da 1ª alteração) e
   //    VERIFICOU o resultado (após a última alteração).
   if (opts.mode === "edit" && requestedChange && hasStart && changed && opts.work) {
@@ -102,7 +114,7 @@ export function decideFinishBlock(opts: {
     }
   }
 
-  // 3) REGRESSION GUARD (5.30, modo edit): EDITAR ≠ RECONSTRUIR. Uma edição não
+  // 4) REGRESSION GUARD (5.30, modo edit): EDITAR ≠ RECONSTRUIR. Uma edição não
   //    pode desmontar o site existente (imagens, seções, nav, footer, CTAs,
   //    efeitos, responsividade, conteúdo). Se houver regressão grave, bloqueia a
   //    conclusão e o agente deve corrigir/restaurar antes de finalizar.
@@ -116,7 +128,7 @@ export function decideFinishBlock(opts: {
     }
   }
 
-  // 4) QUALITY GATE (generate): estrutura mínima obrigatória.
+  // 5) QUALITY GATE (generate): estrutura mínima obrigatória.
   if (opts.mode !== "generate") return { block: false };
   const gate = assertGenerationQuality(files, {
     segment: opts.segment ?? "",

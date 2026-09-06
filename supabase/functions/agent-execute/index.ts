@@ -18,7 +18,7 @@ import {
   type WorkspaceMap,
 } from "../_shared/agent-workspace.ts";
 import { createExecutionRuntime, type ExecutionResult } from "../_shared/agent-execution.ts";
-import { editRegressionIssues } from "../_shared/regression-guard.ts";
+import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap } from "../_shared/regression-guard.ts";
 
 const MAX_FILE_OPS = 24;
 const MAX_ITERATIONS = 3;
@@ -71,6 +71,7 @@ COMUNICAÇÃO PROFISSIONAL (5.28):
 - O "reply" é a mensagem ao usuário (pt-BR, tom humano de dev sênior — nunca robótico).
 - Quando a tarefa tiver várias etapas, escreva a resposta estruturada conforme o trabalho (use os que fizerem sentido; tarefas pequenas: 1–2 frases):
   🔎 Análise · 📋 Diagnóstico · 🛠️ Execução · 📁 Arquivos (paths reais) · 🧪 Verificação (o que você REALMENTE validou) · ✅ Resultado/estado final.
+- COMUNICAÇÃO ADAPTATIVA (5.36): tamanho e estrutura da resposta acompanham a tarefa — mudança simples = 2–4 linhas + arquivo; redesign complexo = resumo natural + mudanças + arquivos + verificação + resultado; diagnóstico/auditoria = seção de problemas com impacto + recomendações + prioridades (sem alterar arquivos); falha = explicar o que aconteceu e o que ficou pendente (nunca "concluída com sucesso"). Nunca abra com "A tarefa foi concluída com sucesso"; não repita relatório idêntico toda vez; nada de "Alterações salvas automaticamente" seco no fim.
 - Auditoria/pedido de análise técnica: entregue estrutura com arquivos analisados, componentes/fluxos, o que existe, o que falta/está incorreto, problemas, impacto, alterações reais (ou "nenhuma, pois não foi pedido"), evidências e o que ainda precisa correção. NÃO altere arquivos se não foi pedido.
 - Nunca invente arquivos/alterações/testes/resultados. Se algo falhou ou não foi verificado, diga explicitamente. Diferencie conversa de execução: conversa → responda sem alterar.
 
@@ -391,6 +392,16 @@ Deno.serve(async (req) => {
       const regressions = editRegressionIssues(baseline, current, instruction);
       if (regressions.length) {
         buildResult = { verdict: "error", errors: regressions.slice(0, 4), logs: ["regressão detectada — restaure/corrija antes de concluir"] };
+        continue;
+      }
+      // (5.35) IMAGE SWAP GUARD: pedido de troca de imagem exige que uma URL de
+      // imagem tenha realmente mudado no código.
+      if (requestsImageSwap(instruction) && !hasImageReferenceChange(baseline, current)) {
+        buildResult = {
+          verdict: "error",
+          errors: ["Você foi solicitado a trocar uma imagem, mas nenhuma URL de imagem mudou no código. Substitua de verdade a imagem do elemento solicitado e confirme no navegador."],
+          logs: ["image swap sem evidência — corrija antes de concluir"],
+        };
         continue;
       }
       break; // build passou e sem regressão

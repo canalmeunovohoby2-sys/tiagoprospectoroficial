@@ -7,6 +7,41 @@
 
 export type SiteFiles = Record<string, string>;
 
+// URLs de imagem usadas no projeto (html <img> e background url() no CSS), sem
+// data URIs — usado para comprovar troca REAL de imagem (não aceitar "fingir").
+export function extractImageUrls(files: SiteFiles): string[] {
+  const out = new Set<string>();
+  for (const [path, content] of Object.entries(files ?? {})) {
+    const isCss = /\.css$/i.test(path);
+    const srcs = content.match(/src=["']([^"']+)["']/gi) ?? [];
+    for (const s of srcs) {
+      const u = s.replace(/^src=["']|["']$/g, "");
+      if (u && !u.startsWith("data:image")) out.add(u);
+    }
+    const urls = isCss ? content.match(/url\(\s*["']?([^"')]+)["']?\s*\)/gi) ?? [] : [];
+    for (const u of urls) {
+      const clean = u.replace(/^url\(\s*["']?|["']?\s*\)$/gi, "");
+      if (clean && !clean.startsWith("data:")) out.add(clean);
+    }
+  }
+  return [...out].sort();
+}
+
+/** Houve troca real: o CONJUNTO de referências de imagem mudou entre antes/depois. */
+export function hasImageReferenceChange(before: SiteFiles, after: SiteFiles): boolean {
+  const a = extractImageUrls(before).join("\n");
+  const b = extractImageUrls(after).join("\n");
+  return a !== b;
+}
+
+/** Detector de intenção explícita de troca/substituição de imagem. */
+export function requestsImageSwap(instruction: string): boolean {
+  const text = String(instruction ?? "").trim();
+  if (!text) return false;
+  return /(troque|troca|trocar|substitua|substitui|substituir|altere)\s+(?:a|a[s]|essa|esta|aquela)?\s*(imagem|foto|fotografia|banner|background)/i.test(text)
+    || /(imagem|foto|fotografia|banner|background).*(troque|troca|trocar|substitua|substitui|substituir|altere)/i.test(text);
+}
+
 export interface SiteMetrics {
   contentLen: number;
   imgTags: number;
