@@ -227,6 +227,18 @@ export default function Leads() {
     }
   }
 
+  async function clearLeads() {
+    if (!leads.length) return;
+    const label = searchId ? "desta pesquisa" : "da sua base";
+    if (!window.confirm(`Apagar os ${leads.length} leads ${label}? Esta ação não pode ser desfeita.`)) return;
+    let q = supabase.from("leads").delete().eq("user_id", user?.id);
+    if (searchId) q = q.eq("search_id", searchId);
+    const { error } = await q;
+    if (error) { toast.error(error.message); return; }
+    toast.success(`Leads removidos (${label}).`);
+    await load();
+  }
+
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-start justify-between gap-4 flex-wrap">
@@ -236,9 +248,14 @@ export default function Leads() {
             {leads.length} empresas {searchId ? "desta pesquisa" : "na sua base"} · ordenadas por score de oportunidade
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => exportLeadsCsv(filtered)} disabled={filtered.length === 0}>
-          <Download className="h-4 w-4 mr-1" /> Exportar CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => exportLeadsCsv(filtered)} disabled={filtered.length === 0}>
+            <Download className="h-4 w-4 mr-1" /> Exportar CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void clearLeads()} disabled={leads.length === 0} className="text-destructive hover:text-destructive">
+            <Trash2 className="h-4 w-4 mr-1" /> Limpar leads
+          </Button>
+        </div>
       </motion.div>
 
       <Card className="p-3 border-border/50 space-y-3">
