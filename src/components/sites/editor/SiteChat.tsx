@@ -52,6 +52,41 @@ function liveIcon(phase: string, detail: string): string {
   return LIVE_ICONS[phase] ?? "⚙️";
 }
 
+// Rótulo humano da atividade ATUAL (nunca histórico): emoji + ação + arquivo.
+function liveLabel(phase: string, detail: string): string {
+  const file = fileRef2(detail);
+  const loc = file ? `\`${file}\`` : null;
+  switch (phase) {
+    case "analyzing":
+      return loc ? `📂 Abrindo ${loc}` : "🔎 Analisando o projeto";
+    case "reading":
+      return loc ? `📂 Abrindo ${loc}` : "📂 Lendo arquivos";
+    case "editing":
+      return loc ? `✏️ Modificando ${loc}` : "🛠️ Editando arquivos";
+    case "writing":
+      return loc ? `✏️ Escrevendo ${loc}` : "🛠️ Criando arquivos";
+    case "researching":
+      return "🌐 Pesquisando na web";
+    case "reviewing":
+      return "🔍 Revisando o resultado";
+    case "testing":
+      return "🧪 Testando a alteração";
+    case "verifying":
+      return /visual_review|gemini|análise visual|analise visual/i.test(detail) ? "👁️ Verificando visualmente" : /navegador|browser/i.test(detail) ? "🌐 Verificando no navegador" : "🔍 Verificando o resultado";
+    case "fixing":
+      return loc ? `🔧 Corrigindo ${loc}` : "🔧 Corrigindo problema";
+    case "done":
+      return "✅ Finalizando";
+    default:
+      return detail ? `${liveIcon(phase, detail)} ${detail}` : "⚙️ Trabalhando";
+  }
+}
+
+function fileRef2(detail: string): string | null {
+  const m = /`([^`]+)`/.exec(detail ?? "");
+  return m ? m[1] : null;
+}
+
 export function SiteChat({ messages, running, error, canUndo, dirty, runningLabel, onQuickStrategy, quickStrategyDisabled, liveActivity, onApply, onRevert }: SiteChatProps) {
   const [instruction, setInstruction] = useState("");
   const [attachment, setAttachment] = useState<{ dataUrl: string; label: string } | null>(null);
@@ -262,9 +297,8 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
             {(() => {
               const current = liveActivity[liveActivity.length - 1];
               return (
-                <p className="mt-1 flex items-start gap-1.5 text-xs font-medium leading-snug text-foreground" key={`${liveActivity.length}-${current.detail}`}>
-                  <span className="shrink-0" aria-hidden>{liveIcon(current.phase, current.detail)}</span>
-                  <span className="min-w-0 break-words">{current.detail}</span>
+                <p className="mt-1 flex items-center gap-1.5 text-xs font-medium leading-snug text-foreground" key={`${liveActivity.length}-${current.detail}`}>
+                  <span className="min-w-0 break-words">{liveLabel(current.phase, current.detail)}</span>
                 </p>
               );
             })()}
