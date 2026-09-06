@@ -12,7 +12,7 @@
 import { assertGenerationQuality } from "./generation-gate.js";
 import { readWorkspace } from "./workspace.js";
 import type { WorkEvidence } from "./work-evidence.js";
-import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap } from "../../supabase/functions/_shared/regression-guard.js";
+import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap } from "./regression-guard.js";
 
 export interface FinishDecision {
   block: boolean;
