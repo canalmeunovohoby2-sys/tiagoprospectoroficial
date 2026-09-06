@@ -27,13 +27,14 @@ export function GitHubProjectButton({ projectId, userId }: { projectId: string; 
 
   const refresh = useCallback(async () => {
     try {
-      const s = (await call("status")) as { connected?: boolean; login?: string };
+      const s = (await call("status")) as { connected?: boolean; status?: string; login?: string };
+      const connected = s.connected === true || s.status === "connected";
       let link: LinkState | null = null;
       if (projectId) {
         const r = (await call("link_status", { projectId })) as { link?: LinkState | null };
         link = r.link ?? null;
       }
-      setStatus({ ...s, link });
+      setStatus({ connected, login: s.login, link });
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Erro");
     }

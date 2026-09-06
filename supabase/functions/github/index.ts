@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
     const token = conn.access_token as string;
 
     // ── STATUS / ACCOUNT ──
-    if (action === "status") return json({ status: "connected", login: conn.github_login });
+    if (action === "status") return json({ status: "connected", connected: true, login: conn.github_login });
 
     // ── LINK STATUS (metadados seguros do vínculo do projeto) ──
     if (action === "link_status") {
