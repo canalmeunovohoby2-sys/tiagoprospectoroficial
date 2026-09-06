@@ -354,9 +354,9 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 activity.push({ phase: "done", detail: "Concluindo tarefa…" });
                 writeLine({ type: "activity", phase: "done", detail: activity[activity.length - 1].detail });
               }
-            } else if (e.type === "turn-finished") {
-              activity.push({ phase: "reviewing", detail: "Revisando o resultado…" });
-              writeLine({ type: "activity", phase: "reviewing", detail: activity[activity.length - 1].detail });
+            } else if (e.type === "turn-started") {
+              activity.push({ phase: "thinking", detail: "Analisando a alteração…" });
+              writeLine({ type: "activity", phase: "thinking", detail: activity[activity.length - 1].detail });
             }
           } catch { /* noop */ }
         });

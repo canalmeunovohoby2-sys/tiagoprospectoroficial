@@ -57,6 +57,8 @@ function liveLabel(phase: string, detail: string): string {
   const file = fileRef2(detail);
   const loc = file ? `\`${file}\`` : null;
   switch (phase) {
+    case "thinking":
+      return "💭 Analisando a alteração…";
     case "analyzing":
       return loc ? `📂 Abrindo ${loc}` : "🔎 Analisando o projeto";
     case "reading":
