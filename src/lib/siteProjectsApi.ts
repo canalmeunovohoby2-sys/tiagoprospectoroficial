@@ -195,6 +195,8 @@ export interface AgentExecuteResult {
   spec?: Record<string, unknown> | null;
   model?: string;
   runtime?: "cline" | "edge-fallback";
+  /** Executor efetivamente usado (telemetria 5.38). */
+  executor?: "cline-editor" | "edge-fallback";
   resumed_session?: boolean;
   activity?: Array<{ phase: string; detail: string }>;
   /** Prova de execução real da pesquisa web (sem secrets). */
@@ -219,6 +221,9 @@ export async function invokeAgentExecute(input: {
   attachments?: ChatAttachmentInput[];
   /** Conversa recente (contexto de continuidade) — usada no prompt do agente. */
   conversation?: string[];
+  userId?: string;
+  /** Override de execução (projeto) — metadados, nunca chaves. */
+  execution?: { provider?: string; model?: string; fallback?: string } | null;
 }): Promise<AgentExecuteResult> {
   // Anexos → arquivos reais no workspace (mapa), para o agente ler/usar.
   const files = { ...(input.files ?? {}) };
@@ -255,6 +260,8 @@ export async function invokeAgentExecute(input: {
       context: input.context,
       memory: input.memory ?? [],
       conversation: (input.conversation ?? []).slice(-8),
+      user_id: input.userId,
+      execution: input.execution ?? null,
       runtime: "static",
     },
   });
@@ -302,65 +309,67 @@ export async function invokeProspectorAgent(input: {
   memory?: string[];
   attachments?: ChatAttachmentInput[];
   conversation?: string[];
+  userId?: string;
+  execution?: { provider?: string; model?: string; fallback?: string } | null;
 }, onLiveActivity?: (phase: string, detail: string) => void): Promise<AgentExecuteResult> {
-  const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
-  if (runtimeUrl) {
-    try {
-      const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instruction: input.instruction,
-          files: input.files,
-          projectId: input.projectId,
-          context: input.context,
-          memory: input.memory ?? [],
-          attachments: input.attachments ?? [],
-          conversation: (input.conversation ?? []).slice(-8),
-          stream: onLiveActivity ? true : false,
-        }),
-        signal: AbortSignal.timeout(300_000),
-      });
-      if (!res.ok) {
-        return { status: "error", errors: [`Runtime do agente indisponível (HTTP ${res.status}).`] };
-      }
-      // NDJSON ao vivo: cada linha de atividade é repassada para a UI (5.34).
-      if (onLiveActivity && res.body) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let final: AgentExecuteResult | null = null;
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let nl: number;
-          while ((nl = buffer.indexOf("\n")) >= 0) {
-            const raw = buffer.slice(0, nl);
-            buffer = buffer.slice(nl + 1);
-            if (!raw.trim()) continue;
-            try {
-              const line = JSON.parse(raw) as Record<string, unknown>;
-              if (line.type === "activity") onLiveActivity(String(line.phase ?? ""), String(line.detail ?? ""));
-              else if (line.type === "result") final = line as unknown as AgentExecuteResult;
-            } catch { /* linha inválida ignora */ }
-          }
-        }
-        if (final) return final;
-        return { status: "error", errors: ["Stream do agente terminou sem resultado."] };
-      }
-      const data = (await res.json()) as AgentExecuteResult & { error?: string };
-      if (data.error) return { status: "error", errors: [data.error] };
-      return data;
-    } catch {
-      // conexão recusada → fallback para a edge function
+  const runtimeUrl = editorRuntimeUrl();
+  if (!runtimeUrl) return editorUnavailableResult("not_configured");
+  try {
+    const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: input.instruction,
+        files: input.files,
+        projectId: input.projectId,
+        context: input.context,
+        memory: input.memory ?? [],
+        attachments: input.attachments ?? [],
+        conversation: (input.conversation ?? []).slice(-8),
+        user_id: input.userId,
+        execution: input.execution ?? null,
+        stream: onLiveActivity ? true : false,
+      }),
+      signal: AbortSignal.timeout(300_000),
+    });
+    if (!res.ok) {
+      return { status: "error", executor: "cline-editor", runtime: "cline", errors: [`Editor completo indisponível (HTTP ${res.status}).`] };
     }
+    // NDJSON ao vivo: cada linha de atividade é repassada para a UI (5.34).
+    if (onLiveActivity && res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let final: AgentExecuteResult | null = null;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const raw = buffer.slice(0, nl);
+          buffer = buffer.slice(nl + 1);
+          if (!raw.trim()) continue;
+          try {
+            const line = JSON.parse(raw) as Record<string, unknown>;
+            if (line.type === "activity") onLiveActivity(String(line.phase ?? ""), String(line.detail ?? ""));
+            else if (line.type === "result") final = line as unknown as AgentExecuteResult;
+          } catch { /* linha inválida ignora */ }
+        }
+      }
+      if (final) return { ...final, executor: "cline-editor" };
+      return { status: "error", executor: "cline-editor", errors: ["Stream do agente terminou sem resultado."] };
+    }
+    const data = (await res.json()) as AgentExecuteResult & { error?: string };
+    if (data.error) return { status: "error", executor: "cline-editor", runtime: "cline", errors: [data.error] };
+    return { ...data, executor: "cline-editor" };
+  } catch {
+    return editorUnavailableResult("unreachable");
   }
-  return invokeAgentExecute(input);
 }
 
 // Monta a missão de geração premium (identidade/skills + contexto real do negócio).
-function buildGenerationMission(ctx: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null; about?: string | null; services?: string[] }, briefing?: Record<string, unknown>): string {
+export function buildGenerationMission(ctx: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null; about?: string | null; services?: string[] }, briefing?: Record<string, unknown>): string {
   const ctxLines = [
     ctx.name && `Empresa: ${ctx.name}`,
     ctx.segment && `Segmento: ${ctx.segment}`,
@@ -394,42 +403,45 @@ REGRAS:
 - Faça o site COMPLETO (não curto): hero forte + pelo menos 4-5 seções com função + footer rico.`;
 }
 
-// Geração inicial: prefere o Cline Agent Runtime (Node); sem ele, usa o agente
-// de código (edge agent-execute) com a mesma missão premium — nunca o gerador
-// legado curto.
+/** URL do Agent Runtime (editor completo/Cline). Uma única fonte do roteamento. */
+export function editorRuntimeUrl(): string | undefined {
+  return import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
+}
+
+/** Erro EXPLÍCITO quando o editor completo (runtime) não está disponível. */
+export function editorUnavailableResult(reason: "not_configured" | "unreachable"): AgentExecuteResult {
+  const msg = reason === "not_configured"
+    ? "O editor completo (Agent Runtime + Cline) não está configurado neste ambiente. Para editar/gerar sites pelo chat é necessário definir VITE_AGENT_RUNTIME_URL apontando para o agent-runtime (browser, visão, tools e guards só existem nele)."
+    : "O editor completo (Agent Runtime) não respondeu. Verifique se o agent-runtime está no ar; nenhuma edição simplificada foi feita no lugar dele.";
+  return { status: "error", runtime: "cline", errors: [msg], logs: ["editor_full_routing"] };
+}
+
+// Geração inicial: o executor é SEMPRE o editor completo (ProspectorSiteAgent +
+// Cline no agent-runtime). Sem runtime não há geração silenciosa simplificada.
 export async function invokeProspectorGenerate(input: {
   projectId: string;
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null; about?: string | null; services?: string[] };
   briefing?: Record<string, unknown>;
+  userId?: string;
 }): Promise<AgentExecuteResult> {
-  const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
-  if (runtimeUrl) {
-    try {
-      const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {} }),
-        signal: AbortSignal.timeout(300_000),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as AgentExecuteResult & { error?: string };
-        if (data.error) return { status: "error", runtime: "cline", errors: [data.error] };
-        return data;
-      }
-    } catch {
-      // runtime indisponível → tenta o agente de código edge
+  const runtimeUrl = editorRuntimeUrl();
+  if (!runtimeUrl) return editorUnavailableResult("not_configured");
+  try {
+    const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {}, user_id: input.userId ?? undefined }),
+      signal: AbortSignal.timeout(300_000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as AgentExecuteResult & { error?: string };
+      if (data.error) return { status: "error", runtime: "cline", executor: "cline-editor", errors: [data.error] };
+      return { ...data, executor: "cline-editor" };
     }
+    return { status: "error", runtime: "cline", executor: "cline-editor", errors: [`Editor completo indisponível (HTTP ${res.status}).`] };
+  } catch {
+    return editorUnavailableResult("unreachable");
   }
-  // Sem runtime Node: usa o AGENTE DE CÓDIGO (edge) para criar o site do zero
-  // com a missão premium — qualidade muito superior ao gerador legado.
-  const instruction = buildGenerationMission(input.context, input.briefing);
-  return invokeAgentExecute({
-    instruction,
-    files: {},
-    context: input.context,
-    memory: [],
-    attachments: [],
-  });
 }
 
 export interface PersistedChatMsg {

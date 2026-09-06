@@ -23,6 +23,7 @@ import { buildCommercialPdf, pdfFileName } from "@/lib/sitePdf";
 import { buildConversationContext, buildDesignMemory } from "@/lib/aiEditContext";
 import { materializeProjectFiles, GENERATION_STEPS, EDIT_STEPS, type AgentProgress } from "@/lib/agentProject";
 import { LiveProjectPreview } from "@/components/sites/LiveProjectPreview";
+import { GitHubProjectButton } from "@/components/app/GitHubProjectButton";
 import { buildStrategyInstruction, strategyById } from "@/lib/siteStrategies";
 import { buildWorkTimeline } from "@/lib/agentWorkActivity";
 
@@ -463,6 +464,7 @@ export default function SiteProjectPage() {
             instruction,
             files: draftFiles,
             projectId: project.id,
+            userId: user?.id ?? (project.user_id ?? undefined),
             context: {
               name: project.company_name || project.name,
               segment: project.segment,
@@ -867,6 +869,7 @@ export default function SiteProjectPage() {
               {busyAction === "zip" ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <FolderDown className="h-3.5 w-3.5 mr-1" />}
               Baixar projeto
             </Button>
+            <GitHubProjectButton projectId={project.id} userId={user?.id} />
           </div>
         </Card>
       )}

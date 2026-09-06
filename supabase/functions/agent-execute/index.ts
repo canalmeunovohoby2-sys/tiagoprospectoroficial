@@ -11,7 +11,9 @@
 // execução arbitrária, sem expor secrets.
 
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { generateText, AiError, extractJson, DEFAULT_DEEPSEEK_MODEL } from "../_shared/ai.ts";
+import { resolveExecutionConfig } from "../_shared/ai-routing.ts";
 import {
   normalizePath, isAllowedTextFile, listFiles, readFile, searchFiles,
   writeFile, editFile, deleteFile, renameFile, fromSnapshot,
@@ -327,8 +329,45 @@ Deno.serve(async (req) => {
     let lastOps: AgentOp[] = [];
     let lastReply = "";
     let usedModel = DEFAULT_DEEPSEEK_MODEL;
+    let usedProvider = "deepseek";
     let buildResult: ExecutionResult = { verdict: "error", errors: ["sem build ainda"] };
     let firstRound = true;
+
+    // (5.37) Configuração central de execução (projeto → global → padrão).
+    // Erros de CONFIGURAÇÃO são retornados honestamente (sem fallback silencioso).
+    const execPrefs = (body as { execution?: unknown; global_execution?: unknown; user_id?: unknown });
+    let dbGlobal: { provider?: string; model?: string; fallback?: string } | null = null;
+    let dbKeys: Record<string, string> = {};
+    const rawUserId = typeof execPrefs?.user_id === "string" ? execPrefs.user_id : "";
+    if (rawUserId) {
+      try {
+        const supaUrl = Deno.env.get("SUPABASE_URL");
+        const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+        if (supaUrl && supaKey) {
+          const admin = createClient(supaUrl, supaKey);
+          const { data: rows } = await admin.from("ai_provider_config").select("provider,api_key,model,enabled,is_default,fallback_provider").eq("user_id", rawUserId);
+          const list = Array.isArray(rows) ? rows : [];
+          const def = list.find((r) => r.is_default) ?? list.find((r) => r.enabled);
+          if (def) {
+            dbGlobal = { provider: def.provider ?? undefined, model: def.model ?? undefined, fallback: def.fallback_provider ?? undefined };
+          }
+          for (const r of list) if (r.enabled && r.api_key) dbKeys[r.provider] = r.api_key;
+        }
+      } catch { /* serviço de config indisponível → segue com env/padrão */ }
+    }
+    const execCfg = resolveExecutionConfig({
+      project: (execPrefs?.execution ?? null) as Parameters<typeof resolveExecutionConfig>[0]["project"],
+      global: dbGlobal ?? ((execPrefs?.global_execution ?? null) as Parameters<typeof resolveExecutionConfig>[0]["global"]),
+    });
+    if (!execCfg.ok) {
+      return new Response(JSON.stringify({ status: "error", errors: [execCfg.error ?? "configuração de IA inválida"], logs: ["ai-config"], files: baseline, changed: false, touched: [] }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    usedProvider = execCfg.provider;
+    const execKeys: Partial<Record<"deepseek" | "nvidia" | "openai" | "gemini", string>> = {};
+    if (dbKeys[execCfg.provider]) execKeys[execCfg.provider] = dbKeys[execCfg.provider];
+    if (execCfg.fallbackProvider && dbKeys[execCfg.fallbackProvider]) execKeys[execCfg.fallbackProvider] = dbKeys[execCfg.fallbackProvider];
 
     // Palavras que indicam pedido de MUDANÇA (não apenas pergunta).
     const requestsChange = /adiciona|adicionar|inclui|incluir|cria|criar|coloca|muda|mudar|troca|trocar|deixa|deixar|faz|fazer|transforma|reconstruir|refina|melhora|melhorar|reescreve|substitui|remove|apaga|insere|edita|implementa/i.test(instruction);
@@ -347,8 +386,19 @@ Deno.serve(async (req) => {
       });
       firstRound = false;
 
-      const res = await generateText({ system: AGENT_SYSTEM, user: prompt, temperature: 0.4, json: true, maxOutputTokens: 16000 });
+      const res = await generateText({
+        system: AGENT_SYSTEM,
+        user: prompt,
+        temperature: 0.4,
+        json: true,
+        maxOutputTokens: 16000,
+        provider: execCfg.provider,
+        model: execCfg.model,
+        fallbackProvider: execCfg.fallbackProvider,
+        apiKeys: Object.keys(execKeys).length ? execKeys : undefined,
+      });
       usedModel = res.model;
+      usedProvider = res.provider;
       const parsed = extractJson(res.text) as { reply?: string; note?: string; operations?: AgentOp[] } | null;
       if (!parsed || typeof parsed !== "object") {
         buildResult = { verdict: "error", errors: ["Resposta do agente não é JSON válido."] };

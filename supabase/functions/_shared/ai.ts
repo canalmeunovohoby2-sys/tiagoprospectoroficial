@@ -46,6 +46,10 @@ export interface GenerateTextOptions {
   system?: string; user: string; temperature?: number; topP?: number; json?: boolean;
   maxOutputTokens?: number; model?: string; provider?: ProviderName | "auto";
   timeoutMs?: number; reasoningEffort?: "low" | "medium" | "high"; fallbackProvider?: ProviderName;
+  /** Chave custom por chamada (server-side). Usada no lugar da env para este provider. */
+  apiKey?: string;
+  /** Chaves por provider (ex.: fallback em provider diferente). Nunca vai ao cliente. */
+  apiKeys?: Partial<Record<ProviderName, string>>;
 }
 export interface GenerateTextResult { text: string; model: string; provider: ProviderName; fallbackUsed?: boolean }
 
@@ -169,8 +173,9 @@ function resolveProvider(opts: GenerateTextOptions): ProviderName {
 
 async function runProvider(provider: ProviderName, opts: GenerateTextOptions, temperature: number, topP: number, maxTokens: number, maxRetries: number, reasoningEffort: string | undefined, messages: AIMessage[]): Promise<NormalizedAIResponse> {
   const cfg = cfgFor(provider);
-  const key = getEnv(cfg.apiKeyEnv);
-  if (!key) throw new AIProviderConfigurationError(`${cfg.apiKeyEnv} ausente. Configure o secret nas Edge Functions do Supabase.`, provider);
+  const custom = opts.apiKeys?.[provider] ?? opts.apiKey;
+  const key = custom ?? getEnv(cfg.apiKeyEnv);
+  if (!key) throw new AIProviderConfigurationError(`Chave de API ausente para ${provider}. Configure nas Configurações ou como secret do Supabase.`, provider);
   const model = opts.model ?? getEnv("AI_MODEL") ?? getEnv(cfg.modelEnv) ?? cfg.defaultModel;
   const timeoutMs = opts.timeoutMs ?? numEnv("AI_TIMEOUT_MS", cfg.defaultTimeout);
   const common = { model, timeoutMs, maxRetries, provider, apiKey: key };
@@ -180,7 +185,8 @@ async function runProvider(provider: ProviderName, opts: GenerateTextOptions, te
 
 export async function generateText(opts: GenerateTextOptions): Promise<GenerateTextResult> {
   const primary = resolveProvider(opts);
-  if (!getEnv(cfgFor(primary).apiKeyEnv)) throw new AIProviderConfigurationError(`${cfgFor(primary).apiKeyEnv} ausente.`, primary);
+  const hasPrimaryKey = opts.apiKeys?.[primary] ?? opts.apiKey ?? getEnv(cfgFor(primary).apiKeyEnv);
+  if (!hasPrimaryKey) throw new AIProviderConfigurationError(`Chave de API ausente para ${primary}.`, primary);
   const temperature = opts.temperature ?? numEnv("AI_TEMPERATURE", 0.85);
   const topP = opts.topP ?? numEnv("AI_TOP_P", 0.95);
   const maxTokens = opts.maxOutputTokens ?? numEnv("AI_MAX_TOKENS", 4096);

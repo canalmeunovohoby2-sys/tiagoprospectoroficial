@@ -53,15 +53,27 @@ function pruneSessions(): void {
   }
 }
 
+function executionConfig(body: Record<string, unknown>): { provider?: string; model?: string } {
+  const exec = (body.execution ?? null) as { provider?: unknown; model?: unknown } | null;
+  if (!exec) return {};
+  return {
+    provider: typeof exec.provider === "string" && exec.provider.trim() ? exec.provider.trim().toLowerCase() : undefined,
+    model: typeof exec.model === "string" && exec.model.trim() ? exec.model.trim() : undefined,
+  };
+}
+
 function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>): ProspectorSiteAgent {
   const root = ensureWorkspaceDir(projectId, files);
+  const exec = executionConfig(body);
+  const providerId = exec.provider ?? (typeof body.providerId === "string" ? body.providerId : undefined);
+  const modelId = exec.model ?? (typeof body.modelId === "string" ? body.modelId : undefined);
   return new ProspectorSiteAgent({
     workspaceRoot: root,
     business,
     apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
     baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
-    modelId: typeof body.modelId === "string" ? body.modelId : undefined,
-    providerId: typeof body.providerId === "string" ? body.providerId : undefined,
+    modelId,
+    providerId,
     maxIterations: typeof body.maxIterations === "number" ? body.maxIterations : undefined,
     initialFiles: files,
     mode: typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit",
@@ -133,6 +145,11 @@ export function startServer(port = PORT, host = HOST) {
 
         // Missão de geração: workspace limpo (ou arquivos pré-existentes se houver).
         const seed = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
+        const gExec = executionConfig(body);
+        if (gExec.provider && gExec.provider !== "deepseek") {
+          send(res, 400, { error: `O editor Cline (runtime) é roteado pelo gateway ai-proxy, que hoje roteia o provider DeepSeek. Provedor "${gExec.provider}" não é suportado pelo runtime atual (use o fluxo edge ou configure PROSPECTOR_BASE_URL para um gateway multi-provedor).` });
+          return;
+        }
         const genKey = `generate:${projectId}`;
         pruneSessions();
         const existingGen = sessions.get(genKey);
@@ -273,7 +290,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           if (!instruction) { send(res, 400, { error: "instruction é obrigatória" }); return; }
           const stream = body.stream === true; // NDJSON ao vivo (5.34)
           const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
-        const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
+          const rExec = executionConfig(body);
+          if (rExec.provider && rExec.provider !== "deepseek") {
+            send(res, 400, { error: `O editor Cline (runtime) é roteado pelo gateway ai-proxy (DeepSeek). Provedor "${rExec.provider}" não é suportado pelo runtime atual — use o fluxo edge ou ajuste PROSPECTOR_BASE_URL.` });
+            return;
+          }        const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
         const memory = Array.isArray(body.memory) ? (body.memory as unknown[]).filter((x): x is string => typeof x === "string") : [];
         const fresh = body.fresh === true; // força nova sessão (novo foco)
 
