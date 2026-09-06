@@ -193,8 +193,11 @@ Deno.serve(async (req) => {
         }
         const entries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
         for (const f of files) {
-          const blob = await ghJson<{ sha?: string }>(token, "/git/blobs", { method: "POST", body: JSON.stringify({ content: f.content, encoding: "utf-8" }) });
-          if (!blob.ok || !blob.data?.sha) return json({ status: "error", error: `Falha ao criar blob de ${f.path}` }, 502);
+          const utf8 = new TextEncoder().encode(f.content);
+          let binary = "";
+          utf8.forEach((byte) => { binary += String.fromCharCode(byte); });
+          const blob = await ghJson<{ sha?: string }>(token, "/git/blobs", { method: "POST", body: JSON.stringify({ content: btoa(binary), encoding: "base64" }) });
+          if (!blob.ok || !blob.data?.sha) return json({ status: "error", error: `Falha ao criar blob de ${f.path} (${blob.message ?? "erro"})` }, 502);
           const blobSha = blob.data.sha;
           entries.push({ path: f.path, mode: "100644", type: "blob", sha: blobSha });
           newSync[f.path] = { sha: blobSha, updated_at: new Date().toISOString() };
