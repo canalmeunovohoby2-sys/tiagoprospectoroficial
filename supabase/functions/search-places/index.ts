@@ -2024,6 +2024,41 @@ function sortLeadsByPriority(leads: PublicLead[], segment: string, module: "orvi
     .map((x) => x.l);
 }
 
+// ── Contact Search Providers (5.39) — fallback opcional para descobrir WhatsApp.
+// Tavily usa runWebSources (já existente); Brave e Serper são chamadas diretas,
+// apenas se a respectiva key existir (skip graceful sem key).
+interface WebHit { title: string; url: string; description: string }
+function contactQueries(name: string, city: string): string[] {
+  return [
+    `${name} ${city} WhatsApp`,
+    `${name} ${city} telefone contato`,
+  ];
+}
+async function braveHits(query: string): Promise<WebHit[]> {
+  const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
+  if (!key) return [];
+  try {
+    const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=8`, { headers: { "X-Subscription-Token": key, Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+    if (res.status !== 200) return [];
+    const data = await res.json() as { web?: { results?: Array<{ title?: string; url?: string; description?: string }> } };
+    return (data.web?.results ?? []).map((r) => ({ title: String(r.title ?? ""), url: String(r.url ?? ""), description: String(r.description ?? "") }));
+  } catch { return []; }
+}
+async function serperHits(query: string): Promise<WebHit[]> {
+  const key = Deno.env.get("SERPER_API_KEY");
+  if (!key) return [];
+  try {
+    const res = await fetch("https://google.serper.dev/search", { method: "POST", headers: { "X-API-KEY": key, "Content-Type": "application/json" }, body: JSON.stringify({ q: query, gl: "br", hl: "pt-br", num: 10 }), signal: AbortSignal.timeout(8000) });
+    if (res.status !== 200) return [];
+    const data = await res.json() as { organic?: Array<{ title?: string; link?: string; snippet?: string }> };
+    return (data.organic ?? []).map((r) => ({ title: String(r.title ?? ""), url: String(r.link ?? ""), description: String(r.snippet ?? "") }));
+  } catch { return []; }
+}
+/** Converte hits em texto para extração de contato + evidência de origem. */
+function hitsMarkdown(provider: string, hits: WebHit[]): string {
+  return hits.map((h) => `[${provider}] ${h.title}\n${h.url}\n${h.description}`).join("\n");
+}
+
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -2085,7 +2120,7 @@ Deno.serve(async (req) => {
       if (batchErr) return json({ error: batchErr.message }, 500);
 
       const candidates: Array<Record<string, unknown>> = Array.isArray(batch) ? batch : [];
-      const stats = { processed: 0, websitesFound: 0, phonesFound: 0, whatsappFound: 0, instagramFound: 0, skippedAlreadyEnriched: 0 };
+      const stats = { processed: 0, websitesFound: 0, phonesFound: 0, whatsappFound: 0, instagramFound: 0, skippedAlreadyEnriched: 0, tavilySearches: 0, braveSearches: 0, serperSearches: 0, whatsappOfficial: 0 };
       const firstCity = String(candidates[0]?.city ?? "");
       const firstState = String(candidates[0]?.state ?? "");
 
@@ -2122,8 +2157,43 @@ Deno.serve(async (req) => {
           if (md) {
             const contacts = extractContactsFromMarkdown(md, lead.city ?? "", lead.state ?? "", { requireGeo: false });
             if (contacts.phone && !lead.phone) { lead.phone = contacts.phone; stats.phonesFound++; }
-            if (contacts.whatsapp && !lead.whatsapp) { lead.whatsapp = contacts.whatsapp; stats.whatsappFound++; }
+            if (contacts.whatsapp && !lead.whatsapp) { lead.whatsapp = contacts.whatsapp; stats.whatsappFound++; stats.whatsappOfficial++; }
             if (contacts.instagram && !lead.instagram) { lead.instagram = contacts.instagram; stats.instagramFound++; }
+          }
+        }
+        // CASCATA WEB (5.39): se ainda não há WhatsApp, busca orientada a contato
+        // em Tavily → Brave → Serper (cada uma só se necessário e com chave).
+        if (!lead.whatsapp) {
+          const name = String(lead.name ?? "");
+          const queries = contactQueries(name, lead.city ?? "");
+          for (const q of queries.slice(0, 1)) {
+            if (lead.whatsapp) break;
+            try {
+              const web = await runWebSources({ query: q, limit: 8, call: callWebFunction });
+              stats.tavilySearches++;
+              for (const items of [web.tavily, web.firecrawl]) {
+                const md = hitsMarkdown("tavily", items as unknown as WebHit[]);
+                const c = extractContactsFromMarkdown(md, lead.city ?? "", lead.state ?? "", { requireGeo: true });
+                if (c.whatsapp && !lead.whatsapp) { lead.whatsapp = c.whatsapp; stats.whatsappFound++; }
+                if (c.phone && !lead.phone) lead.phone = c.phone;
+              }
+            } catch { /* sem tavily */ }
+            if (lead.whatsapp) break;
+            const brave = await braveHits(q);
+            if (brave.length) {
+              stats.braveSearches++;
+              const c = extractContactsFromMarkdown(hitsMarkdown("brave", brave), lead.city ?? "", lead.state ?? "", { requireGeo: true });
+              if (c.whatsapp && !lead.whatsapp) { lead.whatsapp = c.whatsapp; stats.whatsappFound++; }
+              if (c.phone && !lead.phone) lead.phone = c.phone;
+            }
+            if (lead.whatsapp) break;
+            const serper = await serperHits(q);
+            if (serper.length) {
+              stats.serperSearches++;
+              const c = extractContactsFromMarkdown(hitsMarkdown("serper", serper), lead.city ?? "", lead.state ?? "", { requireGeo: true });
+              if (c.whatsapp && !lead.whatsapp) { lead.whatsapp = c.whatsapp; stats.whatsappFound++; }
+              if (c.phone && !lead.phone) lead.phone = c.phone;
+            }
           }
         }
         // PERSISTÊNCIA IMEDIATA (parcial nunca se perde)
@@ -2157,6 +2227,10 @@ Deno.serve(async (req) => {
         whatsapp_found: stats.whatsappFound,
         instagram_found: stats.instagramFound,
         skipped_already_enriched: stats.skippedAlreadyEnriched,
+        tavily_searches: stats.tavilySearches,
+        brave_searches: stats.braveSearches,
+        serper_searches: stats.serperSearches,
+        whatsapp_official: stats.whatsappOfficial,
         remaining: Math.max(0, total - nextOffset),
         completed,
         next_cursor: completed ? null : nextOffset,
