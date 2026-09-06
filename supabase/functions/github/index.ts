@@ -185,8 +185,16 @@ Deno.serve(async (req) => {
       if (isInitial) {
         // ── PRIMEIRO SYNC: UM ÚNICO COMMIT INICIAL (Git Trees API) ──
         const repoPath = `/repos/${link.owner}/${link.repo}`;
-        const ref = await ghJson<{ object?: { sha?: string } }>(token, `${repoPath}/git/ref/heads/${link.branch}`);
-        const head = ref.ok ? ref.data?.object?.sha : undefined; // repo vazio → sem head
+        let ref = await ghJson<{ object?: { sha?: string } }>(token, `${repoPath}/git/ref/heads/${link.branch}`);
+        let head = ref.ok ? ref.data?.object?.sha : undefined;
+        if (!head) {
+          // Repositório vazio: o GitHub bloqueia blobs sem nenhum commit. Cria um
+          // seed mínimo (1 commit) para destravar a Git API.
+          const seedPut = await ghJson<{ commit?: { sha?: string } }>(token, `${repoPath}/contents/.prospector-seed`, { method: "PUT", body: JSON.stringify({ message: "chore: init", content: btoa("."), branch: link.branch }) });
+          if (!seedPut.ok || !seedPut.data?.commit?.sha) return json({ status: "error", error: `Falha ao inicializar repositório vazio (${seedPut.message ?? "erro"})` }, 502);
+          ref = await ghJson<{ object?: { sha?: string } }>(token, `${repoPath}/git/ref/heads/${link.branch}`);
+          head = ref.ok ? ref.data?.object?.sha : undefined;
+        }
         let baseTree = "";
         if (head) {
           const baseCommit = await ghJson<{ tree?: { sha?: string } }>(token, `${repoPath}/git/commits/${head}`);
