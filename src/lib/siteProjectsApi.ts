@@ -283,7 +283,7 @@ export interface ChatAttachmentInput {
 // Captura screenshots REAIS do site (desktop + mobile) no Agent Runtime para o
 // PDF de proposta. Sem runtime configurado ou em falha → {} (o PDF usa o hero).
 export async function captureWorkspaceScreenshots(files: Record<string, string>): Promise<{ desktop?: string; mobile?: string }> {
-  const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
+  const runtimeUrl = await editorRuntimeUrl();
   if (!runtimeUrl || !files || !Object.keys(files).some((k) => k.endsWith("index.html"))) return {};
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/capture`, {
@@ -312,7 +312,7 @@ export async function invokeProspectorAgent(input: {
   userId?: string;
   execution?: { provider?: string; model?: string; fallback?: string } | null;
 }, onLiveActivity?: (phase: string, detail: string) => void): Promise<AgentExecuteResult> {
-  const runtimeUrl = editorRuntimeUrl();
+  const runtimeUrl = await editorRuntimeUrl();
   if (!runtimeUrl) return editorUnavailableResult("not_configured");
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/run`, {
@@ -403,15 +403,34 @@ REGRAS:
 - Faça o site COMPLETO (não curto): hero forte + pelo menos 4-5 seções com função + footer rico.`;
 }
 
-/** URL do Agent Runtime (editor completo/Cline). Uma única fonte do roteamento. */
-export function editorRuntimeUrl(): string | undefined {
-  return import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
+/** URL do Agent Runtime (editor completo/Cline). Uma única fonte do roteamento.
+ * 1) VITE_AGENT_RUNTIME_URL (build); 2) AGENT_RUNTIME_URL via edge runtime-config
+ * (servidor) — assim independe do prefixo VITE na Vercel. */
+let runtimeUrlTried = false;
+let runtimeUrlCached: string | null = null;
+
+export async function editorRuntimeUrl(): Promise<string | undefined> {
+  if (runtimeUrlTried) return runtimeUrlCached ?? undefined;
+  const envUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
+  if (envUrl) { runtimeUrlTried = true; runtimeUrlCached = envUrl; return envUrl; }
+  try {
+    const { data } = await supabase.functions.invoke("runtime-config", {});
+    const serverUrl = (data as { runtimeUrl?: unknown } | null)?.runtimeUrl;
+    if (typeof serverUrl === "string" && serverUrl.trim()) {
+      runtimeUrlCached = serverUrl.trim().replace(/\/$/, "");
+      runtimeUrlTried = true;
+      return runtimeUrlCached;
+    }
+  } catch { /* segue sem URL */ }
+  runtimeUrlTried = true;
+  runtimeUrlCached = null;
+  return undefined;
 }
 
 /** Erro EXPLÍCITO quando o editor completo (runtime) não está disponível. */
 export function editorUnavailableResult(reason: "not_configured" | "unreachable"): AgentExecuteResult {
   const msg = reason === "not_configured"
-    ? "O editor completo (Agent Runtime + Cline) não está configurado neste ambiente. Para editar/gerar sites pelo chat é necessário definir VITE_AGENT_RUNTIME_URL apontando para o agent-runtime (browser, visão, tools e guards só existem nele)."
+    ? "O editor completo (Agent Runtime + Cline) não está configurado neste ambiente. Configure a variável AGENT_RUNTIME_URL (secret no Supabase/edge runtime-config) ou VITE_AGENT_RUNTIME_URL apontando para o agent-runtime."
     : "O editor completo (Agent Runtime) não respondeu. Verifique se o agent-runtime está no ar; nenhuma edição simplificada foi feita no lugar dele.";
   return { status: "error", runtime: "cline", errors: [msg], logs: ["editor_full_routing"] };
 }
@@ -424,7 +443,7 @@ export async function invokeProspectorGenerate(input: {
   briefing?: Record<string, unknown>;
   userId?: string;
 }): Promise<AgentExecuteResult> {
-  const runtimeUrl = editorRuntimeUrl();
+  const runtimeUrl = await editorRuntimeUrl();
   if (!runtimeUrl) return editorUnavailableResult("not_configured");
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
