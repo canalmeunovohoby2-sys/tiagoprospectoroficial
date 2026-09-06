@@ -80,6 +80,71 @@ function drawImageFitted(doc: jsPDF, dataUrl: string, x: number, y: number, boxW
   if (h > boxH) { h = boxH; w = h * ar; }
   doc.addImage(dataUrl, fmt, x + (boxW - w) / 2, y + (boxH - h) / 2, w, h);
 }
+
+// Notebook realista: sombra, corpo do laptop e tela com o screenshot real.
+function drawLaptopMock(doc: jsPDF, x: number, y: number, w: number, img?: string | null) {
+  const lidH = w * 0.66;
+  const bezel = w * 0.025;
+  // sombra
+  doc.setFillColor(222, 226, 231);
+  doc.roundedRect(x + 6, y + 8, w, lidH, 14, 14, "F");
+  // corpo (tampa) arredondado
+  rrect(doc, x, y, w, lidH, 14, { r: 56, g: 60, b: 66 });
+  // barra superior + webcam
+  doc.setFillColor(205, 209, 214);
+  doc.rect(x + bezel, y + 5, w - bezel * 2, 2, "F");
+  const sw = w - bezel * 2;
+  const sh = lidH - bezel * 2 - 4;
+  rrect(doc, x + bezel, y + bezel, sw, sh, 6, NIGHT);
+  if (img) {
+    const inner = 5;
+    try {
+      const fmt = img.startsWith("data:image/png") ? "PNG" : "JPEG";
+      const ar = imgAspect(doc, img);
+      let iw = sw - inner * 2;
+      let ih = iw / ar;
+      if (ih > sh - inner * 2) { ih = sh - inner * 2; iw = ih * ar; }
+      doc.addImage(img, fmt, x + bezel + (sw - iw) / 2, y + bezel + (sh - ih) / 2, iw, ih);
+    } catch { /* tela vazia elegante */ }
+  }
+  // base do laptop (deck)
+  rrect(doc, x - w * 0.02, y + lidH, w * 1.04, w * 0.055, 6, { r: 132, g: 137, b: 143 });
+  rrect(doc, x - w * 0.01, y + lidH - 3, w * 1.02, 5, 3, { r: 226, g: 229, b: 234 });
+}
+
+// Smartphone moderno: corpo escuro, cantos arredondados, notch e screenshot real.
+function drawPhoneMock(doc: jsPDF, x: number, y: number, w: number, img?: string | null) {
+  const h = w * 2.04;
+  // sombra
+  doc.setFillColor(222, 226, 231);
+  doc.roundedRect(x + 3, y + 6, w, h, w * 0.18, w * 0.18, "F");
+  // corpo
+  rrect(doc, x, y, w, h, w * 0.16, { r: 24, g: 25, b: 28 });
+  // botões laterais
+  doc.setFillColor(70, 72, 76);
+  doc.rect(x - 2, y + h * 0.16, 2.5, w * 0.08, "F");
+  doc.rect(x - 2, y + h * 0.27, 2.5, w * 0.14, "F");
+  doc.rect(x + w, y + h * 0.18, 2.5, w * 0.09, "F");
+  // tela
+  const inset = w * 0.045;
+  const sw = w - inset * 2;
+  const sh = h - inset * 2;
+  rrect(doc, x + inset, y + inset, sw, sh, w * 0.09, NIGHT);
+  // notch (dynamic island)
+  doc.setFillColor(15, 16, 18);
+  doc.roundedRect(x + w * 0.3, y + inset + 5, w * 0.4, w * 0.07, w * 0.035, w * 0.035, "F");
+  if (img) {
+    const inner = 3;
+    try {
+      const fmt = img.startsWith("data:image/png") ? "PNG" : "JPEG";
+      const ar = imgAspect(doc, img);
+      let iw = sw - inner * 2;
+      let ih = iw / ar;
+      if (ih > sh - inner * 2 - 10) { ih = sh - inner * 2 - 10; iw = ih * ar; }
+      doc.addImage(img, fmt, x + inset + (sw - iw) / 2, y + inset + (sh - ih) / 2, iw, ih);
+    } catch { /* tela vazia elegante */ }
+  }
+}
 function header(doc: jsPDF, W: number, label: string, n: string, brand: Rgb, y: number) {
   doc.setFillColor(brand.r, brand.g, brand.b);
   doc.rect(54, y, 20, 2.4, "F");
@@ -187,18 +252,13 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   }
   y += 12;
 
-  // Print desktop (real) maior
-  text(doc, "Tela do computador", M, y, 11, inkOnLight, "bold");
-  y += 10;
-  doc.setFillColor(238, 240, 243); doc.roundedRect(M + 2, y + 3, CW, 252, 10, 10, "F");
-  rrect(doc, M, y, CW, 252, 10, NIGHT);
-  text(doc, "seu-site.com.br", M + 16, y + 18, 7, { r: 190, g: 195, b: 202 });
-  if (desktop) {
-    const imgH = 214;
-    rrect(doc, M + 14, y + 26, CW - 28, imgH, 3, { r: 24, g: 27, b: 32 });
-    drawImageFitted(doc, desktop, M + 16, y + 28, CW - 32, imgH - 4);
-  }
-  y += 252 + 22;
+  // Print desktop (real) dentro de um notebook realista
+  const lapY = y + 6;
+  const lapW = Math.min(CW, 470);
+  const lapX = M + (CW - lapW) / 2;
+  text(doc, "Tela do computador", M, y - 2, 11, inkOnLight, "bold");
+  drawLaptopMock(doc, lapX, lapY, lapW, desktop);
+  y = lapY + lapW * 0.72 + 22;
 
   // Identidade
   text(doc, "Identidade visual do projeto", M, y, 11, inkOnLight, "bold");
@@ -231,20 +291,11 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   const rightX = M + leftW + 34;
 
   text(doc, "Celular e tablet", M, y, 11, inkOnLight, "bold");
-  y += 10;
-  const mobBoxH = 330;
-  doc.setFillColor(238, 240, 243); doc.roundedRect(M + 2, y + 3, leftW, mobBoxH, 10, 10, "F");
-  rrect(doc, M, y, leftW, mobBoxH, 10, NIGHT);
-  if (mobile) {
-    const ar = imgAspect(doc, mobile);
-    const availH = mobBoxH - 20;
-    const wTarget = availH * ar; const wFit = Math.min(leftW - 20, wTarget);
-    const hFit = wFit / ar;
-    rrect(doc, M + 10, y + 10, wFit + 2, hFit + 2, 4, { r: 24, g: 27, b: 32 });
-    doc.addImage(mobile, mobile.startsWith("data:image/png") ? "PNG" : "JPEG", M + 11, y + 11, wFit, hFit);
-  } else {
-    text(doc, "Versão mobile responsiva", M + leftW / 2, y + mobBoxH / 2 - 6, 10, { r: 225, g: 228, b: 233 }, "bold", "center");
-  }
+  y += 12;
+  // Smartphone realista com o screenshot mobile dentro
+  const phoneW = Math.min(leftW, 158);
+  const phoneX = M + (leftW - phoneW) / 2;
+  drawPhoneMock(doc, phoneX, y, phoneW, mobile);
 
   text(doc, "Suas vantagens", rightX, 92, 11, inkOnLight, "bold");
   const adv: Array<[string, string]> = [
