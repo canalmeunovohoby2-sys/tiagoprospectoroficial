@@ -203,7 +203,7 @@ const OSM_SEGMENT_FILTERS: Array<{ match: string[]; filters: OsmTagFilter[] }> =
 const SEGMENT_SYNONYMS: Array<{ match: string[]; synonyms: string[] }> = [
   { match: ["dentista", "odontologia", "odontológica", "odontologica"], synonyms: ["dentista", "odontologia", "clínica odontológica", "consultório odontológico"] },
   { match: ["medico", "médico", "clinica medica", "clínica médica"], synonyms: ["clínica médica", "consultório médico", "médico", "clínica geral"] },
-  { match: ["advogado", "advocacia"], synonyms: ["advogado", "escritório de advocacia", "advocacia"] },
+  { match: ["advogado", "advocacia"], synonyms: ["advogado", "escritório de advocacia", "advocacia", "advocacia em", "escritório jurídico", "advogados"] },
   { match: ["contador", "contabilidade"], synonyms: ["contador", "escritório de contabilidade", "contabilidade"] },
   { match: ["imobiliaria", "imobiliária"], synonyms: ["imobiliária", "corretor de imóveis", "imóveis"] },
   { match: ["mecanica", "mecânica", "oficina"], synonyms: ["mecânica", "oficina mecânica", "auto center", "auto elétrica"] },
@@ -263,6 +263,7 @@ const GOOGLE_INCLUDED_TYPE: Array<{ match: string[]; types: string[] }> = [
   { match: ["distribuidora", "distribuidor", "fornecedor"], types: ["wholesaler", "store"] },
   { match: ["otica", "ótica"], types: ["optician"] },
   { match: ["cafeteria", "café", "cafe"], types: ["cafe"] },
+  { match: ["advogado", "advogados", "advocacia", "escritório de advocacia"], types: ["attorney", "lawyer"] },
   { match: ["hotel", "pousada"], types: ["lodging"] },
   { match: ["mecanica", "mecânica", "oficina"], types: ["car_repair"] },
   { match: ["dentista", "odontologia"], types: ["dental_clinic"] },
