@@ -1998,16 +1998,16 @@ function computeLeadPriority(lead: PublicLead, segment: string, module: "orvix" 
   if (lead.whatsapp) p += 12;
   if (lead.phone) p += 4;
   if (lead.instagram) p += 6;
-  // Website state — só é sinal de oportunidade em Landing Pages.
-  // No módulo Orvix (venda de ERP/PDV), presença/ausência de site NÃO deve
-  // enviesar a priorização — o que importa é segmento, ERP fit, avaliações,
-  // volume e presença comercial.
+  // Oportunidade comercial (landing pages): WhatsApp + sem site é o TOPO.
+  // Sem excluir ninguém — apenas prioriza; os demais continuam no resultado.
+  const hasSite = !!lead.has_website;
   if (module !== "orvix") {
-    if (!lead.has_website) p += 25;
+    if (lead.whatsapp && !hasSite) p += 38; // melhor combo: contato direto + sem site
+    else if (!hasSite) p += 18;
     else {
       const host = hostOf(lead.website ?? "");
       const weak = ["wixsite.com", "weebly.com", "webnode.com", "blogspot.com", "wordpress.com", "godaddysites.com", "site.google.com", "linktr.ee"];
-      if (weak.some((w) => host.endsWith(w))) p += 15;
+      if (weak.some((w) => host.endsWith(w))) p += 10;
     }
   }
   // City match bonus
