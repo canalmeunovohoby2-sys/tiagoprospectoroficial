@@ -381,8 +381,14 @@ export default function SiteProjectPage() {
       }
 
       // SEM FALLBACK para o gerador clássico: se o editor completo (Agent Runtime
-      // + Cline) não estiver disponível, o erro é explícito — igual à edição.
-      throw new Error((genRes.errors ?? ["Editor completo indisponível."]).join(" "));
+      // + Cline) não estiver disponível OU não produzir arquivos, erro explícito.
+      const extra = genRes as unknown as { gate_ok?: boolean; gate_issues?: string[]; error?: string; reply?: string };
+      const reason = extra?.error
+        || (genRes.errors ?? [])[0]
+        || (extra?.reply ? `O editor respondeu sem criar arquivos: ${extra.reply.slice(0, 240)}` : "")
+        || (extra?.gate_ok === false ? `A revisão automática bloqueou a conclusão: ${(extra.gate_issues ?? []).slice(0, 3).join("; ")}` : "")
+        || "A geração terminou sem criar arquivos no editor completo (verifique os logs do agent-runtime).";
+      throw new Error(`A geração falhou no editor completo: ${reason}`);
     } catch (e) {
       const message = friendlyAiError(e);
       setGenError(message);
