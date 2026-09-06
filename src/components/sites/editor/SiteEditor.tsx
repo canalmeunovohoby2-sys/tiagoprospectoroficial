@@ -195,31 +195,14 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
 
   const chatMsgs = aiPanel?.messages ?? [];
 
+  // Preserva o arquivo EXATAMENTE como enviado (transparência/formato/SVG/vídeo).
+  // NENHUMA conversão/canvas: leitura direta como data URL.
   function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> {
     return new Promise((resolve, reject) => {
-      if (!file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = () => resolve({ dataUrl: String(reader.result), label: file.name });
-        reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
-        reader.readAsDataURL(file);
-        return;
-      }
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        const MAX = 1024;
-        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.round(img.width * scale);
-        canvas.height = Math.round(img.height * scale);
-        const ctx = canvas.getContext("2d");
-        if (!ctx) { URL.revokeObjectURL(url); reject(new Error("Canvas indisponível")); return; }
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        URL.revokeObjectURL(url);
-        resolve({ dataUrl: canvas.toDataURL("image/jpeg", 0.82), label: file.name });
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Imagem inválida")); };
-      img.src = url;
+      const reader = new FileReader();
+      reader.onload = () => resolve({ dataUrl: String(reader.result), label: file.name });
+      reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
+      reader.readAsDataURL(file);
     });
   }
 

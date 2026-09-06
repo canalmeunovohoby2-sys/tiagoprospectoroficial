@@ -26,31 +26,14 @@ interface SiteChatProps {
   liveActivity?: Array<{ phase: string; detail: string }>;
 }
 
+// Preserva o arquivo EXATAMENTE como enviado (transparência/formato/SVG/vídeo).
+// NENHUMA conversão/canvas: leitura direta como data URL.
 function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> {
   return new Promise((resolve, reject) => {
-    if (!file.type.startsWith("image/")) {
-      const reader = new FileReader();
-      reader.onload = () => resolve({ dataUrl: String(reader.result), label: file.name });
-      reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
-      reader.readAsDataURL(file);
-      return;
-    }
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const MAX = 1024;
-      const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      const ctx = canvas.getContext("2d");
-      if (!ctx) { URL.revokeObjectURL(url); reject(new Error("Canvas indisponível")); return; }
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      resolve({ dataUrl: canvas.toDataURL("image/jpeg", 0.82), label: file.name });
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Imagem inválida")); };
-    img.src = url;
+    const reader = new FileReader();
+    reader.onload = () => resolve({ dataUrl: String(reader.result), label: file.name });
+    reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
+    reader.readAsDataURL(file);
   });
 }
 
@@ -331,7 +314,15 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
 
         {attachment && (
           <div className="mb-2 flex items-center gap-2 rounded-md border border-border/70 bg-card px-2 py-1.5 text-xs text-muted-foreground">
-            {attachment.dataUrl.startsWith("data:image") ? <img src={attachment.dataUrl} alt="anexo" className="h-10 w-10 rounded object-cover" /> : <span>📎</span>}
+            {attachment.dataUrl.startsWith("data:image") ? (
+              <span className="rounded p-0.5" style={{ backgroundImage: "conic-gradient(#dbe2ea 0 25%, #f8fafc 0 50%, #dbe2ea 0 75%, #f8fafc 0)", backgroundSize: "12px 12px" }}>
+                <img src={attachment.dataUrl} alt={attachment.label || "anexo"} className="h-10 w-10 rounded object-contain mix-blend-normal" />
+              </span>
+            ) : attachment.dataUrl.startsWith("data:video") ? (
+              <video src={attachment.dataUrl} className="h-10 w-14 rounded object-contain" controls />
+            ) : (
+              <span>📎</span>
+            )}
             <span className="flex-1 truncate">{attachment.label || "Anexo"}</span>
             <button type="button" onClick={() => setAttachment(null)} className="text-muted-foreground hover:text-destructive"><X className="h-3.5 w-3.5" /></button>
           </div>
@@ -352,7 +343,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
             }}
           />
           <div className="flex items-center gap-1.5">
-            <input ref={fileRef} type="file" accept="image/*,.pdf,.txt,.doc,.docx" className="hidden" onChange={handleFile} />
+            <input ref={fileRef} type="file" accept="image/*,.svg,.webp,.gif,.mp4,.webm,.pdf,.txt,.doc,.docx" className="hidden" onChange={handleFile} />
             <button type="button" onClick={() => fileRef.current?.click()} title="Anexar foto ou arquivo" className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors">
               <Paperclip className="h-4 w-4" />
             </button>
