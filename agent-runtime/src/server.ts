@@ -62,16 +62,55 @@ function executionConfig(body: Record<string, unknown>): { provider?: string; mo
   };
 }
 
-function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>): ProspectorSiteAgent {
+interface RuntimeAiConfig { provider: string; model: string; baseUrl: string; apiKey: string }
+
+// Busca a config segura de execução do usuário via edge runtime-ai-config.
+// Autentica com RUNTIME_GATEWAY_SECRET; NUNCA vai ao cliente. Falha → null
+// (mantém o comportamento default sem quebrar o runtime).
+async function fetchRuntimeAiConfig(userId: string, execution?: unknown): Promise<RuntimeAiConfig | null> {
+  const secret = process.env.RUNTIME_GATEWAY_SECRET;
+  const proxyBase = process.env.PROSPECTOR_BASE_URL ?? "";
+  const funcBase = process.env.SUPABASE_FUNCTIONS_URL || (proxyBase.includes("/functions/v1") ? proxyBase.split("/functions/v1")[0] + "/functions/v1" : "");
+  if (!secret || !funcBase) return null;
+  try {
+    const res = await fetch(`${funcBase.replace(/\/$/, "")}/runtime-ai-config`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, execution: execution ?? undefined }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { provider?: string; model?: string; baseUrl?: string; apiKey?: string; error?: string };
+    if (data.error || !data.provider || !data.model || !data.baseUrl || !data.apiKey) return null;
+    return { provider: data.provider, model: data.model, baseUrl: data.baseUrl, apiKey: data.apiKey };
+  } catch {
+    return null;
+  }
+}
+
+async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>): Promise<ProspectorSiteAgent> {
   const root = ensureWorkspaceDir(projectId, files);
   const exec = executionConfig(body);
-  const providerId = exec.provider ?? (typeof body.providerId === "string" ? body.providerId : undefined);
-  const modelId = exec.model ?? (typeof body.modelId === "string" ? body.modelId : undefined);
+  const userId = typeof body.user_id === "string" ? body.user_id : "";
+  let providerId = exec.provider ?? (typeof body.providerId === "string" ? body.providerId : undefined);
+  let modelId = exec.model ?? (typeof body.modelId === "string" ? body.modelId : undefined);
+  let apiKey = typeof body.apiKey === "string" ? body.apiKey : undefined;
+  let baseUrl = typeof body.baseUrl === "string" ? body.baseUrl : undefined;
+
+  // IA selecionada pelo usuário assume o Cline (DeepSeek/OpenAI/NVIDIA).
+  const runtimeCfg = userId ? await fetchRuntimeAiConfig(userId, body.execution) : null;
+  if (runtimeCfg) {
+    providerId = runtimeCfg.provider;
+    modelId = runtimeCfg.model;
+    apiKey = runtimeCfg.apiKey;
+    baseUrl = runtimeCfg.baseUrl;
+  }
+
   return new ProspectorSiteAgent({
     workspaceRoot: root,
     business,
-    apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
-    baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
+    apiKey,
+    baseUrl,
     modelId,
     providerId,
     maxIterations: typeof body.maxIterations === "number" ? body.maxIterations : Math.min(80, Math.max(8, Number(process.env.AGENT_MAX_ITERATIONS ?? 40))),
@@ -146,8 +185,8 @@ export function startServer(port = PORT, host = HOST) {
         // Missão de geração: workspace limpo (ou arquivos pré-existentes se houver).
         const seed = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
         const gExec = executionConfig(body);
-        if (gExec.provider && gExec.provider !== "deepseek") {
-          send(res, 400, { error: `O editor Cline (runtime) é roteado pelo gateway ai-proxy, que hoje roteia o provider DeepSeek. Provedor "${gExec.provider}" não é suportado pelo runtime atual (use o fluxo edge ou configure PROSPECTOR_BASE_URL para um gateway multi-provedor).` });
+        if (gExec.provider && !["deepseek", "openai", "nvidia"].includes(gExec.provider)) {
+            send(res, 400, { error: `Provedor "${gExec.provider}" não é suportado pelo runtime (use deepseek, openai ou nvidia). Gemini é apenas edge.` });
           return;
         }
         const genKey = `generate:${projectId}`;
@@ -157,7 +196,7 @@ export function startServer(port = PORT, host = HOST) {
         // Chromium é pesado p/ plano gratuito: na GERAÇÃO o browser fica OFF por
         // padrão (opt-in via GENERATE_BROWSER=1). A EDIÇÃO segue com browser.
         const genBrowser = process.env.GENERATE_BROWSER === "1" && body.enableBrowser !== false;
-        const agent = existingGen?.agent ?? makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser });
+        const agent = existingGen?.agent ?? await makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser });
         if (!existingGen) sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "" });
 
         // ANEXOS (5.26) na geração: materializa no workspace (ex.: logo/foto real do cliente).
@@ -295,10 +334,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           const stream = body.stream === true; // NDJSON ao vivo (5.34)
           const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
           const rExec = executionConfig(body);
-          if (rExec.provider && rExec.provider !== "deepseek") {
-            send(res, 400, { error: `O editor Cline (runtime) é roteado pelo gateway ai-proxy (DeepSeek). Provedor "${rExec.provider}" não é suportado pelo runtime atual — use o fluxo edge ou ajuste PROSPECTOR_BASE_URL.` });
+          if (rExec.provider && !["deepseek", "openai", "nvidia"].includes(rExec.provider)) {
+            send(res, 400, { error: `Provedor "${rExec.provider}" não é suportado pelo runtime (use deepseek, openai ou nvidia). Gemini é apenas edge.` });
             return;
-          }        const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
+          }
+        const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
         const memory = Array.isArray(body.memory) ? (body.memory as unknown[]).filter((x): x is string => typeof x === "string") : [];
         const fresh = body.fresh === true; // força nova sessão (novo foco)
 
@@ -317,7 +357,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           // (arquivos podem ter mudado entre sessões por materialização de spec)
           ensureWorkspaceDir(projectId, files);
         } else {
-          agent = makeAgent(projectId, projectId, files, business, body);
+          agent = await makeAgent(projectId, projectId, files, business, body);
           sessions.set(projectId, { agent, projectId, lastActive: Date.now(), resetToken: "" });
         }
 
