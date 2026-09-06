@@ -302,7 +302,7 @@ export async function invokeProspectorAgent(input: {
   memory?: string[];
   attachments?: ChatAttachmentInput[];
   conversation?: string[];
-}): Promise<AgentExecuteResult> {
+}, onLiveActivity?: (phase: string, detail: string) => void): Promise<AgentExecuteResult> {
   const runtimeUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
   if (runtimeUrl) {
     try {
@@ -317,16 +317,41 @@ export async function invokeProspectorAgent(input: {
           memory: input.memory ?? [],
           attachments: input.attachments ?? [],
           conversation: (input.conversation ?? []).slice(-8),
+          stream: onLiveActivity ? true : false,
         }),
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(300_000),
       });
-      if (res.ok) {
-        const data = (await res.json()) as AgentExecuteResult & { error?: string };
-        if (data.error) return { status: "error", errors: [data.error] };
-        return data;
+      if (!res.ok) {
+        return { status: "error", errors: [`Runtime do agente indisponível (HTTP ${res.status}).`] };
       }
-      // runtime respondeu com erro → reporta para o usuário entender
-      return { status: "error", errors: [`Runtime do agente indisponível (HTTP ${res.status}).`] };
+      // NDJSON ao vivo: cada linha de atividade é repassada para a UI (5.34).
+      if (onLiveActivity && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let final: AgentExecuteResult | null = null;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buffer.indexOf("\n")) >= 0) {
+            const raw = buffer.slice(0, nl);
+            buffer = buffer.slice(nl + 1);
+            if (!raw.trim()) continue;
+            try {
+              const line = JSON.parse(raw) as Record<string, unknown>;
+              if (line.type === "activity") onLiveActivity(String(line.phase ?? ""), String(line.detail ?? ""));
+              else if (line.type === "result") final = line as unknown as AgentExecuteResult;
+            } catch { /* linha inválida ignora */ }
+          }
+        }
+        if (final) return final;
+        return { status: "error", errors: ["Stream do agente terminou sem resultado."] };
+      }
+      const data = (await res.json()) as AgentExecuteResult & { error?: string };
+      if (data.error) return { status: "error", errors: [data.error] };
+      return data;
     } catch {
       // conexão recusada → fallback para a edge function
     }

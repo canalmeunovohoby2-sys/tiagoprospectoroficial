@@ -22,6 +22,8 @@ interface SiteChatProps {
   runningLabel?: string;
   onQuickStrategy?: (id: string) => void;
   quickStrategyDisabled?: boolean;
+  /** Atividades REAIS transmitidas ao vivo pelo runtime (5.34). */
+  liveActivity?: Array<{ phase: string; detail: string }>;
 }
 
 function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> {
@@ -52,7 +54,22 @@ function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> 
   });
 }
 
-export function SiteChat({ messages, running, error, canUndo, dirty, runningLabel, onQuickStrategy, quickStrategyDisabled, onApply, onRevert }: SiteChatProps) {
+const LIVE_ICONS: Record<string, string> = {
+  analyzing: "🔎",
+  editing: "🛠️",
+  researching: "🌐",
+  testing: "🧪",
+  fixing: "🔧",
+  done: "✅",
+  reviewing: "🔎",
+};
+
+function liveIcon(phase: string, detail: string): string {
+  if (phase === "verifying") return /visual_review|gemini|análise visual|analise visual/i.test(detail) ? "👁️" : "🌐";
+  return LIVE_ICONS[phase] ?? "⚙️";
+}
+
+export function SiteChat({ messages, running, error, canUndo, dirty, runningLabel, onQuickStrategy, quickStrategyDisabled, liveActivity, onApply, onRevert }: SiteChatProps) {
   const [instruction, setInstruction] = useState("");
   const [attachment, setAttachment] = useState<{ dataUrl: string; label: string } | null>(null);
   const [listening, setListening] = useState(false);
@@ -249,6 +266,28 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
       </div>
 
       <div className="relative flex flex-col">
+        {running && liveActivity && liveActivity.length > 0 && (
+          <div className="mb-2 shrink-0 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-primary/90">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+              </span>
+              Executando agora
+            </div>
+            <ul className="mt-1.5 space-y-1">
+              {liveActivity.slice(-6).map((a, i) => (
+                <li
+                  key={`${i}-${a.detail}`}
+                  className={`flex items-start gap-1.5 text-xs leading-snug ${i === liveActivity.slice(-6).length - 1 ? "font-medium text-foreground" : "text-muted-foreground/90"}`}
+                >
+                  <span className="shrink-0" aria-hidden>{liveIcon(a.phase, a.detail)}</span>
+                  <span className="min-w-0 break-words">{a.detail}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <div className="mb-2 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10.5px] font-medium text-muted-foreground">Comandos rápidos</p>
@@ -258,22 +297,22 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
               </span>
             )}
           </div>
-          <div className="mt-1 flex flex-wrap gap-1.5">
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
             {QUICK_STRATEGIES.map((s) => {
               const disabled = running || quickStrategyDisabled;
-              const analyze = s.analyzeOnly ? " (só análise)" : "";
               return (
                 <button
                   key={s.id}
                   type="button"
                   disabled={disabled}
                   onClick={() => onQuickStrategy?.(s.id)}
-                  title={`${s.label}${analyze} — ${s.hint}`}
-                  className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/[0.07] px-2 py-1 text-[10.5px] font-medium text-foreground/90 transition-colors hover:border-primary/50 hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-primary/20 disabled:hover:bg-primary/[0.07]"
+                  title={`${s.label}${s.analyzeOnly ? " (só análise)" : ""} — ${s.hint}`}
+                  className="flex min-w-0 flex-col items-center gap-1 rounded-xl border border-border/70 bg-card/60 px-1 py-2 text-center transition-colors hover:border-primary/45 hover:bg-primary/[0.07] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border/70 disabled:hover:bg-card/60"
                 >
-                  <span>{s.emoji}</span>
-                  <span className="hidden sm:inline">{s.label}</span>
-                  <span className="sm:hidden">{s.label.split(" ").slice(1).join(" ")}</span>
+                  <span className="text-base leading-none" aria-hidden>{s.emoji}</span>
+                  <span className="w-full truncate text-[10px] font-medium leading-tight text-foreground/90">
+                    {s.label}
+                  </span>
                 </button>
               );
             })}

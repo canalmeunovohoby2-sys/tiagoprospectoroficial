@@ -266,12 +266,13 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         return;
       }
 
-      if (url.pathname === "/run" && req.method === "POST") {
-        const body = await readJson(req);
-        const instruction = String(body.instruction ?? "").trim();
-        const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
-        if (!instruction) { send(res, 400, { error: "instruction é obrigatória" }); return; }
-        const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
+        if (url.pathname === "/run" && req.method === "POST") {
+          const body = await readJson(req);
+          const instruction = String(body.instruction ?? "").trim();
+          const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
+          if (!instruction) { send(res, 400, { error: "instruction é obrigatória" }); return; }
+          const stream = body.stream === true; // NDJSON ao vivo (5.34)
+          const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
         const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
         const memory = Array.isArray(body.memory) ? (body.memory as unknown[]).filter((x): x is string => typeof x === "string") : [];
         const fresh = body.fresh === true; // força nova sessão (novo foco)
@@ -297,6 +298,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
 
         const events: string[] = [];
         const activity: Array<{ phase: string; detail: string }> = [];
+        const writeLine = (obj: unknown) => {
+          if (!stream) return;
+          try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ }
+        };
         agent.subscribe((event) => {
           try {
             events.push((event as { type: string }).type);
@@ -309,13 +314,26 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               const tool = e.toolCall?.toolName ?? "";
               if (tool === "read_file" || tool === "list_files" || tool === "get_site_context") {
                 activity.push({ phase: "analyzing", detail: path ? `Lendo ${path}` : "Analisando o projeto…" });
-              } else if (tool === "write_file" || tool === "edit_file") {
+                writeLine({ type: "activity", phase: "analyzing", detail: activity[activity.length - 1].detail });
+              } else if (tool === "write_file" || tool === "edit_file" || tool === "delete_file") {
                 activity.push({ phase: "editing", detail: `Alterando ${path}` });
+                writeLine({ type: "activity", phase: "editing", detail: activity[activity.length - 1].detail });
+              } else if (tool === "web_search") {
+                activity.push({ phase: "researching", detail: "Pesquisando na web…" });
+                writeLine({ type: "activity", phase: "researching", detail: activity[activity.length - 1].detail });
+              } else if (tool === "visual_review") {
+                activity.push({ phase: "verifying", detail: "Análise visual (Gemini)" });
+                writeLine({ type: "activity", phase: "verifying", detail: activity[activity.length - 1].detail });
+              } else if (tool === "browser_open" || tool === "browser_reload" || tool === "browser_inspect") {
+                activity.push({ phase: "verifying", detail: "Verificando o site no navegador" });
+                writeLine({ type: "activity", phase: "verifying", detail: activity[activity.length - 1].detail });
               } else if (tool === "finish_task") {
-                activity.push({ phase: "done", detail: "Concluído" });
+                activity.push({ phase: "done", detail: "Concluindo tarefa…" });
+                writeLine({ type: "activity", phase: "done", detail: activity[activity.length - 1].detail });
               }
             } else if (e.type === "turn-finished") {
               activity.push({ phase: "reviewing", detail: "Revisando o resultado…" });
+              writeLine({ type: "activity", phase: "reviewing", detail: activity[activity.length - 1].detail });
             }
           } catch { /* noop */ }
         });
@@ -330,6 +348,15 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace — você pode ler/usar):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nPara usar uma imagem do usuário no site: referencie o arquivo real — <img src="assets/<nome>"> ou background url(...). O preview do produto embute o asset automaticamente; NÃO embuta o data URL gigante inline (deixa o HTML enorme e quebra edições futuras).\nReutilizar a MESMA foto do usuário em vários pontos (hero + cards + sobre) é ESPERADO e permitido quando o usuário pedir.\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
           : "";
 
+        if (stream) {
+          res.writeHead(200, {
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "Cache-Control": "no-cache",
+            "Access-Control-Allow-Origin": "*",
+          });
+          writeLine({ type: "start", runtime: "cline", resumed_session: resume });
+        }
+
         const outcome = await agent.runTask(`${memoryBlock}${attachBlock}${instruction}`, { continueSession: resume });
 
         // workspace final
@@ -337,7 +364,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         const finalFiles = readWorkspace(root);
         const touched = outcome.touched;
 
-        send(res, 200, {
+        const payload = {
           status: outcome.ok ? "ok" : "error",
           reply: outcome.reply,
           error: outcome.error,
@@ -352,7 +379,13 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           resumed_session: resume,
           events: events.slice(0, 150),
           activity,
-        });
+        };
+        if (stream) {
+          writeLine({ type: "result", ...payload });
+          res.end();
+        } else {
+          send(res, 200, payload);
+        }
         return;
       }
 

@@ -111,6 +111,8 @@ export default function SiteProjectPage() {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [aiRunning, setAiRunning] = useState(false);
+  /** Atividades reais transmitidas ao vivo pelo runtime (5.34). */
+  const [liveWork, setLiveWork] = useState<Array<{ phase: string; detail: string }>>([]);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiMessages, setAiMessages] = useState<ChatMessage[]>([]);
   const [aiHistory, setAiHistory] = useState<Array<{ spec: SiteSpec; files?: Record<string, string> | null }>>([]);
@@ -439,6 +441,7 @@ export default function SiteProjectPage() {
     setAiMessages((prev) => [...prev, { role: "user", text: displayText, image: attachment?.dataUrl, fileLabel: attachment?.label }]);
     setAiRunning(true);
     setAiError(null);
+    setLiveWork([]);
     const stopProgress = runAgentProgress(EDIT_STEPS, 1400);
     const snapshot = draftSpec;
     appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }]).catch(() => {});
@@ -472,6 +475,9 @@ export default function SiteProjectPage() {
             memory: designMemory(),
             attachments: attachment ? [{ name: attachment.label, dataUrl: attachment.dataUrl, mediaType: guessMediaType(attachment.dataUrl), label: attachment.label }] : [],
             conversation: chatConversation(),
+          }, (phase, detail) => {
+            // Atividade REAL ao vivo (arquivo sendo lido/editado etc.).
+            setLiveWork((prev) => [...prev.slice(-9), { phase, detail }]);
           });
         } catch (e) {
           agentErr = e;
@@ -920,6 +926,7 @@ export default function SiteProjectPage() {
               onRevert={undoAi}
               onQuickStrategy={runQuickStrategy}
               runningLabel={aiRunning && agentStep !== null && EDIT_STEPS[agentStep] ? EDIT_STEPS[agentStep].label : undefined}
+              liveActivity={aiRunning ? liveWork : undefined}
             />
           </div>
           <div className="min-w-0 lg:h-full lg:overflow-y-auto lg:pr-1">
