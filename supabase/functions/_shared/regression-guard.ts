@@ -102,6 +102,7 @@ export function siteMetrics(files: SiteFiles): SiteMetrics {
     hasFooter: /<footer[\s\S]*?<\/footer>/i.test(html) || /<\/footer>/i.test(html),
     mediaQueries: (styleSheet.match(/@media/gi) ?? []).length,
     keyframes: (styleSheet.match(/@keyframes/gi) ?? []).length,
+    motionRules: (styleSheet.match(/@keyframes|animation:|transition:|backdrop-filter|transform:/gi) ?? []).length,
     hasH1: /<h1[\s>]/i.test(html),
     ctaLinks: (html.match(/(class="[^"]*(cta|btn)[^"]*"|href="[^"]*(whatsapp|wa\.me|agendar|reservar|matricul)[^"]*")/gi) ?? []).length,
     colorCount: new Set((styleSheet.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []).map((c) => c.toLowerCase())).size,
@@ -145,8 +146,13 @@ export function editRegressionIssues(before: SiteFiles, after: SiteFiles, instru
   }
 
   // 6) Efeitos/animações perdidos.
-  if (b.keyframes >= 2 && a.keyframes === 0 && !effectIntent(ins)) {
+  if (b.keyframes >= 1 && a.keyframes === 0 && !effectIntent(ins)) {
     issues.push(`As animações (@keyframes) foram removidas (${b.keyframes} → 0). Restaure as animações/efeitos existentes.`);
+  } else if (b.keyframes >= 2 && a.keyframes < Math.ceil(b.keyframes / 2) && !effectIntent(ins)) {
+    issues.push(`Mais da metade das animações (@keyframes) sumiu (${b.keyframes} → ${a.keyframes}). Restaure as animações/efeitos existentes.`);
+  }
+  if (b.motionRules >= 5 && a.motionRules < Math.ceil(b.motionRules / 2) && !effectIntent(ins)) {
+    issues.push(`Muitos efeitos visuais foram removidos (transições/animações/transform: ${b.motionRules} → ${a.motionRules}). Preserve as animações, transições e efeitos existentes.`);
   }
 
   // 7) CTA principal perdido.

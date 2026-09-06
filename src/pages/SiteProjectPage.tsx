@@ -370,7 +370,7 @@ export default function SiteProjectPage() {
         const base = specFromJson ?? normalizeSpec(null);
         const derived = { ...base, business: { ...(base.business ?? {}), name: project.company_name || project.name, segment: project.segment, city: project.city, state: project.state } };
         await saveGeneratedSite(project.id, derived, genRes.model ?? "cline", genRes.files);
-        if (user?.id) await createSiteVersion(project.id, user.id, derived, pendingSummary).catch(() => {});
+        if (user?.id) await createSiteVersion(project.id, user.id, derived, pendingSummary, genRes.files).catch(() => {});
         setPendingSummary(undefined);
         setDraftSpec(derived);
         prevFilesRef.current = genRes.files;

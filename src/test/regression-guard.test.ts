@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { editRegressionIssues, siteMetrics } from "../../supabase/functions/_shared/regression-guard";
-
 const RICH = {
   "index.html": `<!doctype html><html><head><title>Barbearia</title></head><body>
     <nav><a href="#inicio">Início</a><a href="#servicos">Serviços</a><a href="#contato">Contato</a></nav>
