@@ -2,7 +2,7 @@
 // Returns only verified public data. No mock, no invented fields.
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { runWebSources, enrichLeadsWithWeb } from "../_shared/lead-web.ts";
+import { runWebSources, enrichLeadsWithWeb, extractContactsFromMarkdown } from "../_shared/lead-web.ts";
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const GOOGLE_KEY_LOADED = typeof GOOGLE_KEY === "string" && GOOGLE_KEY.trim().length > 0;
@@ -1843,13 +1843,39 @@ async function findWebsiteViaDuckDuckGo(lead: PublicLead, city: string, state: s
   } catch { return []; }
 }
 
+async function findCandidatesViaTavily(lead: PublicLead, city: string, state: string): Promise<string[]> {
+  const out = new Set<string>();
+  try {
+    const name = String(lead.name ?? "").trim().replace(/["']/g, "");
+    if (name.length < 3) return [];
+    const loc = [city, state].filter(Boolean).join(" ");
+    // Telefone entra como sinal extra quando disponível — reforça a associação
+    // e evita empresas homônimas de outras cidades.
+    const phoneHint = digits(lead.phone) || digits(lead.whatsapp);
+    const query = phoneHint.length >= 8
+      ? `${name} ${loc} site oficial`
+      : `${name} ${loc} site`;
+    const web = await runWebSources({ query: query.slice(0, 300), limit: 8, call: callWebFunction });
+    for (const item of [...web.tavily, ...web.firecrawl]) {
+      const u = String(item?.url ?? "");
+      const host = hostOf(u);
+      if (host && isOfficialCandidateHost(host) && !host.includes("instagram") && !host.includes("facebook")) out.add(u);
+      if (out.size >= 5) break;
+    }
+  } catch { /* ignore */ }
+  return [...out];
+}
+
 async function discoverWebsiteForLead(lead: PublicLead, city: string, state: string): Promise<void> {
   if (lead.website) return;
   const t0 = Date.now();
 
   const placeCandidates = await findWebsiteViaPlaces(lead, city, state);
-  const ddgCandidates = placeCandidates.length === 0 ? await findWebsiteViaDuckDuckGo(lead, city, state) : [];
-  const candidates = [...placeCandidates, ...ddgCandidates].filter((u) => isOfficialCandidateHost(hostOf(u)));
+  const tavilyCandidates = placeCandidates.length === 0 ? await findCandidatesViaTavily(lead, city, state) : [];
+  const ddgCandidates = placeCandidates.length === 0 && tavilyCandidates.length === 0
+    ? await findWebsiteViaDuckDuckGo(lead, city, state)
+    : [];
+  const candidates = [...placeCandidates, ...tavilyCandidates, ...ddgCandidates].filter((u) => isOfficialCandidateHost(hostOf(u)));
 
   if (candidates.length === 0) {
     console.info("[search-places][website-discovery] no candidate found", {
@@ -2029,7 +2055,7 @@ Deno.serve(async (req) => {
       const admin = createClient(supaUrl, supaKey);
       const { data: rows, error: selErr } = await admin
         .from("leads")
-        .select("id,name,city,state,website,has_website,instagram")
+        .select("id,name,city,state,website,has_website,instagram,phone,whatsapp,address")
         .eq("search_id", searchId);
       if (selErr) {
         console.error("[search-places][enrich] select failed", selErr);
@@ -2043,11 +2069,11 @@ Deno.serve(async (req) => {
         external_id: r.id,
         name: r.name ?? "",
         category: null,
-        address: null,
+        address: r.address ?? null,
         city: r.city ?? "",
         state: r.state ?? "",
-        phone: null,
-        whatsapp: null,
+        phone: r.phone ?? null,
+        whatsapp: r.whatsapp ?? null,
         website: r.website ?? null,
         google_url: null,
         instagram: r.instagram ?? null,
@@ -2068,7 +2094,30 @@ Deno.serve(async (req) => {
       await runWebsiteDiscovery(pseudoLeads, firstCity, firstState);
       await enrichLeadsWithInstagram(pseudoLeads);
 
-      // Persiste apenas os que mudaram website/has_website/instagram.
+      // Enriquecimento de CONTATO do site oficial (Firecrawl/scrape): leads com
+      // site (do Google ou descoberto) que ainda não têm WhatsApp/instagram/phone
+      // têm a página oficial analisada — sem nunca sobrescrever dado existente.
+      let contactsFound = 0;
+      for (const l of pseudoLeads) {
+        if (!l.website) continue;
+        if (l.whatsapp && l.instagram && l.phone) continue;
+        try {
+          const md = await scrapePageContent(l.website);
+          if (!md) continue;
+          const contacts = extractContactsFromMarkdown(md, l.city ?? "", l.state ?? "", { requireGeo: false });
+          const before = JSON.stringify([l.phone, l.whatsapp, l.instagram]);
+          if (contacts.phone && !l.phone) l.phone = contacts.phone;
+          if (contacts.whatsapp && !l.whatsapp) l.whatsapp = contacts.whatsapp;
+          if (contacts.instagram && !l.instagram) l.instagram = contacts.instagram;
+          const after = JSON.stringify([l.phone, l.whatsapp, l.instagram]);
+          if (after !== before) {
+            contactsFound++;
+            l.score_reasons = [...(l.score_reasons ?? []), `Contato → website oficial (${l.website})`];
+          }
+        } catch { /* segue para o próximo */ }
+      }
+
+      // Persiste apenas os que mudaram website/has_website/instagram/contato.
       let updated = 0;
       const updates = pseudoLeads
         .map((l, i) => {
@@ -2076,13 +2125,18 @@ Deno.serve(async (req) => {
           const changed =
             (l.website ?? null) !== (src.website ?? null) ||
             (!!l.has_website) !== (!!src.has_website) ||
-            (l.instagram ?? null) !== (src.instagram ?? null);
+            (l.instagram ?? null) !== (src.instagram ?? null) ||
+            (l.phone ?? null) !== (src.phone ?? null) ||
+            (l.whatsapp ?? null) !== (src.whatsapp ?? null);
           if (!changed) return null;
           return {
             id: src.id,
             website: l.website ?? null,
             has_website: !!l.website,
             instagram: l.instagram ?? null,
+            phone: l.phone ?? null,
+            whatsapp: l.whatsapp ?? null,
+            score_reasons: (l.score_reasons ?? []).slice(0, 12),
           };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -2090,14 +2144,25 @@ Deno.serve(async (req) => {
       for (const u of updates) {
         const { error: upErr } = await admin
           .from("leads")
-          .update({ website: u.website, has_website: u.has_website, instagram: u.instagram })
+          .update({
+            website: u.website,
+            has_website: u.has_website,
+            instagram: u.instagram,
+            phone: u.phone,
+            whatsapp: u.whatsapp,
+            score_reasons: u.score_reasons,
+          })
           .eq("id", u.id);
         if (!upErr) updated++;
         else console.warn("[search-places][enrich] update failed", u.id, upErr.message);
       }
 
       console.info("[search-places][enrich] summary", {
-        searchId, totalRows: dbRows.length, updated,
+        searchId,
+        totalRows: dbRows.length,
+        updated,
+        siteRecovered: pseudoLeads.filter((l, i) => !!l.website && !dbRows[i]?.has_website).length,
+        contactsFound,
       });
 
       return new Response(JSON.stringify({
@@ -2105,6 +2170,7 @@ Deno.serve(async (req) => {
         search_id: searchId,
         total: dbRows.length,
         updated,
+        contacts_found: contactsFound,
       }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
