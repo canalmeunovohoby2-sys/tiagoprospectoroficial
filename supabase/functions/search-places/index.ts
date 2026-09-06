@@ -2002,9 +2002,13 @@ function computeLeadPriority(lead: PublicLead, segment: string, module: "orvix" 
   // Sem excluir ninguém — apenas prioriza; os demais continuam no resultado.
   const hasSite = !!lead.has_website;
   if (module !== "orvix") {
-    if (lead.whatsapp && !hasSite) p += 38; // melhor combo: contato direto + sem site
-    else if (!hasSite) p += 18;
-    else {
+    if (!hasSite) {
+      // SEM SITE = cliente para vender site. Contato (whatsapp/telefone/instagram)
+      // qualifica; WhatsApp dá bônus. Sem contato também entra (abaixo).
+      if (lead.whatsapp) p += 40;
+      else if (lead.phone || lead.instagram) p += 30;
+      else p += 22;
+    } else {
       const host = hostOf(lead.website ?? "");
       const weak = ["wixsite.com", "weebly.com", "webnode.com", "blogspot.com", "wordpress.com", "godaddysites.com", "site.google.com", "linktr.ee"];
       if (weak.some((w) => host.endsWith(w))) p += 10;
@@ -2242,7 +2246,7 @@ Deno.serve(async (req) => {
     const segment = String(body?.segment ?? "").trim();
     const city = String(body?.city ?? "").trim();
     const state = String(body?.state ?? "").trim().toUpperCase();
-    const maxPages = Math.min(Math.max(Number(body?.maxPages ?? 3), 1), 4);
+    const maxPages = Math.min(Math.max(Number(body?.maxPages ?? 4), 1), 4);
     const module: "orvix" | "landing_pages" = body?.module === "orvix" ? "orvix" : "landing_pages";
 
     console.info("[search-places] request params", {
