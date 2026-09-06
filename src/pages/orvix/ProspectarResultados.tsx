@@ -149,32 +149,39 @@ export default function OrvixProspectarResultados() {
       setLeads(initial);
       setLoading(false);
 
-      // Background: Website & Instagram Discovery. Não bloqueia a exibição.
-      // Ao concluir, atualiza apenas os campos website/has_website/instagram
-      // dos cards já renderizados. Falhas são silenciosas.
+      // Background: enriquecimento em LOTES (retomável). Não bloqueia a exibição.
       if (!searchId) return;
-      const needsEnrichment = initial.some((l) => !l.website || !l.instagram);
+      const needsEnrichment = initial.some((l) => !l.website || !l.instagram || !l.whatsapp);
       if (!needsEnrichment) return;
 
-      supabase.functions
-        .invoke("search-places", { body: { mode: "enrich", search_id: searchId } })
-        .then(async ({ error }) => {
-          if (error) {
-            console.warn("[Orvix] background enrichment error", error);
-            return;
-          }
-          const refreshed = await fetchLeads();
-          if (cancelled) return;
-          setLeads((prev) => {
-            const byId = new Map(refreshed.map((r) => [r.id, r]));
-            return prev.map((l) => {
-              const r = byId.get(l.id);
-              if (!r) return l;
-              return { ...l, website: r.website, has_website: r.has_website, instagram: r.instagram };
-            });
+      try {
+        let offset = 0;
+        let completed = false;
+        let guard = 0;
+        while (!completed && guard < 100 && !cancelled) {
+          const { data, error } = await supabase.functions.invoke("search-places", {
+            body: { mode: "enrich", search_id: searchId, enrich_offset: offset },
           });
-        })
-        .catch((e) => console.warn("[Orvix] background enrichment threw", e));
+          if (error) { console.warn("[Orvix] background enrichment error", error); break; }
+          const r = data as { completed?: boolean; next_cursor?: number | null; processed?: number };
+          completed = r.completed === true || r.next_cursor == null;
+          offset = typeof r.next_cursor === "number" ? r.next_cursor : offset + (r.processed ?? 0);
+          guard++;
+        }
+        if (cancelled) return;
+        const refreshed = await fetchLeads();
+        if (cancelled) return;
+        setLeads((prev) => {
+          const byId = new Map(refreshed.map((r) => [r.id, r]));
+          return prev.map((l) => {
+            const r = byId.get(l.id);
+            if (!r) return l;
+            return { ...l, website: r.website, has_website: r.has_website, instagram: r.instagram, phone: r.phone, whatsapp: r.whatsapp };
+          });
+        });
+      } catch (e) {
+        console.warn("[Orvix] background enrichment threw", e);
+      }
     })();
 
     return () => { cancelled = true; };

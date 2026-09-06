@@ -2064,116 +2064,105 @@ Deno.serve(async (req) => {
         });
       }
       const dbRows = Array.isArray(rows) ? rows : [];
-      // Adapta rows -> PublicLead shape (apenas campos usados pelo discovery).
-      const pseudoLeads: PublicLead[] = dbRows.map((r: any) => ({
-        external_id: r.id,
-        name: r.name ?? "",
-        category: null,
-        address: r.address ?? null,
-        city: r.city ?? "",
-        state: r.state ?? "",
-        phone: r.phone ?? null,
-        whatsapp: r.whatsapp ?? null,
-        website: r.website ?? null,
-        google_url: null,
-        instagram: r.instagram ?? null,
-        facebook: null,
-        rating: null,
-        reviews_count: 0,
-        has_website: !!r.has_website,
-        score: 1,
-        score_reasons: [],
-        opening_hours: null,
-        latitude: null,
-        longitude: null,
-      } as unknown as PublicLead));
+      // ── ENRICHMENT INCREMENTAL EM LOTES (5.38) ─────────────────────────
+      // - Lote limitado (batch) e retomável via enrich_offset;
+      // - Orçamento de tempo por chamada (para de forma limpa antes do limite);
+      // - Cada lead é persistido IMEDIATAMENTE (resultado parcial nunca se perde);
+      // - Leads já completos (site+contato) são pulados e contabilizados.
+      const batchSize = Math.min(25, Math.max(1, Number(body?.enrich_batch_size ?? Deno.env.get("ENRICH_BATCH_SIZE") ?? 10)));
+      const budgetMs = Math.min(45_000, Math.max(2_000, Number(body?.enrich_budget_ms ?? Deno.env.get("ENRICH_BUDGET_MS") ?? 20_000)));
+      const deadline = Date.now() + budgetMs;
+      const offset = Math.max(0, Number(body?.enrich_offset ?? 0));
+      const { count } = (await admin.from("leads").select("id", { count: "exact", head: true }).eq("search_id", searchId)) as unknown as { count: number };
+      const total = count ?? 0;
 
-      // Descobre site por lead (usa a primeira cidade/estado encontrado).
-      const firstCity = pseudoLeads.find((l) => l.city)?.city ?? "";
-      const firstState = pseudoLeads.find((l) => l.state)?.state ?? "";
-      await runWebsiteDiscovery(pseudoLeads, firstCity, firstState);
-      await enrichLeadsWithInstagram(pseudoLeads);
+      const { data: batch, error: batchErr } = await admin
+        .from("leads")
+        .select("id,name,city,state,website,has_website,instagram,phone,whatsapp,address")
+        .eq("search_id", searchId)
+        .order("id", { ascending: true })
+        .range(offset, offset + batchSize - 1);
+      if (batchErr) return json({ error: batchErr.message }, 500);
 
-      // Enriquecimento de CONTATO do site oficial (Firecrawl/scrape): leads com
-      // site (do Google ou descoberto) que ainda não têm WhatsApp/instagram/phone
-      // têm a página oficial analisada — sem nunca sobrescrever dado existente.
-      let contactsFound = 0;
-      for (const l of pseudoLeads) {
-        if (!l.website) continue;
-        if (l.whatsapp && l.instagram && l.phone) continue;
-        try {
-          const md = await scrapePageContent(l.website);
-          if (!md) continue;
-          const contacts = extractContactsFromMarkdown(md, l.city ?? "", l.state ?? "", { requireGeo: false });
-          const before = JSON.stringify([l.phone, l.whatsapp, l.instagram]);
-          if (contacts.phone && !l.phone) l.phone = contacts.phone;
-          if (contacts.whatsapp && !l.whatsapp) l.whatsapp = contacts.whatsapp;
-          if (contacts.instagram && !l.instagram) l.instagram = contacts.instagram;
-          const after = JSON.stringify([l.phone, l.whatsapp, l.instagram]);
-          if (after !== before) {
-            contactsFound++;
-            l.score_reasons = [...(l.score_reasons ?? []), `Contato → website oficial (${l.website})`];
+      const candidates: Array<Record<string, unknown>> = Array.isArray(batch) ? batch : [];
+      const stats = { processed: 0, websitesFound: 0, phonesFound: 0, whatsappFound: 0, instagramFound: 0, skippedAlreadyEnriched: 0 };
+      const firstCity = String(candidates[0]?.city ?? "");
+      const firstState = String(candidates[0]?.state ?? "");
+
+      const enrichOne = async (r: Record<string, unknown>) => {
+        const lead: PublicLead = {
+          external_id: String(r.id),
+          name: String(r.name ?? ""),
+          category: null,
+          address: (r.address as string | null) ?? null,
+          city: String(r.city ?? ""),
+          state: String(r.state ?? ""),
+          phone: (r.phone as string | null) ?? null,
+          whatsapp: (r.whatsapp as string | null) ?? null,
+          website: (r.website as string | null) ?? null,
+          google_url: null,
+          instagram: (r.instagram as string | null) ?? null,
+          facebook: null,
+          rating: null,
+          reviews_count: 0,
+          has_website: !!r.has_website,
+          score: 1,
+          score_reasons: [],
+          opening_hours: null,
+          latitude: null,
+          longitude: null,
+        } as unknown as PublicLead;
+        if (lead.website && (lead.whatsapp || lead.phone)) { stats.skippedAlreadyEnriched++; return; }
+        if (!lead.website) {
+          await discoverWebsiteForLead(lead, firstCity, firstState).catch(() => {});
+          if (lead.website) stats.websitesFound++;
+        }
+        if (lead.website && (!lead.whatsapp || !lead.instagram || !lead.phone)) {
+          const md = await scrapePageContent(lead.website).catch(() => null);
+          if (md) {
+            const contacts = extractContactsFromMarkdown(md, lead.city ?? "", lead.state ?? "", { requireGeo: false });
+            if (contacts.phone && !lead.phone) { lead.phone = contacts.phone; stats.phonesFound++; }
+            if (contacts.whatsapp && !lead.whatsapp) { lead.whatsapp = contacts.whatsapp; stats.whatsappFound++; }
+            if (contacts.instagram && !lead.instagram) { lead.instagram = contacts.instagram; stats.instagramFound++; }
           }
-        } catch { /* segue para o próximo */ }
+        }
+        // PERSISTÊNCIA IMEDIATA (parcial nunca se perde)
+        await admin.from("leads").update({
+          website: lead.website,
+          has_website: !!lead.website,
+          instagram: lead.instagram,
+          phone: lead.phone,
+          whatsapp: lead.whatsapp,
+          score_reasons: (lead.score_reasons ?? []).slice(0, 12),
+        }).eq("id", lead.external_id);
+      };
+
+      for (const r of candidates) {
+        if (Date.now() > deadline - 2000) break; // orçamento: para limpo antes do limite
+        stats.processed++;
+        try { await enrichOne(r); } catch { /* segue p/ próximo */ }
       }
 
-      // Persiste apenas os que mudaram website/has_website/instagram/contato.
-      let updated = 0;
-      const updates = pseudoLeads
-        .map((l, i) => {
-          const src = dbRows[i];
-          const changed =
-            (l.website ?? null) !== (src.website ?? null) ||
-            (!!l.has_website) !== (!!src.has_website) ||
-            (l.instagram ?? null) !== (src.instagram ?? null) ||
-            (l.phone ?? null) !== (src.phone ?? null) ||
-            (l.whatsapp ?? null) !== (src.whatsapp ?? null);
-          if (!changed) return null;
-          return {
-            id: src.id,
-            website: l.website ?? null,
-            has_website: !!l.website,
-            instagram: l.instagram ?? null,
-            phone: l.phone ?? null,
-            whatsapp: l.whatsapp ?? null,
-            score_reasons: (l.score_reasons ?? []).slice(0, 12),
-          };
-        })
-        .filter((x): x is NonNullable<typeof x> => x !== null);
-
-      for (const u of updates) {
-        const { error: upErr } = await admin
-          .from("leads")
-          .update({
-            website: u.website,
-            has_website: u.has_website,
-            instagram: u.instagram,
-            phone: u.phone,
-            whatsapp: u.whatsapp,
-            score_reasons: u.score_reasons,
-          })
-          .eq("id", u.id);
-        if (!upErr) updated++;
-        else console.warn("[search-places][enrich] update failed", u.id, upErr.message);
-      }
-
-      console.info("[search-places][enrich] summary", {
-        searchId,
-        totalRows: dbRows.length,
-        updated,
-        siteRecovered: pseudoLeads.filter((l, i) => !!l.website && !dbRows[i]?.has_website).length,
-        contactsFound,
-      });
-
-      return new Response(JSON.stringify({
+      const nextOffset = offset + stats.processed;
+      const completed = nextOffset >= total || candidates.length < batchSize;
+      console.info("[search-places][enrich] batch", { searchId, total, batchSize, offset, processed: stats.processed, completed, remaining: Math.max(0, total - nextOffset), elapsedMs: Date.now() - (deadline - budgetMs) });
+      return json({
         mode: "enrich",
         search_id: searchId,
-        total: dbRows.length,
-        updated,
-        contacts_found: contactsFound,
-      }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        total_candidates: total,
+        batch_size: batchSize,
+        processed: stats.processed,
+        websites_found: stats.websitesFound,
+        phones_found: stats.phonesFound,
+        whatsapp_found: stats.whatsappFound,
+        instagram_found: stats.instagramFound,
+        skipped_already_enriched: stats.skippedAlreadyEnriched,
+        remaining: Math.max(0, total - nextOffset),
+        completed,
+        next_cursor: completed ? null : nextOffset,
+        elapsed_ms: Date.now() - (deadline - budgetMs),
+      });
     }
-
 
     const segment = String(body?.segment ?? "").trim();
     const city = String(body?.city ?? "").trim();

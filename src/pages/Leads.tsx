@@ -112,27 +112,36 @@ export default function Leads() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [user, searchId]);
 
-  // Background: Website & Instagram Discovery. Não bloqueia a lista.
-  // Atualiza website/has_website/instagram dos cards já exibidos.
+  // Background: enriquecimento em LOTES (retomável). Não bloqueia a lista.
   useEffect(() => {
     if (!user || !searchId) return;
     let cancelled = false;
-    supabase.functions
-      .invoke("search-places", { body: { mode: "enrich", search_id: searchId } })
-      .then(async ({ error }) => {
-        if (error || cancelled) return;
-        let q = supabase.from("leads").select("id,website,has_website,instagram");
-        q = q.eq("search_id", searchId);
-        const { data } = await q;
-        if (cancelled || !Array.isArray(data)) return;
-        const byId = new Map(data.map((r: any) => [r.id, r]));
-        setLeads((prev) => prev.map((l) => {
-          const r = byId.get(l.id);
-          if (!r) return l;
-          return { ...l, website: r.website, has_website: !!r.has_website, instagram: r.instagram };
-        }));
-      })
-      .catch(() => { /* silent */ });
+    (async () => {
+      let offset = 0;
+      let completed = false;
+      let guard = 0;
+      while (!completed && guard < 100 && !cancelled) {
+        const { data, error } = await supabase.functions.invoke("search-places", {
+          body: { mode: "enrich", search_id: searchId, enrich_offset: offset },
+        });
+        if (error || !data) break;
+        const r = data as { completed?: boolean; next_cursor?: number | null; processed?: number };
+        completed = r.completed === true || r.next_cursor == null;
+        offset = typeof r.next_cursor === "number" ? r.next_cursor : offset + (r.processed ?? 0);
+        guard++;
+      }
+      if (cancelled) return;
+      let q = supabase.from("leads").select("id,website,has_website,instagram,phone,whatsapp");
+      q = q.eq("search_id", searchId);
+      const { data } = await q;
+      if (cancelled || !Array.isArray(data)) return;
+      const byId = new Map(data.map((r: any) => [r.id, r]));
+      setLeads((prev) => prev.map((l) => {
+        const r = byId.get(l.id);
+        if (!r) return l;
+        return { ...l, website: r.website, has_website: !!r.has_website, instagram: r.instagram, phone: r.phone, whatsapp: r.whatsapp };
+      }));
+    })().catch(() => { /* silent */ });
     return () => { cancelled = true; };
   }, [user, searchId]);
 
