@@ -282,11 +282,17 @@ function getGoogleIncludedTypes(segment: string): string[] {
 function expandSegment(segment: string): string[] {
   const normalized = normalizeText(segment);
   const match = SEGMENT_SYNONYMS.find((entry) => entry.match.some((m) => normalized.includes(normalizeText(m))));
-  if (match) {
-    const set = new Set<string>([segment, ...match.synonyms]);
-    return Array.from(set).slice(0, 8);
+  const set = new Set<string>([segment]);
+  if (match) for (const s of match.synonyms) set.add(s);
+  // Odontologia (5.33.1): cobertura maior com variações semanticamente
+  // equivalentes, sempre dentro da mesma cidade/UF (a query de busca carrega a
+  // cidade — não traz capital nem cidades vizinhas).
+  if (/odonto|dento|dentist|dentaria|denti[a]ria|clinica dentaria/.test(normalized)) {
+    for (const alias of ["dentista", "odontologia", "clinica odontologica", "consultorio odontologico", "clinica dentaria", "dentista particular", "especialista odontologico", "ortodontista", "dentista em "]) {
+      if (set.size < 10) set.add(alias);
+    }
   }
-  return [segment];
+  return Array.from(set).slice(0, 10);
 }
 
 function normalizeText(value: string): string {
@@ -2106,7 +2112,7 @@ Deno.serve(async (req) => {
     const segment = String(body?.segment ?? "").trim();
     const city = String(body?.city ?? "").trim();
     const state = String(body?.state ?? "").trim().toUpperCase();
-    const maxPages = Math.min(Math.max(Number(body?.maxPages ?? 2), 1), 3);
+    const maxPages = Math.min(Math.max(Number(body?.maxPages ?? 3), 1), 4);
     const module: "orvix" | "landing_pages" = body?.module === "orvix" ? "orvix" : "landing_pages";
 
     console.info("[search-places] request params", {
@@ -2233,7 +2239,7 @@ Deno.serve(async (req) => {
               return Promise.resolve({ places: [] as PlaceRaw[], error: { status: 429, text: JSON.stringify({ error: { message: "GOOGLE_CIRCUIT_OPEN" } }), endpoint: "searchText+geo" } as SearchError });
             }
             const base = (geoOptions ?? {}) as { locationBias?: { lat: number; lon: number; radius: number }; locationRestriction?: GeoBounds };
-            return searchPlacesNew(job.synonym, 2, { ...base, includedType: job.includedType, ctx })
+            return searchPlacesNew(job.synonym, Math.max(maxPages, 2), { ...base, includedType: job.includedType, ctx })
               .catch((e) => ({ places: [] as PlaceRaw[], error: { status: 0, text: String(e), endpoint: "searchText+geo" } as SearchError }));
           },
           { interItemDelayMs: GOOGLE_INTER_ITEM_DELAY_MS },
