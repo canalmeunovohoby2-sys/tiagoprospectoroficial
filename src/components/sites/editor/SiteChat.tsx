@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, type ChangeEvent, type ReactNode } from "react";
-import { Sparkles, RotateCcw, Loader2, Mic, Paperclip, Send, X, CircleDot, ArrowDown } from "lucide-react";
+import { Sparkles, RotateCcw, Loader2, Mic, Paperclip, Send, X, CircleDot, ArrowDown, ChevronDown, Zap } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { QUICK_STRATEGIES } from "@/lib/siteStrategies";
@@ -79,6 +79,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
   const recRef = useRef<{ stop: () => void } | null>(null);
   const keepMicRef = useRef(false);
   const lastFinalRef = useRef("");
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
 
@@ -275,48 +276,54 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
               </span>
               Executando agora
             </div>
-            <ul className="mt-1.5 space-y-1">
-              {liveActivity.slice(-6).map((a, i) => (
-                <li
-                  key={`${i}-${a.detail}`}
-                  className={`flex items-start gap-1.5 text-xs leading-snug ${i === liveActivity.slice(-6).length - 1 ? "font-medium text-foreground" : "text-muted-foreground/90"}`}
-                >
-                  <span className="shrink-0" aria-hidden>{liveIcon(a.phase, a.detail)}</span>
-                  <span className="min-w-0 break-words">{a.detail}</span>
-                </li>
-              ))}
-            </ul>
+            {(() => {
+              const current = liveActivity[liveActivity.length - 1];
+              return (
+                <p className="mt-1 flex items-start gap-1.5 text-xs font-medium leading-snug text-foreground" key={current.detail}>
+                  <span className="shrink-0" aria-hidden>{liveIcon(current.phase, current.detail)}</span>
+                  <span className="min-w-0 break-words">{current.detail}</span>
+                </p>
+              );
+            })()}
           </div>
         )}
         <div className="mb-2 shrink-0">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[10.5px] font-medium text-muted-foreground">Comandos rápidos</p>
-            {quickStrategyDisabled && running && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                <Loader2 className="h-2.5 w-2.5 animate-spin" /> em execução…
-              </span>
-            )}
-          </div>
-          <div className="grid grid-cols-1 gap-1.5 [grid-auto-rows:1fr] min-[420px]:grid-cols-2 lg:grid-cols-4">
-            {QUICK_STRATEGIES.map((s) => {
-              const disabled = running || quickStrategyDisabled;
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onQuickStrategy?.(s.id)}
-                  title={`${s.label}${s.analyzeOnly ? " (só análise)" : ""} — ${s.hint}`}
-                  className="flex h-full w-full min-w-0 flex-col items-center justify-center gap-1 overflow-hidden rounded-xl border border-border/70 bg-card/60 px-1.5 py-2 text-center transition-colors hover:border-primary/45 hover:bg-primary/[0.07] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border/70 disabled:hover:bg-card/60"
-                >
-                  <span className="text-base leading-none shrink-0" aria-hidden>{s.emoji}</span>
-                  <span className="w-full min-h-0 text-[10px] font-medium leading-snug text-foreground/90">
-                    {s.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          <button
+            type="button"
+            onClick={() => setShortcutsOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/70 bg-card/50 px-2.5 py-1.5 text-left transition-colors hover:border-primary/40"
+            aria-expanded={shortcutsOpen}
+          >
+            <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+              <Zap className="h-3.5 w-3.5 text-amber-500" /> Atalhos rápidos
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              {quickStrategyDisabled && running && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+              <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${shortcutsOpen ? "rotate-180" : ""}`} />
+            </span>
+          </button>
+          {shortcutsOpen && (
+            <div className="mt-1.5 grid grid-cols-1 gap-1.5 [grid-auto-rows:1fr] min-[420px]:grid-cols-2 lg:grid-cols-4">
+              {QUICK_STRATEGIES.map((s) => {
+                const disabled = running || quickStrategyDisabled;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => onQuickStrategy?.(s.id)}
+                    title={`${s.label}${s.analyzeOnly ? " (só análise)" : ""} — ${s.hint}`}
+                    className="flex h-full w-full min-w-0 flex-col items-center justify-center gap-1 overflow-hidden rounded-xl border border-border/70 bg-card/60 px-1.5 py-2 text-center transition-colors hover:border-primary/45 hover:bg-primary/[0.07] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border/70 disabled:hover:bg-card/60"
+                  >
+                    <span className="text-base leading-none shrink-0" aria-hidden>{s.emoji}</span>
+                    <span className="w-full min-h-0 text-[10px] font-medium leading-snug text-foreground/90">
+                      {s.label}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
         {error && (
           <p className="mb-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-[11px] text-destructive">{error}</p>
