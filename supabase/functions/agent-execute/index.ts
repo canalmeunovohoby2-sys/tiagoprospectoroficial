@@ -366,7 +366,7 @@ Deno.serve(async (req) => {
       });
     }
     usedProvider = execCfg.provider;
-    const execKeys: Partial<Record<"deepseek" | "nvidia" | "openai" | "gemini", string>> = {};
+    const execKeys: Partial<Record<"deepseek" | "nvidia" | "openai" | "gemini" | "ollama" | "openrouter", string>> = {};
     if (dbKeys[execCfg.provider]) execKeys[execCfg.provider] = dbKeys[execCfg.provider];
     if (execCfg.fallbackProvider && dbKeys[execCfg.fallbackProvider]) execKeys[execCfg.fallbackProvider] = dbKeys[execCfg.fallbackProvider];
 

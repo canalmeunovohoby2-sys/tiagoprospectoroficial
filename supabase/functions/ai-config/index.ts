@@ -3,13 +3,14 @@
 // devolve a chave; o cliente vê apenas maskedLast4/estado.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
-import { generateText, AiError, DEFAULT_DEEPSEEK_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_NVIDIA_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_OPENROUTER_MODEL, type ProviderName } from "../_shared/ai.ts";
+import { generateText, AiError, DEFAULT_DEEPSEEK_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_NVIDIA_MODEL, DEFAULT_OLLAMA_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_OPENROUTER_MODEL, type ProviderName } from "../_shared/ai.ts";
 
 const PROVIDERS: Array<{ id: ProviderName; label: string; defaultModel: string }> = [
   { id: "deepseek", label: "DeepSeek", defaultModel: DEFAULT_DEEPSEEK_MODEL },
   { id: "nvidia", label: "NVIDIA NIM", defaultModel: DEFAULT_NVIDIA_MODEL },
   { id: "openai", label: "OpenAI", defaultModel: DEFAULT_OPENAI_MODEL },
   { id: "gemini", label: "Gemini", defaultModel: DEFAULT_GEMINI_MODEL },
+  { id: "ollama", label: "Ollama", defaultModel: DEFAULT_OLLAMA_MODEL },
   { id: "openrouter", label: "OpenRouter", defaultModel: DEFAULT_OPENROUTER_MODEL },
 ];
 
@@ -18,11 +19,12 @@ const ENV_KEYS: Record<ProviderName, string> = {
   nvidia: "NVIDIA_API_KEY",
   openai: "OPENAI_API_KEY",
   gemini: "GEMINI_API_KEY",
+  ollama: "OLLAMA_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
 };
 
 function isProvider(v: string): v is ProviderName {
-  return v === "deepseek" || v === "nvidia" || v === "openai" || v === "gemini" || v === "openrouter";
+  return v === "deepseek" || v === "nvidia" || v === "openai" || v === "gemini" || v === "ollama" || v === "openrouter";
 }
 function mask(key: string | null | undefined): string | null {
   if (!key) return null;
@@ -135,7 +137,8 @@ Deno.serve(async (req) => {
       const { data: rows } = await table.select("api_key").eq("user_id", userId).eq("provider", provider);
       const storedKey = rows?.[0]?.api_key ?? undefined;
       // Chave do usuário salva OU (fallback de diagnóstico) chave do ambiente.
-      const apiKey = storedKey ?? Deno.env.get(ENV_KEYS[provider]) ?? undefined;
+      // Ollama local ignora a chave — usa dummy se nenhuma foi salva.
+      const apiKey = storedKey ?? Deno.env.get(ENV_KEYS[provider]) ?? (provider === "ollama" ? "ollama" : undefined);
       if (!apiKey) {
         return json({ ok: false, kind: "missing_key", message: "Chave ausente. Adicione a API Key antes de testar." });
       }
@@ -155,12 +158,12 @@ Deno.serve(async (req) => {
         });
         const reply = (res.text ?? "").trim().slice(0, 120);
         const latencyMs = Date.now() - started;
-        const usingStored = !!storedKey;
 
-        // Ativa SOMENTE se a chave salva do usuário respondeu (chamada real).
+        // Ativa se a chave salva respondeu (chamada real).
+        // Ollama local também ativa sem chave salva (a chave é irrelevante).
         let activated = false;
         let isDefaultNow = false;
-        if (usingStored) {
+        if (!!storedKey || provider === "ollama") {
           const { error: actErr } = await table.update({ is_default: true }).eq("user_id", userId).eq("provider", provider);
           if (!actErr) {
             await table.update({ is_default: false }).eq("user_id", userId).neq("provider", provider);

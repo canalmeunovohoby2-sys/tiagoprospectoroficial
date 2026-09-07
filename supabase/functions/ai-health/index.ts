@@ -8,7 +8,7 @@ function getEnv(key: string): string | undefined {
   return deno?.env?.get(key);
 }
 
-const isProvider = (v: string): v is ProviderName => v === "deepseek" || v === "nvidia" || v === "openai" || v === "gemini";
+const isProvider = (v: string): v is ProviderName => v === "deepseek" || v === "nvidia" || v === "openai" || v === "gemini" || v === "ollama" || v === "openrouter";
 
 // Config de IA REAL do usuário (provider validado/ativo via TESTAR). NUNCA sai
 // no response — só a config ativa é testada server-side com a chave do usuário.

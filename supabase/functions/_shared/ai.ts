@@ -9,17 +9,19 @@ export const DEFAULT_NVIDIA_MODEL = "deepseek-ai/deepseek-v4-flash-0731";
 export const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
 export const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 export const DEFAULT_OPENROUTER_MODEL = "openrouter/auto";
+export const DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:3b-instruct";
 export const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 export const OPENAI_BASE_URL = "https://api.openai.com/v1";
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+export const OLLAMA_BASE_URL = "http://localhost:11434/v1";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 // Provider e modelo padrão do produto. O DeepSeek é o motor principal do
 // Prospector; os demais ficam disponíveis para health check/fallback manual.
 export const DEFAULT_PROVIDER: ProviderName = "deepseek";
 
-export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini" | "openrouter";
+export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini" | "openrouter" | "ollama";
 export type AiKind = "missing_key" | "rate_limit" | "auth" | "bad_request" | "timeout" | "empty" | "upstream" | "config";
 export interface AIMessage { role: "system" | "user"; content: string }
 
@@ -116,6 +118,7 @@ function cfgFor(provider: ProviderName): { apiKeyEnv: string; modelEnv: string; 
     case "deepseek": return { apiKeyEnv: "DEEPSEEK_API_KEY", modelEnv: "DEEPSEEK_MODEL", defaultModel: DEFAULT_DEEPSEEK_MODEL, baseUrl: DEEPSEEK_BASE_URL, defaultTimeout: 120_000, type: "openai" };
     case "openai": return { apiKeyEnv: "OPENAI_API_KEY", modelEnv: "OPENAI_MODEL", defaultModel: DEFAULT_OPENAI_MODEL, baseUrl: OPENAI_BASE_URL, defaultTimeout: 120_000, type: "openai" };
     case "gemini": return { apiKeyEnv: "GEMINI_API_KEY", modelEnv: "GEMINI_MODEL", defaultModel: DEFAULT_GEMINI_MODEL, baseUrl: GEMINI_BASE, defaultTimeout: 55_000, type: "gemini" };
+    case "ollama": return { apiKeyEnv: "OLLAMA_API_KEY", modelEnv: "OLLAMA_MODEL", defaultModel: DEFAULT_OLLAMA_MODEL, baseUrl: OLLAMA_BASE_URL, defaultTimeout: 300_000, type: "openai" };
     case "openrouter": return { apiKeyEnv: "OPENROUTER_API_KEY", modelEnv: "OPENROUTER_MODEL", defaultModel: DEFAULT_OPENROUTER_MODEL, baseUrl: OPENROUTER_BASE_URL, defaultTimeout: 120_000, type: "openai" };
   }
 }
@@ -143,6 +146,9 @@ async function openAiLike(opts: { messages: AIMessage[]; temperature: number; to
       if (opts.reasoningEffort === "high" || opts.reasoningEffort === "medium" || opts.reasoningEffort === "low") kwargs.reasoning_effort = opts.reasoningEffort;
     }
     if (Object.keys(kwargs).length) body.chat_template_kwargs = kwargs;
+  }
+  if (opts.noThinking && opts.provider === "ollama") {
+    body.think = false;
   }
   const endpoint = `${opts.baseUrl}/chat/completions`;
   const call = async (b: Record<string, unknown>): Promise<NormalizedAIResponse> => {
@@ -176,7 +182,7 @@ async function geminiLike(opts: { messages: AIMessage[]; temperature: number; ma
 
 function resolveProvider(opts: GenerateTextOptions): ProviderName {
   const asked = opts.provider === "auto" || !opts.provider ? (getEnv("AI_PROVIDER") ?? DEFAULT_PROVIDER) : opts.provider;
-  if (asked === "nvidia" || asked === "deepseek" || asked === "openai" || asked === "gemini" || asked === "openrouter") return asked;
+  if (asked === "nvidia" || asked === "deepseek" || asked === "openai" || asked === "gemini" || asked === "openrouter" || asked === "ollama") return asked;
   throw new AIProviderConfigurationError(`AI_PROVIDER inválido: ${asked}`);
 }
 
@@ -212,7 +218,7 @@ export async function generateText(opts: GenerateTextOptions): Promise<GenerateT
   } catch (e) {
     const err = e instanceof AiError ? e : new AIProviderError(e instanceof Error ? e.message : "erro", 500, "upstream");
     const fallbackName = opts.fallbackProvider ?? (getEnv("AI_FALLBACK_PROVIDER") as ProviderName | undefined);
-    if (fallbackName && TRANSIENT.has(err.kind) && (fallbackName === "nvidia" || fallbackName === "deepseek" || fallbackName === "openai" || fallbackName === "gemini" || fallbackName === "openrouter")) {
+    if (fallbackName && TRANSIENT.has(err.kind) && (fallbackName === "nvidia" || fallbackName === "deepseek" || fallbackName === "openai" || fallbackName === "gemini" || fallbackName === "openrouter" || fallbackName === "ollama")) {
       try {
         const r = await runProvider(fallbackName, opts, temperature, topP, maxTokens, maxRetries, reasoningEffort, messages);
         console.info("[ai] ok", { provider: r.provider, model: r.model, len: r.content.length, fallback_used: true, primary });

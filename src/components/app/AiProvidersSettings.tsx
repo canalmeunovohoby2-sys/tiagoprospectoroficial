@@ -9,6 +9,7 @@ const AI_PROVIDERS: Array<{ id: string; label: string; defaultModel: string }> =
   { id: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini" },
   { id: "gemini", label: "Gemini", defaultModel: "gemini-2.5-flash" },
   { id: "openrouter", label: "OpenRouter", defaultModel: "openrouter/auto" },
+  { id: "ollama", label: "Ollama Local", defaultModel: "qwen2.5-coder:3b-instruct" },
 ];
 
 interface ProviderState {
@@ -204,7 +205,7 @@ export function AiProvidersSettings() {
         <div key={p.provider} className="rounded-xl border border-border bg-card p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 font-medium">
-              <span className="text-base">{p.provider === "nvidia" ? "🟢" : p.provider === "deepseek" ? "🐋" : p.provider === "gemini" ? "💎" : p.provider === "openrouter" ? "🔀" : "⚡"}</span>
+              <span className="text-base">{p.provider === "nvidia" ? "🟢" : p.provider === "deepseek" ? "🐋" : p.provider === "gemini" ? "💎" : p.provider === "openrouter" ? "🔀" : p.provider === "ollama" ? "🦙" : "⚡"}</span>
               {p.label}
               {p.isDefault && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">PADRÃO</span>}
               {p.hasKey ? <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600"><KeyRound className="h-3 w-3" /> {p.maskedKey}</span> : <span className="text-[10px] text-muted-foreground">sem chave</span>}

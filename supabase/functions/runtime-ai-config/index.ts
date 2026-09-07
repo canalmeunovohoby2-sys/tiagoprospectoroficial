@@ -12,6 +12,7 @@ const BASE: Record<string, string> = {
   nvidia: "https://integrate.api.nvidia.com/v1",
   openrouter: "https://openrouter.ai/api/v1",
   gemini: "https://generativelanguage.googleapis.com/v1beta",
+  ollama: "http://localhost:11434",
 };
 const DEFAULT_MODEL: Record<string, string> = {
   deepseek: "deepseek-chat",
@@ -19,6 +20,7 @@ const DEFAULT_MODEL: Record<string, string> = {
   nvidia: "deepseek-ai/deepseek-v4-flash-0731",
   openrouter: "openrouter/auto",
   gemini: "gemini-2.5-flash",
+  ollama: "qwen2.5-coder:3b-instruct",
 };
 
 function json(body: unknown, status = 200) {
@@ -44,14 +46,18 @@ Deno.serve(async (req) => {
     const { data: rows } = await admin.from("ai_provider_config").select("provider,api_key,model,is_default,fallback_provider").eq("user_id", userId);
     const list = Array.isArray(rows) ? rows : [];
     // SOMENTE a IA validada (is_default) com chave é ativo. Sem ela → NÃO executa.
-    const def = list.find((r) => r.is_default && r.api_key);
-    if (!def || !def.provider || !["deepseek", "openai", "nvidia", "openrouter", "gemini"].includes(def.provider)) {
+    // Exceção: Ollama local (sem chave) — is_default + provider válido basta.
+    const def = list.find((r) => r.is_default && (r.api_key || r.provider === "ollama"));
+    if (!def || !def.provider || !["deepseek", "openai", "nvidia", "openrouter", "gemini", "ollama"].includes(def.provider)) {
       return json({ ok: false, code: "no_validated_ai", provider: null, model: null });
     }
 
-    const provider = def.provider as "deepseek" | "openai" | "nvidia" | "openrouter" | "gemini";
+    const provider = def.provider as "deepseek" | "openai" | "nvidia" | "openrouter" | "gemini" | "ollama";
     const model = (def.model ?? "").trim() || DEFAULT_MODEL[provider];
-    const apiKey = String(def.api_key);
+    // Ollama local não exige API Key real; serve um dummy se nenhuma chave foi salva.
+    const apiKey = provider === "ollama" && (!def.api_key || !def.api_key.trim())
+      ? "ollama"
+      : String(def.api_key ?? "");
     if (!apiKey) return json({ ok: false, code: "no_key", provider, model });
 
     return json({

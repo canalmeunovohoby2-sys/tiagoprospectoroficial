@@ -2,21 +2,22 @@
 // Nunca retorna chaves/secrets/prompts. Testa apenas o provider ativo.
 import { AIProviderConfigurationError, DEFAULT_PROVIDER } from "../_shared/ai.ts";
 
-export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini" | "openrouter";
+export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini" | "ollama" | "openrouter";
 export type ProviderStatus = "online" | "rate_limited" | "unavailable" | "timeout" | "not_configured" | "configuration_error" | "error" | "configured";
 
-export const PROVIDER_NAMES: ProviderName[] = ["nvidia", "deepseek", "openai", "gemini", "openrouter"];
+export const PROVIDER_NAMES: ProviderName[] = ["nvidia", "deepseek", "openai", "gemini", "ollama", "openrouter"];
 
 export const PROVIDER_DEFS: Record<ProviderName, { apiKeyEnv: string; modelEnv: string; defaultModel: string }> = {
   nvidia: { apiKeyEnv: "NVIDIA_API_KEY", modelEnv: "NVIDIA_MODEL", defaultModel: "deepseek-ai/deepseek-v4-flash-0731" },
   deepseek: { apiKeyEnv: "DEEPSEEK_API_KEY", modelEnv: "DEEPSEEK_MODEL", defaultModel: "deepseek-chat" },
   openai: { apiKeyEnv: "OPENAI_API_KEY", modelEnv: "OPENAI_MODEL", defaultModel: "gpt-4o-mini" },
   gemini: { apiKeyEnv: "GEMINI_API_KEY", modelEnv: "GEMINI_MODEL", defaultModel: "gemini-2.5-flash" },
+  ollama: { apiKeyEnv: "OLLAMA_API_KEY", modelEnv: "OLLAMA_MODEL", defaultModel: "qwen2.5-coder:3b-instruct" },
   openrouter: { apiKeyEnv: "OPENROUTER_API_KEY", modelEnv: "OPENROUTER_MODEL", defaultModel: "openrouter/auto" },
 };
 
 function isProvider(v: string): v is ProviderName {
-  return v === "nvidia" || v === "deepseek" || v === "openai" || v === "gemini" || v === "openrouter";
+  return v === "nvidia" || v === "deepseek" || v === "openai" || v === "gemini" || v === "ollama" || v === "openrouter";
 }
 
 export function resolveProviderModel(getEnv: (k: string) => string | undefined, provider: ProviderName): string {
