@@ -128,6 +128,8 @@ export default function SiteProjectPage() {
   const [draftFiles, setDraftFiles] = useState<Record<string, string> | null>(null);
   const [previewNonce, setPreviewNonce] = useState(0);
   const [proposalOpen, setProposalOpen] = useState(false);
+  const [genElapsed, setGenElapsed] = useState(0);
+  const genStartRef = useRef(0);
   const [projectLead, setProjectLead] = useState<ProposalLeadLike | null>(null);
 
   // WhatsApp comprovado do lead vinculado ao projeto (leads.lead_id).
@@ -365,7 +367,10 @@ export default function SiteProjectPage() {
     if (!project) return;
     setGenerating(true);
     setGenError(null);
+    genStartRef.current = Date.now();
+    setGenElapsed(0);
     const stopProgress = runAgentProgress(GENERATION_STEPS);
+    const ticker = window.setInterval(() => setGenElapsed(Math.round((Date.now() - genStartRef.current) / 1000)), 1000);
     try {
       const briefing = (project.briefing ?? {}) as Record<string, unknown>;
       // CONTEXTO factual p/ o agente (sem inventar; apenas o que existe).
@@ -408,6 +413,9 @@ export default function SiteProjectPage() {
         prevFilesRef.current = genRes.files;
         setDraftFiles(genRes.files);
         toast.success("Site criado pelo agente e salvo");
+        const elapsed = Math.round((Date.now() - genStartRef.current) / 1000);
+        const timing = (genRes as unknown as { timing?: { modelMs?: number; turnCount?: number; toolMs?: number } }).timing;
+        toast.success(`Tempo total: ${elapsed}s${timing?.turnCount ? ` · ${timing.turnCount} turnos · modelo ${Math.round((timing.modelMs ?? 0) / 1000)}s` : ""}`);
         await load();
         return;
       }
@@ -423,13 +431,15 @@ export default function SiteProjectPage() {
       throw new Error(`A geração falhou no editor completo: ${reason}`);
     } catch (e) {
       const message = friendlyAiError(e);
-      setGenError(message);
-      toast.error(message);
+      const elapsed = Math.round((Date.now() - genStartRef.current) / 1000);
+      setGenError(`${message} (${elapsed}s)`);
+      toast.error(`${message} (${elapsed}s)`);
       try {
         await supabase.from("site_projects").update({ status: "error" }).eq("id", project.id);
         await load();
       } catch { /* mantém estado atual */ }
     } finally {
+      window.clearInterval(ticker);
       stopProgress();
       setAgentStep(null);
       setGenerating(false);
@@ -951,6 +961,7 @@ export default function SiteProjectPage() {
               <p className="text-sm font-semibold flex items-center gap-2">
                 <Sparkles className="h-4 w-4 text-primary" />
                 {GENERATION_STEPS[agentStep].label}
+                <span className="ml-auto text-xs font-mono text-muted-foreground">{genElapsed}s</span>
               </p>
               <p className="text-xs text-muted-foreground truncate mt-0.5">{GENERATION_STEPS[agentStep].detail}</p>
             </div>
