@@ -61,7 +61,7 @@ for (const vp of [{ label: "desktop", w: 1366, h: 850 }, { label: "mobile", w: 3
   await step(C + " click-menu-item", async () => { await session.evaluate(`(() => { const n = document.querySelector('#mainNav, [class*="menu"]'); const l = n ? n.querySelector('a') : null; if (l) l.click(); })()`); }, "clicar item do menu");
   await step(C + " scroll/secao", async () => { await session.evaluate(`window.scrollTo(0, document.body.scrollHeight / 2);`); }, "rolar para meio");
   await step(C + " cta-primeiro", async () => { await session.evaluate(`(() => { const a = Array.from(document.querySelectorAll('a[href^="#"], button')).filter(x => x.offsetWidth); const c = a.find(x => (x.className && String(x.className).match(/cta|btn/i))) || a[0]; if (c) c.click(); })()`); }, "CTA interno");
-  await step(C + " back-fwd", async () => { await session.page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {}); await new Promise(r => setTimeout(r, 300)); await session.page.goForward({ waitUntil: 'domcontentloaded' }).catch(() => {}); }, "voltar/avançar");
+  await step(C + " back-fwd", async () => { await session.evaluate(`history.back()`); await new Promise(r => setTimeout(r, 300)); await session.evaluate(`history.forward()`); }, "voltar/avançar");
 }
 
 console.log(JSON.stringify(results, null, 1));

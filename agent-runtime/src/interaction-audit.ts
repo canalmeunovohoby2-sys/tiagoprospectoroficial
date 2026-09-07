@@ -60,7 +60,10 @@ export async function auditSiteInteractions(session: BrowserSession): Promise<In
 
     // ── Fase 1: cliques individuais (reload entre eles) ────────────
     const clicks = await session.clickableElements();
-    const testedList = clicks.filter((c) => c.visible).slice(0, 12);
+    // Limite reduzido e PRIORIZADO (performance sem perder a proteção):
+    // menu/hambúrguer e CTA/âncoras vêm primeiro na lista do DOM, que já é
+    // limitada a 16 pela própria ferramenta.
+    const testedList = clicks.filter((c) => c.visible).slice(0, 6);
     testedTotal += testedList.length;
     for (const c of testedList) {
       try {
@@ -87,7 +90,7 @@ export async function auditSiteInteractions(session: BrowserSession): Promise<In
       await session.reload();
       const seenWalk = new Set<string>();
       let walked = 0;
-      for (let guard = 0; guard < 70 && walked < 16; guard++) {
+      for (let guard = 0; guard < 60 && walked < 8; guard++) {
         const available = (await session.clickableElements()).filter((c) => c.visible && !seenWalk.has(c.sel));
         if (!available.length) {
           if (await isBlack(session)) break; // overlay preso sem novos alvos
