@@ -6,16 +6,18 @@ type Env = Record<string, string | undefined>;
 const makeEnv = (env: Env): ((k: string) => string | undefined) => (k: string) => env[k];
 
 describe("AI Health Check", () => {
-  const KEYS = { NVIDIA_API_KEY: "nvk-secret", DEEPSEEK_API_KEY: "dsk-secret", OPENAI_API_KEY: "oak-secret", GEMINI_API_KEY: "gmk-secret" };
+  const KEYS = { NVIDIA_API_KEY: "nvk-secret", DEEPSEEK_API_KEY: "dsk-secret", OPENAI_API_KEY: "oak-secret", GEMINI_API_KEY: "gmk-secret", OPENROUTER_API_KEY: "ork-secret" };
 
   it("identifica configurados e não configurados sem expor secrets", async () => {
     const env = makeEnv({ ...KEYS, AI_PROVIDER: "nvidia" });
     const payload = await runHealthCheck({ getEnv: env, runProvider: async () => ({ model: "deepseek-ai/deepseek-v4-flash-0731" }) });
     expect(payload.providers.find((p) => p.name === "nvidia")?.configured).toBe(true);
     expect(payload.providers.find((p) => p.name === "openai")?.configured).toBe(true);
+    expect(payload.providers.find((p) => p.name === "openrouter")?.configured).toBe(true);
     const ser = JSON.stringify(payload);
     expect(ser).not.toContain("nvk-secret");
     expect(ser).not.toContain("dsk-secret");
+    expect(ser).not.toContain("ork-secret");
   });
 
   it("provider ativo online com modelo resolvido", async () => {
@@ -63,6 +65,20 @@ describe("AI Health Check", () => {
     const payload = await runHealthCheck({ getEnv: env, runProvider: async () => ({ model: "m" }) });
     expect(payload.providers.find((p) => p.name === "deepseek")?.status).toBe("not_configured");
     expect(payload.testedProvider).toBeNull();
+  });
+
+  it("OpenRouter é identificado como provider no catálogo", () => {
+    expect(PROVIDER_DEFS.openrouter).toBeDefined();
+    expect(PROVIDER_DEFS.openrouter.apiKeyEnv).toBe("OPENROUTER_API_KEY");
+    expect(PROVIDER_DEFS.openrouter.defaultModel).toBe("openrouter/auto");
+  });
+
+  it("OpenRouter ativo e configurado com chave", async () => {
+    const env = makeEnv({ ...KEYS, AI_PROVIDER: "openrouter" });
+    const payload = await runHealthCheck({ getEnv: env, runProvider: async () => ({ model: "openrouter/auto" }) });
+    expect(payload.activeProvider).toBe("openrouter");
+    expect(payload.providers.find((p) => p.name === "openrouter")?.configured).toBe(true);
+    expect(payload.providers.find((p) => p.name === "openrouter")?.status).toBe("online");
   });
 
   it("AI_PROVIDER inválido → ativo null (sem crash)", async () => {

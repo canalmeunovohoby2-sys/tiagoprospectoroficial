@@ -16,7 +16,7 @@ function err(status: number) {
 }
 
 const KEYS = {
-  NVIDIA_API_KEY: "nvk", DEEPSEEK_API_KEY: "dsk", OPENAI_API_KEY: "oak", GEMINI_API_KEY: "gmk",
+  NVIDIA_API_KEY: "nvk", DEEPSEEK_API_KEY: "dsk", OPENAI_API_KEY: "oak", GEMINI_API_KEY: "gmk", OPENROUTER_API_KEY: "ork",
 };
 
 describe("AI Gateway — multi-provider", () => {
@@ -55,6 +55,14 @@ describe("AI Gateway — multi-provider", () => {
     const res = await generateText({ user: "oi" });
     expect(res.provider).toBe("gemini");
     expect(calls[0].url).toContain("generativelanguage.googleapis.com");
+  });
+
+  it("OpenRouter usa openrouter.ai e API key correta", async () => {
+    installEnv({ ...KEYS, AI_PROVIDER: "openrouter", AI_MODEL: "openrouter/auto" });
+    mockFetch((url) => okContent("ok-openrouter"));
+    const res = await generateText({ user: "oi" });
+    expect(res.provider).toBe("openrouter");
+    expect(calls[0].url).toContain("openrouter.ai/api/v1/chat/completions");
   });
 
   it("provider inválido lança erro de configuração", async () => {

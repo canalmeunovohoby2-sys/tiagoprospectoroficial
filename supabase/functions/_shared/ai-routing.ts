@@ -7,6 +7,7 @@ import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_NVIDIA_MODEL,
   DEFAULT_OPENAI_MODEL,
+  DEFAULT_OPENROUTER_MODEL,
   DEFAULT_PROVIDER,
   type ProviderName,
 } from "./ai.ts";
@@ -31,6 +32,7 @@ export const AI_PROVIDERS: Array<{ id: ProviderName; label: string; defaultModel
   { id: "nvidia", label: "NVIDIA NIM", defaultModel: DEFAULT_NVIDIA_MODEL },
   { id: "openai", label: "OpenAI", defaultModel: DEFAULT_OPENAI_MODEL },
   { id: "gemini", label: "Gemini", defaultModel: DEFAULT_GEMINI_MODEL },
+  { id: "openrouter", label: "OpenRouter", defaultModel: DEFAULT_OPENROUTER_MODEL },
 ];
 
 const PROVIDER_DEFAULTS: Record<ProviderName, string> = {
@@ -38,10 +40,11 @@ const PROVIDER_DEFAULTS: Record<ProviderName, string> = {
   nvidia: DEFAULT_NVIDIA_MODEL,
   openai: DEFAULT_OPENAI_MODEL,
   gemini: DEFAULT_GEMINI_MODEL,
+  openrouter: DEFAULT_OPENROUTER_MODEL,
 };
 
 function isProvider(v: string | null | undefined): v is ProviderName {
-  return v === "deepseek" || v === "nvidia" || v === "openai" || v === "gemini";
+  return v === "deepseek" || v === "nvidia" || v === "openai" || v === "gemini" || v === "openrouter";
 }
 
 function cleanModel(v: string | null | undefined): string {
@@ -62,7 +65,7 @@ export function resolveExecutionConfig(opts: {
   const source: "project" | "global" = (project?.provider || project?.model || project?.fallback) ? "project" : "global";
 
   if (requested != null && String(requested).trim() !== "" && !isProvider(String(requested).trim())) {
-    return { ok: false, provider: DEFAULT_PROVIDER, model: PROVIDER_DEFAULTS[DEFAULT_PROVIDER], source, error: `Provedor de execução desconhecido: "${requested}". Use deepseek, nvidia, openai ou gemini.` };
+    return { ok: false, provider: DEFAULT_PROVIDER, model: PROVIDER_DEFAULTS[DEFAULT_PROVIDER], source, error: `Provedor de execução desconhecido: "${requested}". Use deepseek, nvidia, openai, gemini ou openrouter.` };
   }
   const provider: ProviderName = isProvider(requested) ? requested : DEFAULT_PROVIDER;
 

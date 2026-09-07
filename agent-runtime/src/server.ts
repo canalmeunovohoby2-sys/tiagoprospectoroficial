@@ -332,8 +332,8 @@ export function startServer(port = PORT, host = HOST) {
         // Missão de geração: workspace limpo (ou arquivos pré-existentes se houver).
         const seed = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
         const gExec = executionConfig(body);
-        if (gExec.provider && !["deepseek", "openai", "nvidia"].includes(gExec.provider)) {
-            send(res, 400, { error: `Provedor "${gExec.provider}" não é suportado pelo runtime (use deepseek, openai ou nvidia). Gemini é apenas edge.` });
+        if (gExec.provider && !["deepseek", "openai", "nvidia", "openrouter"].includes(gExec.provider)) {
+            send(res, 400, { error: `Provedor "${gExec.provider}" não é suportado pelo runtime (use deepseek, openai, nvidia ou openrouter). Gemini é apenas edge.` });
           return;
         }
         const genKey = genKeyFor(ticket.uid, projectId);
@@ -550,8 +550,8 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           const stream = body.stream === true; // NDJSON ao vivo (5.34)
           const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
           const rExec = executionConfig(body);
-          if (rExec.provider && !["deepseek", "openai", "nvidia"].includes(rExec.provider)) {
-            send(res, 400, { error: `Provedor "${rExec.provider}" não é suportado pelo runtime (use deepseek, openai ou nvidia). Gemini é apenas edge.` });
+          if (rExec.provider && !["deepseek", "openai", "nvidia", "openrouter"].includes(rExec.provider)) {
+            send(res, 400, { error: `Provedor "${rExec.provider}" não é suportado pelo runtime (use deepseek, openai, nvidia ou openrouter). Gemini é apenas edge.` });
             return;
           }
         const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;

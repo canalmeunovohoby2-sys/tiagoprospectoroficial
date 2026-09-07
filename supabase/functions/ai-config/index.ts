@@ -3,13 +3,14 @@
 // devolve a chave; o cliente vê apenas maskedLast4/estado.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
-import { generateText, AiError, DEFAULT_DEEPSEEK_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_NVIDIA_MODEL, DEFAULT_OPENAI_MODEL, type ProviderName } from "../_shared/ai.ts";
+import { generateText, AiError, DEFAULT_DEEPSEEK_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_NVIDIA_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_OPENROUTER_MODEL, type ProviderName } from "../_shared/ai.ts";
 
 const PROVIDERS: Array<{ id: ProviderName; label: string; defaultModel: string }> = [
   { id: "deepseek", label: "DeepSeek", defaultModel: DEFAULT_DEEPSEEK_MODEL },
   { id: "nvidia", label: "NVIDIA NIM", defaultModel: DEFAULT_NVIDIA_MODEL },
   { id: "openai", label: "OpenAI", defaultModel: DEFAULT_OPENAI_MODEL },
   { id: "gemini", label: "Gemini", defaultModel: DEFAULT_GEMINI_MODEL },
+  { id: "openrouter", label: "OpenRouter", defaultModel: DEFAULT_OPENROUTER_MODEL },
 ];
 
 const ENV_KEYS: Record<ProviderName, string> = {
@@ -17,10 +18,11 @@ const ENV_KEYS: Record<ProviderName, string> = {
   nvidia: "NVIDIA_API_KEY",
   openai: "OPENAI_API_KEY",
   gemini: "GEMINI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
 };
 
 function isProvider(v: string): v is ProviderName {
-  return v === "deepseek" || v === "nvidia" || v === "openai" || v === "gemini";
+  return v === "deepseek" || v === "nvidia" || v === "openai" || v === "gemini" || v === "openrouter";
 }
 function mask(key: string | null | undefined): string | null {
   if (!key) return null;

@@ -52,9 +52,27 @@ describe("AI Routing (5.37) — seleção central provedor/modelo/fallback", () 
     expect(bad.ok).toBe(false);
   });
 
-  it("catálogo de providers inclui NVIDIA, DeepSeek, OpenAI e Gemini", () => {
+  it("catálogo de providers inclui NVIDIA, DeepSeek, OpenAI, Gemini e OpenRouter", () => {
     const ids = AI_PROVIDERS.map((p) => p.id);
-    expect(ids).toEqual(expect.arrayContaining(["nvidia", "deepseek", "openai", "gemini"]));
+    expect(ids).toEqual(expect.arrayContaining(["nvidia", "deepseek", "openai", "gemini", "openrouter"]));
     expect(providerLabel("nvidia")).toContain("NVIDIA");
+  });
+
+  it("OpenRouter é aceito como provedor de execução", () => {
+    const r = resolveExecutionConfig({ project: { provider: "openrouter", model: "openrouter/auto" } });
+    expect(r.ok).toBe(true);
+    expect(r.provider).toBe("openrouter");
+    expect(r.model).toBe("openrouter/auto");
+  });
+
+  it("OpenRouter como fallback válido", () => {
+    const r = resolveExecutionConfig({ project: { provider: "deepseek", fallback: "openrouter" } });
+    expect(r.ok).toBe(true);
+    expect(r.fallbackProvider).toBe("openrouter");
+  });
+
+  it("OpenRouter inválido como fallback retorna erro", () => {
+    const r = resolveExecutionConfig({ project: { provider: "deepseek", fallback: "openrouterx" } });
+    expect(r.ok).toBe(false);
   });
 });

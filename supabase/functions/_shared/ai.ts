@@ -1,4 +1,4 @@
-// AI Gateway — camada única e desacoplada de provedores (nvidia|deepseek|openai|gemini).
+// AI Gateway — camada única e desacoplada de provedores (nvidia|deepseek|openai|gemini|openrouter).
 // Config por secrets/edge env: AI_PROVIDER, AI_FALLBACK_PROVIDER, AI_MODEL,
 // AI_TEMPERATURE, AI_TOP_P, AI_MAX_TOKENS, AI_REASONING_EFFORT, AI_TIMEOUT_MS,
 // AI_MAX_RETRIES e por provider (<PROVIDER>_API_KEY/<PROVIDER>_MODEL).
@@ -8,16 +8,18 @@ export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
 export const DEFAULT_NVIDIA_MODEL = "deepseek-ai/deepseek-v4-flash-0731";
 export const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
 export const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+export const DEFAULT_OPENROUTER_MODEL = "openrouter/auto";
 export const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
 export const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
 export const OPENAI_BASE_URL = "https://api.openai.com/v1";
+export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 // Provider e modelo padrão do produto. O DeepSeek é o motor principal do
 // Prospector; os demais ficam disponíveis para health check/fallback manual.
 export const DEFAULT_PROVIDER: ProviderName = "deepseek";
 
-export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini";
+export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini" | "openrouter";
 export type AiKind = "missing_key" | "rate_limit" | "auth" | "bad_request" | "timeout" | "empty" | "upstream" | "config";
 export interface AIMessage { role: "system" | "user"; content: string }
 
@@ -114,6 +116,7 @@ function cfgFor(provider: ProviderName): { apiKeyEnv: string; modelEnv: string; 
     case "deepseek": return { apiKeyEnv: "DEEPSEEK_API_KEY", modelEnv: "DEEPSEEK_MODEL", defaultModel: DEFAULT_DEEPSEEK_MODEL, baseUrl: DEEPSEEK_BASE_URL, defaultTimeout: 120_000, type: "openai" };
     case "openai": return { apiKeyEnv: "OPENAI_API_KEY", modelEnv: "OPENAI_MODEL", defaultModel: DEFAULT_OPENAI_MODEL, baseUrl: OPENAI_BASE_URL, defaultTimeout: 120_000, type: "openai" };
     case "gemini": return { apiKeyEnv: "GEMINI_API_KEY", modelEnv: "GEMINI_MODEL", defaultModel: DEFAULT_GEMINI_MODEL, baseUrl: GEMINI_BASE, defaultTimeout: 55_000, type: "gemini" };
+    case "openrouter": return { apiKeyEnv: "OPENROUTER_API_KEY", modelEnv: "OPENROUTER_MODEL", defaultModel: DEFAULT_OPENROUTER_MODEL, baseUrl: OPENROUTER_BASE_URL, defaultTimeout: 120_000, type: "openai" };
   }
 }
 
@@ -173,7 +176,7 @@ async function geminiLike(opts: { messages: AIMessage[]; temperature: number; ma
 
 function resolveProvider(opts: GenerateTextOptions): ProviderName {
   const asked = opts.provider === "auto" || !opts.provider ? (getEnv("AI_PROVIDER") ?? DEFAULT_PROVIDER) : opts.provider;
-  if (asked === "nvidia" || asked === "deepseek" || asked === "openai" || asked === "gemini") return asked;
+  if (asked === "nvidia" || asked === "deepseek" || asked === "openai" || asked === "gemini" || asked === "openrouter") return asked;
   throw new AIProviderConfigurationError(`AI_PROVIDER inválido: ${asked}`);
 }
 
@@ -209,7 +212,7 @@ export async function generateText(opts: GenerateTextOptions): Promise<GenerateT
   } catch (e) {
     const err = e instanceof AiError ? e : new AIProviderError(e instanceof Error ? e.message : "erro", 500, "upstream");
     const fallbackName = opts.fallbackProvider ?? (getEnv("AI_FALLBACK_PROVIDER") as ProviderName | undefined);
-    if (fallbackName && TRANSIENT.has(err.kind) && (fallbackName === "nvidia" || fallbackName === "deepseek" || fallbackName === "openai" || fallbackName === "gemini")) {
+    if (fallbackName && TRANSIENT.has(err.kind) && (fallbackName === "nvidia" || fallbackName === "deepseek" || fallbackName === "openai" || fallbackName === "gemini" || fallbackName === "openrouter")) {
       try {
         const r = await runProvider(fallbackName, opts, temperature, topP, maxTokens, maxRetries, reasoningEffort, messages);
         console.info("[ai] ok", { provider: r.provider, model: r.model, len: r.content.length, fallback_used: true, primary });

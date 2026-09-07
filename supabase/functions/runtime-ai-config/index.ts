@@ -10,11 +10,13 @@ const BASE: Record<string, string> = {
   deepseek: "https://api.deepseek.com",
   openai: "https://api.openai.com/v1",
   nvidia: "https://integrate.api.nvidia.com/v1",
+  openrouter: "https://openrouter.ai/api/v1",
 };
 const DEFAULT_MODEL: Record<string, string> = {
   deepseek: "deepseek-chat",
   openai: "gpt-4o-mini",
   nvidia: "deepseek-ai/deepseek-v4-flash-0731",
+  openrouter: "openrouter/auto",
 };
 
 function json(body: unknown, status = 200) {
@@ -41,11 +43,11 @@ Deno.serve(async (req) => {
     const list = Array.isArray(rows) ? rows : [];
     // SOMENTE a IA validada (is_default) com chave é ativo. Sem ela → NÃO executa.
     const def = list.find((r) => r.is_default && r.api_key);
-    if (!def || !def.provider || !["deepseek", "openai", "nvidia"].includes(def.provider)) {
+    if (!def || !def.provider || !["deepseek", "openai", "nvidia", "openrouter"].includes(def.provider)) {
       return json({ ok: false, code: "no_validated_ai", provider: null, model: null });
     }
 
-    const provider = def.provider as "deepseek" | "openai" | "nvidia";
+    const provider = def.provider as "deepseek" | "openai" | "nvidia" | "openrouter";
     const model = (def.model ?? "").trim() || DEFAULT_MODEL[provider];
     const apiKey = String(def.api_key);
     if (!apiKey) return json({ ok: false, code: "no_key", provider, model });

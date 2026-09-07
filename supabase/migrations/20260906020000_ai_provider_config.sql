@@ -4,7 +4,7 @@
 create table if not exists public.ai_provider_config (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  provider text not null check (provider in ('deepseek','nvidia','openai','gemini')),
+  provider text not null check (provider in ('deepseek','nvidia','openai','gemini','openrouter')),
   api_key text,
   model text,
   enabled boolean not null default true,
