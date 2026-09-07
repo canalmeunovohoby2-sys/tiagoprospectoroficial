@@ -318,7 +318,7 @@ export async function invokeProspectorAgent(input: {
   const runtimeUrl = await editorRuntimeUrl();
   if (!runtimeUrl) return editorUnavailableResult("not_configured");
   const token = await getAgentTicket(input.projectId);
-  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não autenticado para executar o agente neste projeto."] };
+  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não foi possível autenticar esta execução (ticket não emitido). Confirme que a Edge Function agent-ticket está publicada e configurada (AGENT_TICKET_SECRET) e recarregue a página."] };
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/run`, {
       method: "POST",
@@ -455,7 +455,7 @@ export async function invokeProspectorGenerate(input: {
   const runtimeUrl = await editorRuntimeUrl();
   if (!runtimeUrl) return editorUnavailableResult("not_configured");
   const token = await getAgentTicket(input.projectId);
-  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não autenticado para gerar o site deste projeto."] };
+  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não foi possível autenticar a geração (ticket não emitido). Confirme que a Edge Function agent-ticket está publicada e configurada (AGENT_TICKET_SECRET) e recarregue a página."] };
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
       method: "POST",
