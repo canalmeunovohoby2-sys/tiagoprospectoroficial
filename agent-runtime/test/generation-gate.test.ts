@@ -5,6 +5,7 @@ const base = (extra: string, cssExtra = "") => ({
   "index.html": `<!doctype html><html><head><title>Academia Corpo Forte</title></head><body>
     <nav><a href="#hero">Início</a></nav>
     <section class="hero" id="hero"><h1>Academia Corpo Forte</h1><p>Treine conosco.</p><a class="cta" href="https://wa.me/5511">Matricule-se</a></section>
+    <iframe src="https://maps.google.com/maps?q=Sao%20Paulo&output=embed" title="Localizacao"></iframe>
     <footer>© Academia Corpo Forte · (11) 4444-3333</footer>
     ${extra}
   </body></html>`,

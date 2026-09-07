@@ -5,6 +5,7 @@ const GOOD = {
   "index.html": `<!doctype html><html><head><title>Academia Forte</title></head><body>
     <nav><a href="#hero">Início</a></nav>
     <section class="hero" id="hero"><h1>Academia Forte</h1><img src="https://images.unsplash.com/photo-a" alt="academia"/><a class="cta" href="https://wa.me/55">Matricule-se</a></section>
+    <iframe src="https://maps.google.com/maps?q=Sao%20Paulo&output=embed" title="Localizacao"></iframe>
     <footer>© Academia Forte · (11) 9999-0000</footer>
   </body></html>`,
   "src/site.css": ".hero{background:#111}@media(max-width:900px){.hero{width:100%}}",

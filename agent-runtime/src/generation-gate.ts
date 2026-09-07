@@ -59,6 +59,11 @@ export function assertGenerationQuality(
     issues.push("Pouca variedade de imagens (todas as fotos iguais/repetidas). Diversifique as imagens para parecer um site profissional.");
   }
 
+  // Google Maps embutido — obrigatório em TODA landing page gerada.
+  if (!/google\.com\/maps\/embed|maps\.google\.com\/maps[^"']*output=embed/i.test(html)) {
+    issues.push("Sem Google Maps embutido. Adicione a seção 'Localização/Como chegar' com <iframe> do Google Maps (https://maps.google.com/maps?q=ENDEREÇO_OU_CIDADE&z=15&output=embed) responsivo. Use o endereço real se existir no contexto; caso contrário use a cidade/UF.");
+  }
+
   // Responsividade
   if (!/@media/i.test(css || html)) issues.push("Sem regras responsivas (@media). Adicione layout mobile (a partir de ~900px e ~600px).");
 

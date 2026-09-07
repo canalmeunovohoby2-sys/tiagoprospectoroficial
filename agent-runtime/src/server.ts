@@ -193,9 +193,10 @@ export function startServer(port = PORT, host = HOST) {
         pruneSessions();
         const existingGen = sessions.get(genKey);
         const genIter = Math.min(80, Math.max(10, Number(body.maxIterations ?? process.env.GENERATE_MAX_ITERATIONS ?? 32)));
-        // Chromium é pesado p/ plano gratuito: na GERAÇÃO o browser fica OFF por
-        // padrão (opt-in via GENERATE_BROWSER=1). A EDIÇÃO segue com browser.
-        const genBrowser = process.env.GENERATE_BROWSER === "1" && body.enableBrowser !== false;
+        // Browser QA na geração fica LIGADO por padrão (teste de clique sem tela
+        // preta, mapa, menu mobile). Para desligar: GENERATE_BROWSER=0 ou envie
+        // enableBrowser:false.
+        const genBrowser = process.env.GENERATE_BROWSER !== "0" && body.enableBrowser !== false;
         const agent = existingGen?.agent ?? await makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser });
         if (!existingGen) sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "" });
 
