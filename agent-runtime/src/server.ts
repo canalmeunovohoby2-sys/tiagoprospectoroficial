@@ -8,6 +8,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFileSync } from "node:fs";
 import { ProspectorSiteAgent } from "./prospector-site-agent.js";
 import { BrowserSession } from "./browser-session.js";
+import { auditSiteInteractions } from "./interaction-audit.js";
+import { isBugReport } from "./completion-guard.js";
 import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace } from "./workspace.js";
 import type { BusinessContext } from "./tools.js";
 import { assertGenerationQuality } from "./generation-gate.js";
@@ -51,6 +53,44 @@ function pruneSessions(): void {
     const toRemove = oldest.slice(0, oldest.length - MAX_SESSIONS);
     for (const [id] of toRemove) sessions.delete(id);
   }
+}
+
+// Portão de interação: clica nos elementos reais do site e, se um clique deixar
+// a tela preta, o agente corrige (até maxCycles) ANTES de responder ao usuário.
+// Browser indisponível → passa sem bloquear (tested=0).
+async function runInteractionGate(
+  agent: ProspectorSiteAgent,
+  root: string,
+  activity?: Array<{ phase: string; detail: string }>,
+  maxCycles = 2,
+): Promise<{ ok: boolean; tested: number; issues: string[]; cycles: number }> {
+  let tested = 0;
+  let issues: string[] = [];
+  let cycles = 0;
+  try {
+    for (let i = 0; i <= maxCycles; i++) {
+      const session = new BrowserSession(root);
+      let audit;
+      try {
+        audit = await auditSiteInteractions(session);
+      } finally {
+        await session.close().catch(() => {});
+      }
+      tested = audit.tested;
+      issues = audit.issues;
+      if (audit.ok || i === maxCycles) break;
+      cycles += 1;
+      activity?.push({ phase: "verifying", detail: `Auditoria de cliques: tela preta ao clicar (${audit.issues.length}). Corrigindo…` });
+      await agent.runTask(
+        `ANTES DE FINALIZAR: a auditoria automática de interação detectou que clicar em alguns elementos deixa a página TODA PRETA. Corrija TODOS os casos:\n- ${audit.issues.join("\n- ")}\n` +
+        `Investigue a causa raiz no código (overlay/modal/menu full-screen que não fecha, camada escura cobrindo a página, erro JS no handler do clique, classe adicionada ao clicar). Use browser_open + browser_eval para reproduzir e confirmar com browser_reload que o clique não deixa mais a tela preta.`,
+        { continueSession: true },
+      );
+    }
+  } catch {
+    return { ok: true, tested: 0, issues: [], cycles: 0 };
+  }
+  return { ok: issues.length === 0, tested, issues, cycles };
 }
 
 function executionConfig(body: Record<string, unknown>): { provider?: string; model?: string } {
@@ -300,6 +340,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           activity.push({ phase: "gate", detail: `Revisão automática: ${gateResult.ok ? "problemas resolvidos" : `${gateResult.issues.length} problema(s) restante(s)`}` });
           if (gateResult.ok) break;
         }
+        // Auditoria de interação: clica nos elementos e corrige tela preta antes
+        // de entregar o site (garantia de "pronto para uso").
+        const interaction = await runInteractionGate(agent, resolveWorkspaceRoot(projectId), activity);
+        if (interaction.cycles > 0) activity.push({ phase: "verifying", detail: interaction.ok ? "Interações corrigidas e revalidadas." : "Interações ainda com problema (visto no log)." });
         const finalFiles = readWorkspace(resolveWorkspaceRoot(projectId));
         // Move o agente de geração para o pool de edição do mesmo projectId,
         // para que o chat continue a MESMA conversa/sessão após a geração.
@@ -319,6 +363,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           mode: "generate",
           gate_ok: gateResult.ok,
           gate_issues: gateResult.issues,
+          interaction: { ok: interaction.ok, tested: interaction.tested, issues: interaction.issues, cycles: interaction.cycles },
           finish_skips: finalOutcome.finishSkips,
           finish_blocked: finalOutcome.finishBlocked,
           events: events.slice(0, 200),
@@ -427,14 +472,20 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
 
         // workspace final
         const root = resolveWorkspaceRoot(projectId);
+        // Pedido de correção de DEFEITO → auditoria de interação (clique não pode
+        // deixar a tela preta). Correções feitas aqui já entram nos arquivos finais.
+        const interaction = isBugReport(instruction)
+          ? await runInteractionGate(agent, root, activity)
+          : { ok: true, tested: 0, issues: [] as string[], cycles: 0 };
         const finalFiles = readWorkspace(root);
         const touched = outcome.touched;
+        const changed = touched.length > 0 || interaction.cycles > 0;
 
         const payload = {
           status: outcome.ok ? "ok" : "error",
           reply: outcome.reply,
           error: outcome.error,
-          changed: touched.length > 0,
+          changed,
           touched,
           files: finalFiles,
           model: process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
@@ -442,6 +493,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           runtime: "cline",
           attachments: attachResult.attachments,
           attach_errors: attachResult.errors,
+          interaction,
           resumed_session: resume,
           events: events.slice(0, 150),
           activity,

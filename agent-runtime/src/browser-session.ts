@@ -205,6 +205,98 @@ export class BrowserSession {
     }
   }
 
+  async pressKey(key: "Escape" | "Enter" | "Tab"): Promise<void> {
+    if (!this.page) throw new Error("Página não aberta.");
+    await this.page.keyboard.press(key);
+  }
+
+  // Mede se a página está "preta": amostra 25 pontos e verifica a cor final
+  // (subindo a cadeia de backgrounds opacos). Tela preta real = >=70% dos
+  // pontos resolvem para preto opaco.
+  async measureBlackScreen(): Promise<{ black: boolean; ratio: number }> {
+    if (!this.page) return { black: false, ratio: 0 };
+    const code = `(() => {
+      const resolveColor = (el) => {
+        let e = el;
+        while (e && e !== document.documentElement) {
+          const cs = window.getComputedStyle(e);
+          const bg = cs.backgroundColor;
+          const m = /rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/.exec(bg);
+          if (m) {
+            const a = m[4] !== undefined ? parseFloat(m[4]) : 1;
+            if (a > 0.02) return { r: +m[1], g: +m[2], b: +m[3], a };
+          }
+          e = e.parentElement;
+        }
+        return null;
+      };
+      const points = [];
+      for (let gx = 1; gx <= 5; gx++) for (let gy = 1; gy <= 5; gy++) points.push([gx / 6, gy / 6]);
+      let dark = 0;
+      for (const p of points) {
+        const el = document.elementFromPoint(Math.floor(window.innerWidth * p[0]), Math.floor(window.innerHeight * p[1]));
+        const c = resolveColor(el);
+        if (c) {
+          const opaque = Math.min(1, c.a);
+          const lum = (c.r + c.g + c.b) / 3;
+          if (opaque >= 0.6 && lum <= 30) dark += 1;
+        }
+      }
+      const center = resolveColor(document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2));
+      return { dark, total: points.length, center, bodyBg: window.getComputedStyle(document.body).backgroundColor, text: (document.body.textContent || '').length };
+    })()`;
+    try {
+      const value = await this.page.evaluate((c) => {
+        // eslint-disable-next-line no-new-func
+        const fn = new Function(`return (${c});`);
+        return fn();
+      }, code);
+      const res = value as { dark: number; total: number };
+      const ratio = res.total ? res.dark / res.total : 0;
+      return { black: ratio >= 0.7, ratio: Number(ratio.toFixed(2)) };
+    } catch {
+      return { black: false, ratio: 0 };
+    }
+  }
+
+  // Lista elementos clicáveis (para auditoria de interação).
+  async clickableElements(): Promise<Array<{ sel: string; text: string; tag: string; visible: boolean }>> {
+    if (!this.page) return [];
+    const code = `(() => {
+      const selFor = (el) => {
+        if (el.id) return '#' + CSS.escape(el.id);
+        if (el.getAttribute('data-testid')) return '[data-testid="' + CSS.escape(el.getAttribute('data-testid')) + '"]';
+        const cls = Array.prototype.slice.call(el.classList, 0, 3).map(function (c) { return '.' + CSS.escape(c); }).join('');
+        return cls ? el.tagName.toLowerCase() + cls : el.tagName.toLowerCase();
+      };
+      const els = Array.prototype.slice.call(document.querySelectorAll('a[href], button, [role="button"], input[type="submit"], input[type="button"], [onclick], summary'));
+      return els.slice(0, 16).map(function (el) {
+        return { sel: selFor(el), text: (el.textContent || '').trim().slice(0, 40), tag: el.tagName.toLowerCase(), visible: !!(el.offsetWidth || el.offsetHeight) };
+      });
+    })()`;
+    const value = await this.page.evaluate((c) => {
+      // eslint-disable-next-line no-new-func
+      const fn = new Function(`return (${c});`);
+      return fn();
+    }, code);
+    return Array.isArray(value) ? (value as Array<{ sel: string; text: string; tag: string; visible: boolean }>) : [];
+  }
+
+  // Clica num elemento pelo seletor (dispatch click via JS — força interação
+  // mesmo sob overlay, igual ao handler real de clique).
+  async clickSelector(sel: string): Promise<void> {
+    if (!this.page) throw new Error("Página não aberta.");
+    await this.page.evaluate((s) => {
+      const el = document.querySelector(s);
+      if (el instanceof HTMLElement) {
+        el.click();
+        el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      } else {
+        throw new Error(`elemento não encontrado: ${s}`);
+      }
+    }, sel);
+  }
+
   async reload(): Promise<BrowserInspection> {
     if (!this.page) throw new Error("Página não aberta.");
     this.consoleLogs = [];
