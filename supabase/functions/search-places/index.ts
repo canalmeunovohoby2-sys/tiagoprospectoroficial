@@ -54,72 +54,143 @@ async function scrapePageContent(url: string): Promise<string | null> {
   return result.ok ? (result.content ?? null) : null;
 }
 
+// ─── Alvo de cobertura (não é meta artificial: é quando paramos de descobrir) ─
+const DISCOVERY_TARGET = Math.min(80, Math.max(10, Number(Deno.env.get("DISCOVERY_TARGET") ?? 28)));
+const MAX_DISCOVERY_QUERIES = Math.min(12, Math.max(2, Number(Deno.env.get("MAX_DISCOVERY_QUERIES") ?? 6)));
+const MAX_DISCOVERY_RESULTS = Math.min(150, Math.max(10, Number(Deno.env.get("MAX_DISCOVERY_RESULTS") ?? 60)));
+const ENRICH_BUDGET = Math.min(20, Math.max(2, Number(Deno.env.get("ENRICH_BUDGET") ?? 10)));
+const PER_LEAD_QUERY_LIMIT = 6;
+
 type WebDiscoveryDiag = {
   enabled: boolean;
+  target: number;
   queries: Array<{ query: string; tavily: number; firecrawl: number }>;
+  raw_tavily: number;
+  raw_firecrawl: number;
   total_candidates: number;
   accepted: number;
+  rejection_reasons: Record<string, number>;
   error?: string;
 };
 
-// Descoberta web independente: usa Tavily/Firecrawl para encontrar leads
-// mesmo quando Google/OSM não encontraram nada. Nunca inventa dados.
+// Hosts de portais/notícias/conteúdo — nunca são a empresa em si.
+const CONTENT_HOST_HINT = /(g1\.globo|uol|terra\.com|folha|estadao|estad[aã]o|c[oó]rreio|gazeta|cidadeverde|guia|portal|not[ií]cias|blogspot|wordpress\.com|medium|jusbrasil|escavador|jurisprudencia|direito)/;
+const DIRECTORY_HOST_HINT = /(diretorio|directory|guia|apontador|list|listing|yellowpages|finder|cat[aá]logo|ranking|imoveis)/;
+
+const LIST_ARTICLE_HINT = /^\s*(os?\s+)?(melhores|top|lista|listagem|ranking|guia|quanto custa|como escolher|saiba|onde encontrar)\b/i;
+const DIVIDER_HINT = /[|•·\t]/;
+
+// Nome de empresa plausível: ≥2 palavras, não é lista/artigo nem página institucional.
+function looksLikeBusinessTitle(title: string, segNorm: string): boolean {
+  const t = normalizeText(title);
+  if (!t) return false;
+  const words = title.trim().split(/\s+/).filter(Boolean);
+  if (words.length < 2) return false;
+  if (LIST_ARTICLE_HINT.test(title.trim())) return false;
+  if (DIVIDER_HINT.test(title) && /(equipe|blog|artig|not[ií]cia|contato|sobre|servi[çc]os|resultados)/i.test(title)) return false;
+  // Ou o título carrega um termo do segmento, ou parece nome próprio de empresa.
+  if (segNorm && !t.includes(segNorm)) {
+    const strong = words.filter((w) => w.length >= 5 && !/^(para|com|sobre|desde|em|a|o|e)$/i.test(w));
+    const looksName = strong.length >= 1 && /[A-ZÀ-Ú]/.test(title.replace(segNorm, ""));
+    if (!looksName) return false;
+  }
+  return true;
+}
+
+// Descoberta web independente: Tavily/Firecrawl como FONTE DE DESCOBERTA (não
+// só enriquecimento). Multi-queries + multi-provedores. NÃO exige telefone/
+// WhatsApp/domínio no snippet (isso eliminava empresas reais antes da
+// confirmação) — exige empresa/estabelecimento real + cidade + segmento.
 async function discoverLeadsViaWeb(
   segment: string,
   city: string, state: string,
+  opts?: { target?: number; queriesCap?: number; resultsCap?: number },
 ): Promise<{ leads: PublicLead[]; diagnostics: WebDiscoveryDiag }> {
-  const webDiag: WebDiscoveryDiag = { enabled: true, queries: [], total_candidates: 0, accepted: 0 };
-  const discovered: PublicLead[] = [];
-  const seen = new Set<string>();
+  const target = opts?.target ?? DISCOVERY_TARGET;
+  const queriesCap = opts?.queriesCap ?? MAX_DISCOVERY_QUERIES;
+  const resultsCap = opts?.resultsCap ?? MAX_DISCOVERY_RESULTS;
   const segNorm = normalizeText(segment);
+  const segWords = segNorm.split(/\s+/).filter((w) => w.length >= 3);
+  const webDiag: WebDiscoveryDiag = {
+    enabled: true,
+    target,
+    queries: [],
+    raw_tavily: 0,
+    raw_firecrawl: 0,
+    total_candidates: 0,
+    accepted: 0,
+    rejection_reasons: { invalid_geo: 0, invalid_segment: 0, directory_only: 0, list_article: 0, duplicate_host: 0, not_company: 0 },
+  };
+  const discovered: PublicLead[] = [];
+  const seenHost = new Set<string>();
+  const seenNameCity = new Set<string>();
 
-  const queries = [
-    `${segment} em ${city}, ${state}`,
-    `${segment} ${city} ${state}`,
-    `${segment} ${city}`,
-    `melhores ${segment} em ${city}`,
-  ];
+  // Queries semanticamente variadas (segmento + variações comerciais + cidade).
+  const synonyms = expandSegment(segment).slice(0, 5);
+  const variants: string[] = [];
+  for (const s of synonyms) {
+    const variantsOf = [
+      `${s} em ${city}, ${state}`,
+      `${s} ${city} ${state}`,
+      `empresas de ${s} em ${city}`,
+      `melhores ${s} em ${city}`,
+    ];
+    for (const v of variantsOf) if (!variants.includes(v)) variants.push(v);
+  }
+  variants.push(`${segNorm} ${city} ${state}`);
+  const queries = variants.slice(0, queriesCap);
 
-  for (const query of queries.slice(0, 2)) {
+  for (const query of queries) {
+    if (discovered.length >= target) break;
     try {
-      const web = await runWebSources({ query, limit: 10, call: callWebFunction });
+      const web = await runWebSources({ query, limit: PER_LEAD_QUERY_LIMIT + 4, call: callWebFunction });
+      webDiag.raw_tavily += web.tavily.length;
+      webDiag.raw_firecrawl += web.firecrawl.length;
       webDiag.queries.push({ query, tavily: web.tavily.length, firecrawl: web.firecrawl.length });
 
       const items = [...web.tavily, ...web.firecrawl];
       for (const item of items) {
-        const name = item.title || "";
+        if (discovered.length >= target || discovered.length >= resultsCap) break;
+        const name = (item.title ?? "").trim();
         if (!name || name.length < 3) continue;
 
         const text = `${name} ${item.description || ""} ${item.url}`;
         const textNorm = normalizeText(text);
-        const segNormForQuery = segNorm;
 
-        // Verifica geografia: cidade (obrigatória) é o sinal forte; o estado
-        // complementa quando presente no snippet (muitas páginas omitem a UF).
-        if (!textMentionsGeo(text, city, state) && !textMentionsGeo(text, city, "")) continue;
-
-        // Verifica segmento
-        const segWords = segNormForQuery.split(/\s+/).filter(w => w.length >= 3);
-        const segOk = segWords.some(w => textNorm.includes(w)) || textNorm.includes(segNormForQuery);
-        if (!segOk) continue;
-
+        // 1) Geografia: cidade (obrigatória) é o sinal forte.
+        if (!textMentionsGeo(text, city, state) && !textMentionsGeo(text, city, "")) {
+          webDiag.rejection_reasons.invalid_geo += 1;
+          continue;
+        }
+        // 2) Segmento presente no título/descrição/url.
+        const segOk = segWords.some((w) => textNorm.includes(w)) || textNorm.includes(segNorm);
+        if (!segOk) {
+          webDiag.rejection_reasons.invalid_segment += 1;
+          continue;
+        }
+        // 3) Não aceitar diretório/portal/lista como empresa.
         const host = hostOf(item.url);
-        if (!host || seen.has(host)) continue;
-        seen.add(host);
+        if (!host) continue;
+        if (DIRECTORY_HOST_HINT.test(host) || CONTENT_HOST_HINT.test(host)) {
+          webDiag.rejection_reasons.directory_only += 1;
+          continue;
+        }
+        if (!looksLikeBusinessTitle(name, segNorm)) {
+          webDiag.rejection_reasons.list_article += 1;
+          continue;
+        }
+        // 4) Dedupe entre queries (host + nome+cidade).
+        if (seenHost.has(host)) {
+          webDiag.rejection_reasons.duplicate_host += 1;
+          continue;
+        }
+        const nc = `${normalizeText(name)}|${normalizeText(city)}`;
+        if (seenNameCity.has(nc)) continue;
+        seenHost.add(host);
+        seenNameCity.add(nc);
 
         const phone = extractPhoneBR(text);
         const whatsapp = extractWhatsAppExplicit(text) ?? extractWhatsappBR(text);
-        const hasContact = Boolean(phone || whatsapp);
-
-        // Precisão: só vira lead se houver contato na evidência OU se o domínio
-        // do resultado se alinhar ao nome do negócio (ex.: petcarebertioga.com.br
-        // ↔ "Pet Care Bertioga"). Isso impede que artigos/notícias/listas — que
-        // citam o segmento e a cidade — sejam confundidos com estabelecimentos.
-        const hostMain = host.split(".")[0] ?? "";
-        const genericTokens = new Set(["empresa", "servicos", "serviços", "ltda", "mei", "eireli", "associados", "associacao", "associação", "escritorio", "escritório", "centro", "clinica", "clínica"]);
-        const nameTokens = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/\s+/).filter((w) => w.length >= 4 && !genericTokens.has(w));
-        const domainAlign = nameTokens.some((tok) => hostMain.includes(tok));
-        if (!hasContact && !domainAlign) continue;
 
         const lead: PublicLead = {
           external_id: `web:${host}`,
@@ -145,10 +216,7 @@ async function discoverLeadsViaWeb(
           confidence: "medium",
           city_matches: true,
         };
-
-        if (lead.phone || lead.whatsapp || lead.website) {
-          discovered.push(lead);
-        }
+        discovered.push(lead);
       }
     } catch (e) {
       webDiag.error = e instanceof Error ? e.message : "web_error";
@@ -158,6 +226,45 @@ async function discoverLeadsViaWeb(
   webDiag.total_candidates = discovered.length;
   webDiag.accepted = discovered.length;
   return { leads: discovered, diagnostics: webDiag };
+}
+
+// Chaves de dedupe por lead (usadas no merge web/recovery dentro dos dados
+// estruturados — prioridade: phone, host, nome+rua, nome+cidade).
+function leadMergeKeys(l: PublicLead): string[] {
+  const keys: string[] = [];
+  const digits = (raw: string | null | undefined) => (raw ?? "").replace(/\D+/g, "").slice(-11);
+  const phone = digits(l.phone) || digits(l.whatsapp);
+  if (phone && phone.length >= 10) keys.push(`phone:${phone}`);
+  if (l.website) {
+    const h = hostOf(l.website);
+    if (h) keys.push(`host:${h.replace(/^www\./, "")}`);
+  }
+  const name = normalizeText(l.name ?? "");
+  const city = normalizeText(l.city ?? "");
+  if (name && name.length >= 5) keys.push(`nc:${name}|${city}`);
+  return keys;
+}
+
+// Merge de candidatos (web/recovery) dentro dos leads estruturados.
+// Prioridade: base (OSM/structured) vence; incoming entra só se não duplicar.
+function mergeCandidateLeads(base: PublicLead[], incoming: PublicLead[]): { leads: PublicLead[]; added: number; duplicates: number } {
+  const seen = new Set<string>();
+  for (const l of base) for (const k of leadMergeKeys(l)) seen.add(k);
+  const leads = [...base];
+  let added = 0;
+  let duplicates = 0;
+  for (const l of incoming) {
+    const keys = leadMergeKeys(l);
+    const hit = keys.find((k) => seen.has(k));
+    if (hit) {
+      duplicates += 1;
+      continue;
+    }
+    for (const k of keys) seen.add(k);
+    leads.push(l);
+    added += 1;
+  }
+  return { leads, added, duplicates };
 }
 
 // Wrapper que tenta com includedType e, se retornar poucos resultados, tenta sem.
@@ -2842,7 +2949,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ─── RECUPERAÇÃO — 2ª tentativa mais ampla quando final = 0 ───────
+    // ─── RECUPERAÇÃO — 2ª tentativa mais ampla quando há poucos candidatos ─
     // Muitos POIs em cidades pequenas não têm `shop=*` configurado, apenas
     // nome. Buscamos por regex de `name`/`brand`/`official_name` no OSM,
     // sem exigir tags de categoria. A validação de segmento é feita no
@@ -2850,7 +2957,8 @@ Deno.serve(async (req) => {
     let recoveryRawCount = 0;
     let recoveryAcceptedCount = 0;
     let recoveryAttempted = false;
-    if (leads.length === 0) {
+    let recoveryDuplicates = 0;
+    if (leads.length < DISCOVERY_TARGET) {
       recoveryAttempted = true;
       sourcesTried.push(SOURCE_LABELS.overpassRecovery);
       const recovery = await searchOverpassByName(segment, city, state, ctx);
@@ -3086,8 +3194,13 @@ Deno.serve(async (req) => {
             category: l.category ?? null,
           });
         }
-        leads = validatedRecoveryLeads;
-        if (source === "none") source = SOURCE_LABELS.overpassRecovery;
+        // Merge com prioridade estruturada: recovery só adiciona o que NÃO
+        // duplicar telefone/host/nome+cidade dos leads já existentes.
+        const mergedRec = mergeCandidateLeads(leads, validatedRecoveryLeads);
+        recoveryDuplicates = mergedRec.duplicates;
+        diagnostics.recovery_duplicates = mergedRec.duplicates;
+        leads = mergedRec.leads;
+        if (leads.length > 0 && source === "none") source = SOURCE_LABELS.overpassRecovery;
       }
     } else {
       // Garante que o objeto exista mesmo quando não foi disparado.
@@ -3100,66 +3213,107 @@ Deno.serve(async (req) => {
     }
 
     // ─── Descoberta web independente ──────────────────────────────
-    // Quando Google/OSM não retornaram leads, usa Tavily/Firecrawl
-    // para descobrir estabelecimentos via busca na web. Nunca inventa dados.
-    if (leads.length === 0) {
+    // Executa sempre que os candidatos estruturados+recovery estiverem abaixo
+    // do alvo de cobertura (não só quando o resultado for zero). Tavily e
+    // Firecrawl atuam como FONTES DE DESCOBERTA (multi-queries), sem exigir
+    // contato/domínio no snippet. Nunca inventa dados.
+    if (leads.length < DISCOVERY_TARGET) {
       sourcesTried.push("web_discovery");
-      const webDiscovery = await discoverLeadsViaWeb(segment, city, state);
-      leads = webDiscovery.leads;
+      const webDiscovery = await discoverLeadsViaWeb(segment, city, state, {
+        target: Math.min(DISCOVERY_TARGET - leads.length, MAX_DISCOVERY_RESULTS),
+        queriesCap: MAX_DISCOVERY_QUERIES,
+        resultsCap: MAX_DISCOVERY_RESULTS,
+      });
       const existingWeb = typeof diagnostics.web_sources === "object" && diagnostics.web_sources
         ? diagnostics.web_sources as Record<string, unknown>
         : {} as Record<string, unknown>;
       diagnostics.web_sources = { ...existingWeb, ...webDiscovery.diagnostics };
-      if (leads.length > 0 && source === "none") source = "web_discovery";
-      for (const l of leads) {
+      // Merge com prioridade estruturada (OSM/recovery vencem; web só soma
+      // candidatos que NÃO duplicam por telefone/domínio/nome+cidade).
+      const mergedWeb = mergeCandidateLeads(leads, webDiscovery.leads);
+      diagnostics.web_discovery_duplicates = mergedWeb.duplicates;
+      diagnostics.web_discovery_added = mergedWeb.added;
+      leads = mergedWeb.leads;
+      for (const l of webDiscovery.leads) {
         perLeadAudit.set(l.external_id, {
           source: "web_discovery",
           synonym: segment,
           includedType: null,
-          rule: "web_tavily_discovery",
+          rule: "web_tavily_firecrawl_discovery",
           category: l.category ?? null,
         });
       }
+      if (leads.length > 0 && source === "none") source = "web_discovery";
     }
 
-    // ─── Fontes web complementares (Tavily + Firecrawl) ──────────
-    // Google continua opcional; a busca funciona por OSM/Overpass + enriquecimento
-    // web. Este bloco nunca cria nem remove leads — apenas adiciona website e
-    // contato reais quando há evidência (match por nome/domínio e scrape com
-    // confirmação geográfica). Falha de qualquer fonte não derruba a busca.
-    const webDiag: Record<string, unknown> = { enabled: leads.length > 0 };
-    // Leads já descobertos pela web não passam por nova rodada de enrich —
-    // a busca por cidade+segmento seria a mesma que acabou de gerar os leads.
-    if (leads.length > 0 && source !== "web_discovery") {
-      try {
-        const webQuery = `${city} ${segment}`.trim();
-        const web = await runWebSources({ query: webQuery, limit: 8, call: callWebFunction });
-        webDiag.tavily_raw = web.tavily.length;
-        webDiag.firecrawl_raw = web.firecrawl.length;
-        if (web.tavily.length + web.firecrawl.length > 0) {
-          const enriched = await enrichLeadsWithWeb({
-            leads: leads as unknown as Parameters<typeof enrichLeadsWithWeb>[0]["leads"],
-            web,
-            city,
-            state,
-            maxScrape: 2,
-            scrape: scrapePageContent,
-          });
-          leads = enriched.leads as unknown as PublicLead[];
-          webDiag.websites_enriched = enriched.summary.websitesEnriched;
-          webDiag.scrape_attempted = enriched.summary.scrapeAttempted;
-          webDiag.contacts_applied = enriched.summary.contactsApplied;
-          for (const l of enriched.leads) {
-            const ext = l.external_id;
-            if (typeof ext === "string") {
-              const auditItem = perLeadAudit.get(ext);
-              if (auditItem) perLeadAudit.set(ext, { ...auditItem, web_enriched: true });
+    // ─── ENRIQUECIMENTO/CONFIRMAÇÃO ORIENTADO AO LEAD ─────────────
+    // Em vez de uma única query cidade+segmento para todos os leads, cada
+    // candidato ainda incompleto é confirmado/enriquecido com busca dirigida
+    // "nome da empresa + cidade (+segmento)". Concorrência controlada, com
+    // orçamento de tempo — falha de um provedor nunca derruba a busca.
+    const webDiag: Record<string, unknown> = { enabled: leads.length > 0, mode: "per_lead" };
+    let enrichmentAttempted = 0;
+    let enrichmentCompleted = 0;
+    let scrapeAttempted = 0;
+    let websitesFound = 0;
+    let phonesFound = 0;
+    let whatsappsFound = 0;
+    if (leads.length > 0) {
+      const candidates = leads
+        .map((l, i) => ({ l, i }))
+        .filter(({ l }) => !l.website || (!l.phone && !l.whatsapp))
+        .sort((a, b) => (a.l.website ? 1 : 0) - (b.l.website ? 1 : 0))
+        .slice(0, ENRICH_BUDGET);
+      const enrichStart = Date.now();
+      const runOne = async (): Promise<void> => {
+        for (const { l } of candidates) {
+          if (Date.now() - enrichStart > 45_000) break;
+          enrichmentAttempted += 1;
+          try {
+            const queries = [`${l.name} ${city}`];
+            if (!normalizeText(l.name ?? "").includes(normalizeText(segment))) queries.push(`${l.name} ${segment} ${city}`);
+            let web: { tavily: WebItem[]; firecrawl: WebItem[] } | null = null;
+            for (const q of queries) {
+              web = await runWebSources({ query: q, limit: PER_LEAD_QUERY_LIMIT, call: callWebFunction });
+              if (web.tavily.length + web.firecrawl.length > 0) break;
             }
+            if (!web || web.tavily.length + web.firecrawl.length === 0) continue;
+            const hadSite = !!l.website;
+            const hadPhone = !!l.phone;
+            const hadWhats = !!l.whatsapp;
+            const enriched = await enrichLeadsWithWeb({
+              leads: [l as unknown as Parameters<typeof enrichLeadsWithWeb>[0]["leads"][number]],
+              web,
+              city,
+              state,
+              maxScrape: 1,
+              scrape: scrapePageContent,
+            });
+            const out = enriched.leads[0] as PublicLead | undefined;
+            enrichmentCompleted += 1;
+            scrapeAttempted += enriched.summary.scrapeAttempted;
+            if (out?.website && !hadSite) websitesFound += 1;
+            if (out?.phone && !hadPhone) phonesFound += 1;
+            if (out?.whatsapp && !hadWhats) whatsappsFound += 1;
+            if (out) {
+              const ext = out.external_id;
+              if (typeof ext === "string") {
+                const auditItem = perLeadAudit.get(ext);
+                if (auditItem) perLeadAudit.set(ext, { ...auditItem, web_enriched: true });
+              }
+            }
+          } catch {
+            // enriquecimento nunca quebra a busca
           }
         }
-      } catch (e) {
-        webDiag.error = e instanceof Error ? e.message : "web_error";
-      }
+      };
+      await Promise.all([runOne(), runOne()]);
+      webDiag.enrichment_attempted = enrichmentAttempted;
+      webDiag.enrichment_completed = enrichmentCompleted;
+      webDiag.scrape_attempted = scrapeAttempted;
+      webDiag.websites_found = websitesFound;
+      webDiag.phones_found = phonesFound;
+      webDiag.whatsapps_found = whatsappsFound;
     }
     // Preserva métricas da descoberta independente (quando houve) e adiciona
     // as da rodada de enrich — webDiag nunca sobrescreve o funil da descoberta.
@@ -3222,6 +3376,35 @@ Deno.serve(async (req) => {
       qualified: leads.filter((l) => (l.commercial_score ?? 0) >= 40).length,
     };
     diagnostics.pipeline = pipeline;
+
+    // Diagnóstico de cobertura por execução — onde exatamente os candidatos
+    // entram/saem, para nunca perder cobertura em silêncio.
+    diagnostics.coverage = {
+      structured_raw: (Number(diagnostics.osm_raw_count) || 0),
+      structured_accepted: (Number(diagnostics.osm_accepted_count) || 0),
+      recovery_attempted: recoveryAttempted,
+      recovery_raw: Number(diagnostics.recovery_raw) || 0,
+      recovery_accepted: recoveryAcceptedCount,
+      recovery_duplicates: recoveryDuplicates,
+      web_discovery_attempted: sourcesTried.includes("web_discovery"),
+      tavily_queries: 0,
+      tavily_raw: Number((diagnostics.web_sources as Record<string, unknown> | undefined)?.["raw_tavily"] ?? 0) || 0,
+      firecrawl_queries: 0,
+      firecrawl_raw: Number((diagnostics.web_sources as Record<string, unknown> | undefined)?.["raw_firecrawl"] ?? 0) || 0,
+      web_accepted: Number((diagnostics.web_sources as Record<string, unknown> | undefined)?.["accepted"] ?? 0) || 0,
+      web_discovery_added: Number(diagnostics.web_discovery_added) || 0,
+      web_discovery_duplicates: Number(diagnostics.web_discovery_duplicates) || 0,
+      duplicates_removed: Number((diagnostics.combined as Record<string, unknown> | undefined)?.["duplicates_removed"] ?? 0) || 0,
+      enrichment_attempted: enrichmentAttempted,
+      enrichment_completed: enrichmentCompleted,
+      phones_found: pipeline.phone,
+      whatsapp_found: pipeline.whatsapp,
+      sites_found: leads.length - pipeline.no_site,
+      no_site: pipeline.no_site,
+      commercial_opportunity: pipeline.opportunity,
+      qualified: pipeline.qualified,
+      final_count: leads.length,
+    };
 
     // Intelligent priority sort — internal Lead Score, never excludes leads.
     if (leads.length > 0) {
