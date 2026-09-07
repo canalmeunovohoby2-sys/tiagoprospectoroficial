@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { safeSessionStorage, safeLocalStorage } from "@/lib/safeStorage";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Loader2, Sparkles, ArrowLeft } from "lucide-react";
@@ -61,10 +62,10 @@ function normalizeLeadRows(rows: unknown): Lead[] {
 }
 
 /**
- * Orvix ERP — Resultados da Prospecção.
- * Lista os leads da busca recém-criada dentro do módulo Orvix, isolada da
- * página de Leads (Landing Pages). Cards enxutos nesta fase — ERP Score,
- * Diagnóstico, Argumentos, IA e Propostas serão adicionados nas próximas.
+ * Orvix ERP â€” Resultados da ProspecÃ§Ã£o.
+ * Lista os leads da busca recÃ©m-criada dentro do mÃ³dulo Orvix, isolada da
+ * pÃ¡gina de Leads (Landing Pages). Cards enxutos nesta fase â€” ERP Score,
+ * DiagnÃ³stico, Argumentos, IA e Propostas serÃ£o adicionados nas prÃ³ximas.
  */
 export default function OrvixProspectarResultados() {
   const { user } = useAuth();
@@ -80,7 +81,7 @@ export default function OrvixProspectarResultados() {
   const [sortMode, setSortMode] = useState<OrvixSortMode>("priority");
   const [auditOpen, setAuditOpen] = useState(false);
 
-  // Auditoria em memória, salva pelo LeadSearchForm no sessionStorage.
+  // Auditoria em memÃ³ria, salva pelo LeadSearchForm no sessionStorage.
   type SearchAudit = {
     audit?: {
       segment_detected?: string;
@@ -119,7 +120,7 @@ export default function OrvixProspectarResultados() {
   const searchAudit = useMemo<SearchAudit | null>(() => {
     if (!searchId) return null;
     try {
-      const raw = sessionStorage.getItem(`orvix:audit:${searchId}`);
+      const raw = safeSessionStorage.getItem(`orvix:audit:${searchId}`);
       return raw ? JSON.parse(raw) as SearchAudit : null;
     } catch { return null; }
   }, [searchId]);
@@ -149,7 +150,7 @@ export default function OrvixProspectarResultados() {
       setLeads(initial);
       setLoading(false);
 
-      // Background: enriquecimento em LOTES (retomável). Não bloqueia a exibição.
+      // Background: enriquecimento em LOTES (retomÃ¡vel). NÃ£o bloqueia a exibiÃ§Ã£o.
       if (!searchId) return;
       const needsEnrichment = initial.some((l) => !l.website || !l.instagram || !l.whatsapp);
       if (!needsEnrichment) return;
@@ -209,7 +210,7 @@ export default function OrvixProspectarResultados() {
     [leads, targetSegment],
   );
 
-  // Segment Category Confidence — camada analítica que roda por lead usando
+  // Segment Category Confidence â€” camada analÃ­tica que roda por lead usando
   // per_lead audit (osm_tags, google_types, category) salvo em sessionStorage.
   const segmentConfidenceMap = useMemo(() => {
     const perLead = searchAudit?.audit?.per_lead ?? {};
@@ -251,13 +252,13 @@ export default function OrvixProspectarResultados() {
           </div>
           <div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-primary/80 font-semibold">
-              Orvix ERP · Resultados
+              Orvix ERP Â· Resultados
             </div>
-            <h1 className="font-display text-3xl font-bold tracking-tight">Prospecção Orvix</h1>
+            <h1 className="font-display text-3xl font-bold tracking-tight">ProspecÃ§Ã£o Orvix</h1>
             <p className="text-muted-foreground mt-1">
               {header
                 ? <>Leads encontrados para <strong className="text-foreground">{header.segment}</strong> em {header.city}/{header.state}.</>
-                : "Leads da última prospecção do módulo Orvix."}
+                : "Leads da Ãºltima prospecÃ§Ã£o do mÃ³dulo Orvix."}
             </p>
             {rejectedLeads.length > 0 && (
               <div className="mt-2 flex items-center gap-2 text-xs">
@@ -280,14 +281,14 @@ export default function OrvixProspectarResultados() {
         </Button>
       </div>
 
-      {/* Estado das fontes externas — usa search_status/sources_status se disponíveis */}
+      {/* Estado das fontes externas â€” usa search_status/sources_status se disponÃ­veis */}
       {!loading && searchAudit?.audit?.summary && (() => {
         const s = searchAudit.audit!.summary!;
         const ss = searchAudit.sources_status ?? null;
         const status = searchAudit.search_status;
         const hasLeads = leads.length > 0;
 
-        // Se temos search_status explícito: usá-lo. Senão, deduzir dos flags legacy.
+        // Se temos search_status explÃ­cito: usÃ¡-lo. SenÃ£o, deduzir dos flags legacy.
         const googleSt = ss?.google ?? (s.google_rate_limited ? "rate_limited" : (s.google_found ?? 0) > 0 ? "success" : "error");
         const nomSt = ss?.nominatim ?? (s.nominatim_rate_limited ? "rate_limited" : (s.osm_nominatim ?? 0) > 0 ? "success" : "error");
         const overSt = ss?.overpass ?? ((s.osm_overpass ?? 0) > 0 ? "success" : "error");
@@ -296,19 +297,19 @@ export default function OrvixProspectarResultados() {
         const isSuccessOnly = status === "SUCCESS" || (!status && hasLeads && !anyDegraded);
         if (isSuccessOnly) return null;
 
-        // Regra crítica: se existem leads, NUNCA bloquear com mensagem de erro.
+        // Regra crÃ­tica: se existem leads, NUNCA bloquear com mensagem de erro.
         const isPartial = hasLeads;
         const tone = isPartial ? "amber" : "rose";
         const title = isPartial
-          ? "Resultados encontrados com algumas fontes temporariamente indisponíveis."
-          : "Nenhum lead encontrado pelas fontes consultadas. Algumas fontes estavam temporariamente indisponíveis e podem reduzir a cobertura da busca.";
+          ? "Resultados encontrados com algumas fontes temporariamente indisponÃ­veis."
+          : "Nenhum lead encontrado pelas fontes consultadas. Algumas fontes estavam temporariamente indisponÃ­veis e podem reduzir a cobertura da busca.";
 
         type Row = { label: string; status: "success" | "rate_limited" | "error" | "skipped"; note: string };
         const noteFor = (st: Row["status"], ok: string, hits?: number): string => {
           if (st === "success") return "respondeu";
-          if (st === "rate_limited") return hits ? `limitado (${hits}× 429)` : "limitado";
+          if (st === "rate_limited") return hits ? `limitado (${hits}Ã— 429)` : "limitado";
           if (st === "error") return "sem resposta";
-          return "não consultado";
+          return "nÃ£o consultado";
         };
         const rows: Row[] = [
           { label: "Google Places", status: googleSt, note: noteFor(googleSt, "respondeu", s.google_429_hits) },
@@ -324,7 +325,7 @@ export default function OrvixProspectarResultados() {
                 <p className="font-medium text-foreground">{title}</p>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
                   {rows.map((r) => {
-                    const icon = r.status === "success" ? "✓" : r.status === "rate_limited" ? "⚠" : r.status === "error" ? "✕" : "·";
+                    const icon = r.status === "success" ? "âœ“" : r.status === "rate_limited" ? "âš " : r.status === "error" ? "âœ•" : "Â·";
                     const cls = r.status === "success" ? "text-emerald-500"
                       : r.status === "rate_limited" ? "text-amber-500"
                       : r.status === "error" ? "text-rose-500"
@@ -333,12 +334,12 @@ export default function OrvixProspectarResultados() {
                       <span key={r.label} className="inline-flex items-center gap-1">
                         <span className={cls}>{icon}</span>
                         <span className="text-foreground/80">{r.label}</span>
-                        <span className="text-muted-foreground">— {r.note}</span>
+                        <span className="text-muted-foreground">â€” {r.note}</span>
                       </span>
                     );
                   })}
                 </div>
-                {/* Funil de descoberta — contadores auditáveis */}
+                {/* Funil de descoberta â€” contadores auditÃ¡veis */}
                 {(() => {
                   const rg = s.raw_google_count ?? ((s.google_places_new ?? 0) + (s.google_places_legacy ?? 0));
                   const rn = s.raw_nominatim_count ?? (s.osm_nominatim ?? 0);
@@ -355,10 +356,10 @@ export default function OrvixProspectarResultados() {
                       <span title="Leads brutos retornados pelo Google Places">Google bruto: <b className="text-foreground/80">{rg}</b></span>
                       <span title="Leads brutos retornados pelo Nominatim">Nominatim bruto: <b className="text-foreground/80">{rn}</b></span>
                       <span title="Leads brutos retornados pelo Overpass">Overpass bruto: <b className="text-foreground/80">{ro}</b></span>
-                      <span title="Leads brutos coletados pelo Recovery Overpass (busca por nome/marca quando as fontes primárias retornam vazio)">Recovery bruto: <b className="text-foreground/80">{rr}</b>{ra !== rr ? <span className="text-muted-foreground/70"> ({ra} aceitos)</span> : null}</span>
+                      <span title="Leads brutos coletados pelo Recovery Overpass (busca por nome/marca quando as fontes primÃ¡rias retornam vazio)">Recovery bruto: <b className="text-foreground/80">{rr}</b>{ra !== rr ? <span className="text-muted-foreground/70"> ({ra} aceitos)</span> : null}</span>
                       <span title="Soma dos leads brutos de todas as fontes (Google + Nominatim + Overpass + Recovery)">Total bruto: <b className="text-foreground/80">{rawTotal}</b></span>
-                      <span title="Após deduplicação entre fontes">Após dedupe: <b className="text-foreground/80">{ad}</b></span>
-                      <span title="Após filtro de segmento Orvix">Após filtro Orvix: <b className="text-foreground/80">{asf}</b></span>
+                      <span title="ApÃ³s deduplicaÃ§Ã£o entre fontes">ApÃ³s dedupe: <b className="text-foreground/80">{ad}</b></span>
+                      <span title="ApÃ³s filtro de segmento Orvix">ApÃ³s filtro Orvix: <b className="text-foreground/80">{asf}</b></span>
                       <span title="Descartados no filtro Orvix">Rejeitados: <b className="text-foreground/80">{rc}</b></span>
                       <span title="Total final exibido">Final: <b className="text-foreground">{fc}</b></span>
                     </div>
@@ -366,7 +367,7 @@ export default function OrvixProspectarResultados() {
                 })()}
                 {isPartial && (
                   <p className="text-muted-foreground">
-                    A prospecção continua funcionando com as fontes que responderam. Refaça a busca em alguns segundos para tentar recuperar as demais.
+                    A prospecÃ§Ã£o continua funcionando com as fontes que responderam. RefaÃ§a a busca em alguns segundos para tentar recuperar as demais.
                   </p>
                 )}
               </div>
@@ -375,7 +376,7 @@ export default function OrvixProspectarResultados() {
         );
       })()}
 
-      {/* Auditoria de confiança da busca */}
+      {/* Auditoria de confianÃ§a da busca */}
       {!loading && leads.length > 0 && (
 
         <Card className="p-3 border-border/50 bg-card/60">
@@ -393,14 +394,14 @@ export default function OrvixProspectarResultados() {
               <Badge variant="outline" className="text-[10px]" title="Place ID confirmado">
                 Place ID {confidenceStats.withPlaceId}
               </Badge>
-              <Badge variant="outline" className="text-[10px]" title="Google Maps oficial válido">
+              <Badge variant="outline" className="text-[10px]" title="Google Maps oficial vÃ¡lido">
                 Maps oficial {confidenceStats.withOfficialMap}
               </Badge>
-              <span className="mx-1 opacity-40">·</span>
-              <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-500 bg-emerald-500/5">🟢 {confidenceStats.byTier.high}</Badge>
-              <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-500 bg-amber-500/5">🟡 {confidenceStats.byTier.good}</Badge>
-              <Badge variant="outline" className="text-[10px] border-orange-500/40 text-orange-500 bg-orange-500/5">🟠 {confidenceStats.byTier.check}</Badge>
-              <Badge variant="outline" className="text-[10px] border-rose-500/40 text-rose-500 bg-rose-500/5">🔴 {confidenceStats.byTier.low}</Badge>
+              <span className="mx-1 opacity-40">Â·</span>
+              <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-500 bg-emerald-500/5">ðŸŸ¢ {confidenceStats.byTier.high}</Badge>
+              <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-500 bg-amber-500/5">ðŸŸ¡ {confidenceStats.byTier.good}</Badge>
+              <Badge variant="outline" className="text-[10px] border-orange-500/40 text-orange-500 bg-orange-500/5">ðŸŸ  {confidenceStats.byTier.check}</Badge>
+              <Badge variant="outline" className="text-[10px] border-rose-500/40 text-rose-500 bg-rose-500/5">ðŸ”´ {confidenceStats.byTier.low}</Badge>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <div className="inline-flex items-center gap-2 text-xs">
@@ -410,30 +411,30 @@ export default function OrvixProspectarResultados() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="priority">Ordem padrão</SelectItem>
-                    <SelectItem value="opportunity">🔥 Melhor oportunidade comercial</SelectItem>
-                    <SelectItem value="confidence">🛡️ Maior confiança</SelectItem>
-                    <SelectItem value="reviews">💬 Mais avaliações</SelectItem>
-                    <SelectItem value="rating">⭐ Melhor reputação</SelectItem>
+                    <SelectItem value="priority">Ordem padrÃ£o</SelectItem>
+                    <SelectItem value="opportunity">ðŸ”¥ Melhor oportunidade comercial</SelectItem>
+                    <SelectItem value="confidence">ðŸ›¡ï¸ Maior confianÃ§a</SelectItem>
+                    <SelectItem value="reviews">ðŸ’¬ Mais avaliaÃ§Ãµes</SelectItem>
+                    <SelectItem value="rating">â­ Melhor reputaÃ§Ã£o</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <label className="inline-flex items-center gap-2 text-xs cursor-pointer select-none">
                 <Switch checked={onlyHigh} onCheckedChange={setOnlyHigh} />
-                <span>Apenas altamente confiáveis</span>
+                <span>Apenas altamente confiÃ¡veis</span>
               </label>
             </div>
           </div>
         </Card>
       )}
 
-      {/* Auditoria completa — apenas leitura, em memória */}
+      {/* Auditoria completa â€” apenas leitura, em memÃ³ria */}
       {!loading && leads.length > 0 && searchAudit?.audit && (() => {
         const s = searchAudit.audit!.summary;
         const accepted = leads.length;
         const rejected = rejectedLeads.length;
         const acceptedNet = Math.max(0, accepted - rejected);
-        // Precisão local: aceitos válidos / (aceitos válidos + rejeitados por segmento + duplicados).
+        // PrecisÃ£o local: aceitos vÃ¡lidos / (aceitos vÃ¡lidos + rejeitados por segmento + duplicados).
         const dup = s?.duplicates_removed ?? 0;
         const googleFound = s?.google_found ?? 0;
         const osmFound = s?.osm_found ?? 0;
@@ -458,7 +459,7 @@ export default function OrvixProspectarResultados() {
                 <ShieldCheck className="h-4 w-4 text-primary" />
                 Auditoria da busca (detalhada)
               </span>
-              <span className="text-muted-foreground">{auditOpen ? "Ocultar ▲" : "Expandir ▼"}</span>
+              <span className="text-muted-foreground">{auditOpen ? "Ocultar â–²" : "Expandir â–¼"}</span>
             </button>
             {auditOpen && (
               <div className="mt-3 grid gap-3 md:grid-cols-2 text-xs">
@@ -478,21 +479,21 @@ export default function OrvixProspectarResultados() {
                     <Badge variant="outline" className="border-primary/40 text-primary bg-primary/5">Aceitos: {acceptedNet}</Badge>
                   </div>
                   <div className="flex flex-wrap gap-1.5 pt-1">
-                    <Badge variant="outline" title="Aceitos válidos ÷ Total bruto coletado">
+                    <Badge variant="outline" title="Aceitos vÃ¡lidos Ã· Total bruto coletado">
                       Recall estimado: {(recall * 100).toFixed(1)}%
                     </Badge>
-                    <Badge variant="outline" title="Aceitos válidos ÷ (aceitos + rejeitados + duplicados)">
-                      Precisão estimada: {(precision * 100).toFixed(1)}%
+                    <Badge variant="outline" title="Aceitos vÃ¡lidos Ã· (aceitos + rejeitados + duplicados)">
+                      PrecisÃ£o estimada: {(precision * 100).toFixed(1)}%
                     </Badge>
                   </div>
                 </div>
                 <div className="space-y-1.5">
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Regras aplicadas</div>
                   <div className="space-y-1">
-                    <div><span className="text-muted-foreground">Segmento detectado:</span> <strong>{searchAudit.audit!.segment_detected ?? "—"}</strong></div>
-                    <div><span className="text-muted-foreground">Módulo:</span> {searchAudit.audit!.module ?? "—"}</div>
+                    <div><span className="text-muted-foreground">Segmento detectado:</span> <strong>{searchAudit.audit!.segment_detected ?? "â€”"}</strong></div>
+                    <div><span className="text-muted-foreground">MÃ³dulo:</span> {searchAudit.audit!.module ?? "â€”"}</div>
                     <div className="flex flex-wrap gap-1 items-baseline">
-                      <span className="text-muted-foreground">Sinônimos ({(searchAudit.audit!.synonyms_used ?? []).length}):</span>
+                      <span className="text-muted-foreground">SinÃ´nimos ({(searchAudit.audit!.synonyms_used ?? []).length}):</span>
                       {(searchAudit.audit!.synonyms_used ?? []).slice(0, 12).map((syn) => (
                         <Badge key={syn} variant="outline" className="text-[10px]">{syn}</Badge>
                       ))}
@@ -522,9 +523,9 @@ export default function OrvixProspectarResultados() {
         );
       })()}
 
-      {/* Auditoria dos leads descartados pelo filtro Orvix — apenas leitura.
-          Classifica cada rejeição em: rejeição correta, possível falso negativo
-          ou lead duvidoso. Não altera nenhuma regra de filtragem. */}
+      {/* Auditoria dos leads descartados pelo filtro Orvix â€” apenas leitura.
+          Classifica cada rejeiÃ§Ã£o em: rejeiÃ§Ã£o correta, possÃ­vel falso negativo
+          ou lead duvidoso. NÃ£o altera nenhuma regra de filtragem. */}
       {!loading && rejectedLeads.length > 0 && (() => {
         const perLead = searchAudit?.audit?.per_lead ?? {};
         const rejectionAudit = buildRejectionAudit(
@@ -541,19 +542,19 @@ export default function OrvixProspectarResultados() {
         ];
         const CLASS_META: Record<RejectionClass, { label: string; tone: string; icon: string }> = {
           possivel_falso_negativo: {
-            label: "Possível falso negativo",
+            label: "PossÃ­vel falso negativo",
             tone: "border-rose-500/50 bg-rose-500/10 text-rose-500",
-            icon: "⚠️",
+            icon: "âš ï¸",
           },
           duvidoso: {
             label: "Lead duvidoso",
             tone: "border-amber-500/40 bg-amber-500/10 text-amber-500",
-            icon: "❔",
+            icon: "â”",
           },
           rejeicao_correta: {
-            label: "Rejeição correta",
+            label: "RejeiÃ§Ã£o correta",
             tone: "border-emerald-500/40 bg-emerald-500/10 text-emerald-500",
-            icon: "✓",
+            icon: "âœ“",
           },
         };
 
@@ -564,7 +565,7 @@ export default function OrvixProspectarResultados() {
         };
         for (const e of rejectionAudit.entries) grouped[e.classification].push(e);
 
-        // Diagnóstico bruto de fonte para ajudar a distinguir "sem dados" de
+        // DiagnÃ³stico bruto de fonte para ajudar a distinguir "sem dados" de
         // "excesso de filtragem".
         const bySource: Record<string, number> = {};
         for (const e of rejectionAudit.entries) {
@@ -578,39 +579,39 @@ export default function OrvixProspectarResultados() {
               <summary className="cursor-pointer text-xs font-medium flex items-center justify-between gap-2 select-none">
                 <span className="inline-flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4 text-amber-500" />
-                  Auditoria de rejeições Orvix ({rejectionAudit.total})
+                  Auditoria de rejeiÃ§Ãµes Orvix ({rejectionAudit.total})
                 </span>
                 <span className="text-muted-foreground text-[10px]">Expandir para revisar</span>
               </summary>
 
-              {/* Sumário de classificação + diagnóstico por fonte */}
+              {/* SumÃ¡rio de classificaÃ§Ã£o + diagnÃ³stico por fonte */}
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <div className="rounded-md border border-border/40 bg-background/50 p-2 space-y-1">
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                    Classificação
+                    ClassificaÃ§Ã£o
                   </div>
                   <div className="flex flex-wrap gap-1.5 text-[11px]">
                     <Badge variant="outline" className="border-rose-500/40 text-rose-500 bg-rose-500/5">
-                      ⚠️ Falso negativo: {rejectionAudit.falseNegatives}
+                      âš ï¸ Falso negativo: {rejectionAudit.falseNegatives}
                     </Badge>
                     <Badge variant="outline" className="border-amber-500/40 text-amber-500 bg-amber-500/5">
-                      ❔ Duvidosos: {rejectionAudit.doubtful}
+                      â” Duvidosos: {rejectionAudit.doubtful}
                     </Badge>
                     <Badge variant="outline" className="border-emerald-500/40 text-emerald-500 bg-emerald-500/5">
-                      ✓ Corretos: {rejectionAudit.correct}
+                      âœ“ Corretos: {rejectionAudit.correct}
                     </Badge>
                   </div>
                   <div className="text-[10px] text-muted-foreground pt-1">
                     {rejectionAudit.falseNegatives > 0
-                      ? `⚠️ ${rejectionAudit.falseNegatives} lead(s) descartado(s) apesar de terem sinal forte (Google type / OSM tag / includedType) do segmento "${targetSegment ?? "—"}". Provável excesso de filtragem.`
+                      ? `âš ï¸ ${rejectionAudit.falseNegatives} lead(s) descartado(s) apesar de terem sinal forte (Google type / OSM tag / includedType) do segmento "${targetSegment ?? "â€”"}". ProvÃ¡vel excesso de filtragem.`
                       : rejectionAudit.total > 0
-                        ? "Nenhum falso negativo detectado — filtro consistente com os sinais das fontes."
-                        : "Sem rejeições."}
+                        ? "Nenhum falso negativo detectado â€” filtro consistente com os sinais das fontes."
+                        : "Sem rejeiÃ§Ãµes."}
                   </div>
                 </div>
                 <div className="rounded-md border border-border/40 bg-background/50 p-2 space-y-1">
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                    Rejeições por fonte
+                    RejeiÃ§Ãµes por fonte
                   </div>
                   <div className="flex flex-wrap gap-1.5 text-[11px]">
                     {Object.entries(bySource).map(([s, n]) => (
@@ -620,15 +621,15 @@ export default function OrvixProspectarResultados() {
                     ))}
                   </div>
                   <div className="text-[10px] text-muted-foreground pt-1">
-                    Se rejeições concentradas em <code>google_places_new</code> com
-                    Google types conhecidos → filtro textual está apertado demais.
+                    Se rejeiÃ§Ãµes concentradas em <code>google_places_new</code> com
+                    Google types conhecidos â†’ filtro textual estÃ¡ apertado demais.
                   </div>
                 </div>
               </div>
 
               <p className="mt-3 text-[11px] text-muted-foreground">
-                Diagnóstico read-only. Nenhuma regra foi alterada. Use para decidir se
-                é necessário afrouxar <code>orvixSegmentValidation</code> em uma próxima sprint.
+                DiagnÃ³stico read-only. Nenhuma regra foi alterada. Use para decidir se
+                Ã© necessÃ¡rio afrouxar <code>orvixSegmentValidation</code> em uma prÃ³xima sprint.
               </p>
 
               <div className="mt-3 space-y-4">
@@ -639,7 +640,7 @@ export default function OrvixProspectarResultados() {
                   return (
                     <div key={cls} className="space-y-2">
                       <div className={`text-[10px] uppercase tracking-wider font-semibold inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${meta.tone}`}>
-                        {meta.icon} {meta.label} · {items.length}
+                        {meta.icon} {meta.label} Â· {items.length}
                       </div>
                       <div className="grid gap-1.5">
                         {items.slice(0, 30).map((e) => {
@@ -678,7 +679,7 @@ export default function OrvixProspectarResultados() {
                                 {e.meta.matchedTerm && (
                                   <>
                                     {" "}
-                                    · regra bloqueou por{" "}
+                                    Â· regra bloqueou por{" "}
                                     <code className="text-[10px] bg-muted px-1 rounded">"{e.meta.matchedTerm}"</code>
                                   </>
                                 )}
@@ -731,7 +732,7 @@ export default function OrvixProspectarResultados() {
                         })}
                         {items.length > 30 && (
                           <div className="text-[10px] text-muted-foreground">
-                            + {items.length - 30} outros nesta classificação
+                            + {items.length - 30} outros nesta classificaÃ§Ã£o
                           </div>
                         )}
                       </div>
@@ -744,10 +745,10 @@ export default function OrvixProspectarResultados() {
         );
       })()}
 
-      {/* Auditoria de compatibilidade de segmento — camada analítica.
+      {/* Auditoria de compatibilidade de segmento â€” camada analÃ­tica.
           Mostra para cada lead: nome, categoria recebida, tags OSM,
-          sinais positivos, sinais negativos e motivo da classificação.
-          Não altera coleta, filtro Orvix, CRM ou IA. */}
+          sinais positivos, sinais negativos e motivo da classificaÃ§Ã£o.
+          NÃ£o altera coleta, filtro Orvix, CRM ou IA. */}
       {!loading && visibleLeads.length > 0 && (() => {
         const perLead = searchAudit?.audit?.per_lead ?? {};
         const rows = visibleLeads.map((l) => {
@@ -768,10 +769,10 @@ export default function OrvixProspectarResultados() {
           "strong_match",
         ];
         const CLASS_META: Record<SegmentMatch, { label: string; tone: string; icon: string }> = {
-          strong_match: { label: "MATCH_FORTE", tone: "border-emerald-500/40 bg-emerald-500/10 text-emerald-500", icon: "🟢" },
-          medium_match: { label: "MATCH_PROVAVEL", tone: "border-sky-500/40 bg-sky-500/10 text-sky-500", icon: "🟡" },
-          weak_match: { label: "MATCH_FRACO", tone: "border-amber-500/40 bg-amber-500/10 text-amber-500", icon: "🟠" },
-          false_positive_candidate: { label: "FORA_SEGMENTO", tone: "border-rose-500/50 bg-rose-500/10 text-rose-500", icon: "🔴" },
+          strong_match: { label: "MATCH_FORTE", tone: "border-emerald-500/40 bg-emerald-500/10 text-emerald-500", icon: "ðŸŸ¢" },
+          medium_match: { label: "MATCH_PROVAVEL", tone: "border-sky-500/40 bg-sky-500/10 text-sky-500", icon: "ðŸŸ¡" },
+          weak_match: { label: "MATCH_FRACO", tone: "border-amber-500/40 bg-amber-500/10 text-amber-500", icon: "ðŸŸ " },
+          false_positive_candidate: { label: "FORA_SEGMENTO", tone: "border-rose-500/50 bg-rose-500/10 text-rose-500", icon: "ðŸ”´" },
         };
         const grouped: Record<SegmentMatch, typeof rows> = {
           strong_match: [], medium_match: [], weak_match: [], false_positive_candidate: [],
@@ -817,7 +818,7 @@ export default function OrvixProspectarResultados() {
                             </div>
                             <div className="text-muted-foreground">
                               <span className="opacity-70">Categoria recebida:</span>{" "}
-                              <code className="text-[10px]">{category ?? "—"}</code>
+                              <code className="text-[10px]">{category ?? "â€”"}</code>
                             </div>
                             {osm_tags && Object.keys(osm_tags).length > 0 && (
                               <div className="text-muted-foreground">
@@ -841,20 +842,20 @@ export default function OrvixProspectarResultados() {
                             )}
                             {conf.acceptanceTag && (
                               <div>
-                                <span className="opacity-70">Tag de aceitação:</span>{" "}
+                                <span className="opacity-70">Tag de aceitaÃ§Ã£o:</span>{" "}
                                 <code className="text-[10px] text-emerald-500">{conf.acceptanceTag}</code>
                               </div>
                             )}
                             {conf.positives.length > 0 && (
                               <div>
                                 <span className="opacity-70">Sinais +:</span>{" "}
-                                <span className="text-emerald-500">{conf.positives.join(" · ")}</span>
+                                <span className="text-emerald-500">{conf.positives.join(" Â· ")}</span>
                               </div>
                             )}
                             {conf.reductionReasons.length > 0 && (
                               <div>
-                                <span className="opacity-70">Motivos de redução:</span>{" "}
-                                <span className="text-rose-500">{conf.reductionReasons.join(" · ")}</span>
+                                <span className="opacity-70">Motivos de reduÃ§Ã£o:</span>{" "}
+                                <span className="text-rose-500">{conf.reductionReasons.join(" Â· ")}</span>
                               </div>
                             )}
                             {conf.conflict && conf.conflictReason && (
@@ -868,7 +869,7 @@ export default function OrvixProspectarResultados() {
                         ))}
                         {items.length > 30 && (
                           <div className="text-[10px] text-muted-foreground">
-                            + {items.length - 30} outros nesta classificação
+                            + {items.length - 30} outros nesta classificaÃ§Ã£o
                           </div>
                         )}
                       </div>
@@ -888,18 +889,18 @@ export default function OrvixProspectarResultados() {
 
       {loading ? (
         <div className="text-center py-16 text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> Carregando leads…
+          <Loader2 className="h-5 w-5 animate-spin inline mr-2" /> Carregando leadsâ€¦
         </div>
       ) : visibleLeads.length === 0 ? (
         <Card className="p-12 text-center border-dashed">
           <p className="text-muted-foreground mb-3">
             {leads.length > 0
               ? onlyHigh
-                ? "Nenhum lead altamente confiável nesta busca."
-                : "Nenhum lead compatível com o segmento escolhido."
+                ? "Nenhum lead altamente confiÃ¡vel nesta busca."
+                : "Nenhum lead compatÃ­vel com o segmento escolhido."
               : "Nenhum lead encontrado para esta busca."}
           </p>
-          <Button asChild><Link to="/orvix/prospectar">Fazer nova prospecção</Link></Button>
+          <Button asChild><Link to="/orvix/prospectar">Fazer nova prospecÃ§Ã£o</Link></Button>
         </Card>
       ) : (
         <TooltipProvider delayDuration={200}>
@@ -944,3 +945,4 @@ export default function OrvixProspectarResultados() {
     </div>
   );
 }
+

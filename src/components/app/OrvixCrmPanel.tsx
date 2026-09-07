@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
+import { safeLocalStorage } from "@/lib/safeStorage";
 import { toast } from "sonner";
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
@@ -28,10 +29,10 @@ interface OrvixCrmPanelProps {
 }
 
 /**
- * Orvix CRM Panel — reutiliza o CRM existente (mesmo crm_status, mesma tabela leads)
- * exibindo informações específicas da venda Orvix (ERP Score, diagnóstico, próximo
- * retorno, última abordagem). Campos "extras" ficam em memória (localStorage) nesta
- * primeira etapa — nenhuma nova tabela/coluna criada.
+ * Orvix CRM Panel â€” reutiliza o CRM existente (mesmo crm_status, mesma tabela leads)
+ * exibindo informaÃ§Ãµes especÃ­ficas da venda Orvix (ERP Score, diagnÃ³stico, prÃ³ximo
+ * retorno, Ãºltima abordagem). Campos "extras" ficam em memÃ³ria (localStorage) nesta
+ * primeira etapa â€” nenhuma nova tabela/coluna criada.
  */
 export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixCrmPanelProps) {
   const diag = useMemo(() => (lead ? computeOrvixDiagnostic(lead) : null), [lead]);
@@ -44,7 +45,7 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
   useEffect(() => {
     if (!storageKey) return;
     try {
-      const raw = localStorage.getItem(storageKey);
+      const raw = safeLocalStorage.getItem(storageKey);
       const data = raw ? JSON.parse(raw) : {};
       setNextFollowUp(data.nextFollowUp ?? "");
       setLastApproach(data.lastApproach ?? "");
@@ -57,9 +58,9 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
   const persistLocal = (patch: Record<string, unknown>) => {
     if (!storageKey) return;
     try {
-      const raw = localStorage.getItem(storageKey);
+      const raw = safeLocalStorage.getItem(storageKey);
       const data = raw ? JSON.parse(raw) : {};
-      localStorage.setItem(storageKey, JSON.stringify({ ...data, ...patch }));
+      safeLocalStorage.setItem(storageKey, JSON.stringify({ ...data, ...patch }));
     } catch {/* ignore */}
   };
 
@@ -81,20 +82,20 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
   const lastContactAt = (() => {
     if (!storageKey) return null;
     try {
-      const raw = localStorage.getItem(storageKey);
+      const raw = safeLocalStorage.getItem(storageKey);
       const data = raw ? JSON.parse(raw) : {};
       return data.lastContactAt as string | undefined;
     } catch { return null; }
   })();
 
   const fmtDate = (iso?: string | null) => {
-    if (!iso) return "—";
+    if (!iso) return "â€”";
     try { return new Date(iso).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }); }
-    catch { return "—"; }
+    catch { return "â€”"; }
   };
 
   const approachLabel: Record<string, string> = {
-    whatsapp: "WhatsApp", email: "E-mail", ligacao: "Ligação", resumo: "Resumo 30s",
+    whatsapp: "WhatsApp", email: "E-mail", ligacao: "LigaÃ§Ã£o", resumo: "Resumo 30s",
   };
 
   return (
@@ -104,13 +105,13 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
           <>
             <SheetHeader className="space-y-2 text-left">
               <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-primary/80 font-semibold">
-                <Sparkles className="h-3.5 w-3.5" /> Orvix · CRM
+                <Sparkles className="h-3.5 w-3.5" /> Orvix Â· CRM
               </div>
               <SheetTitle className="font-display text-xl">{lead.name}</SheetTitle>
               <SheetDescription className="flex flex-wrap items-center gap-1.5 text-xs">
                 {lead.category && <span>{lead.category}</span>}
                 {(lead.city || lead.state) && (
-                  <span>· {[lead.city, lead.state].filter(Boolean).join("/")}</span>
+                  <span>Â· {[lead.city, lead.state].filter(Boolean).join("/")}</span>
                 )}
               </SheetDescription>
             </SheetHeader>
@@ -137,9 +138,9 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
                 </div>
               </section>
 
-              {/* Diagnóstico resumido */}
+              {/* DiagnÃ³stico resumido */}
               <section className="space-y-2">
-                <p className="text-xs uppercase tracking-wider text-muted-foreground">Diagnóstico resumido</p>
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">DiagnÃ³stico resumido</p>
                 <p className="text-sm rounded-lg border border-primary/20 bg-primary/5 p-3 leading-relaxed">
                   {diag.pitch}
                 </p>
@@ -152,7 +153,7 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
 
               <Separator />
 
-              {/* CRM — reutiliza crm_status existente */}
+              {/* CRM â€” reutiliza crm_status existente */}
               <section className="space-y-3">
                 <p className="text-xs uppercase tracking-wider text-muted-foreground">Pipeline (CRM)</p>
                 <Select
@@ -182,24 +183,24 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
                 </div>
               </section>
 
-              {/* Informações extras (in-memory) */}
+              {/* InformaÃ§Ãµes extras (in-memory) */}
               <section className="space-y-3">
                 <p className="text-xs uppercase tracking-wider text-muted-foreground">Acompanhamento Orvix</p>
 
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div className="p-2 rounded-lg bg-muted/40">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Último contato</div>
-                    <div className="text-sm">{fmtDate(lastContactAt) === "—" && lead.is_contacted ? fmtDate(lead.updated_at) : fmtDate(lastContactAt)}</div>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Ãšltimo contato</div>
+                    <div className="text-sm">{fmtDate(lastContactAt) === "â€”" && lead.is_contacted ? fmtDate(lead.updated_at) : fmtDate(lastContactAt)}</div>
                   </div>
                   <div className="p-2 rounded-lg bg-muted/40">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Última abordagem</div>
-                    <div className="text-sm">{lastApproach ? approachLabel[lastApproach] : "—"}</div>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Ãšltima abordagem</div>
+                    <div className="text-sm">{lastApproach ? approachLabel[lastApproach] : "â€”"}</div>
                   </div>
                 </div>
 
                 <div>
                   <label className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
-                    <CalendarClock className="h-3.5 w-3.5" /> Próximo retorno
+                    <CalendarClock className="h-3.5 w-3.5" /> PrÃ³ximo retorno
                   </label>
                   <Input
                     type="datetime-local"
@@ -210,7 +211,7 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
 
                 <div>
                   <label className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1">
-                    <MessagesSquare className="h-3.5 w-3.5" /> Registrar última abordagem
+                    <MessagesSquare className="h-3.5 w-3.5" /> Registrar Ãºltima abordagem
                   </label>
                   <Select
                     value={lastApproach || undefined}
@@ -219,30 +220,30 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
                       persistLocal({ lastApproach: v });
                     }}
                   >
-                    <SelectTrigger><SelectValue placeholder="Selecionar canal…" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Selecionar canalâ€¦" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="whatsapp">WhatsApp</SelectItem>
                       <SelectItem value="email">E-mail</SelectItem>
-                      <SelectItem value="ligacao">Ligação</SelectItem>
+                      <SelectItem value="ligacao">LigaÃ§Ã£o</SelectItem>
                       <SelectItem value="resumo">Resumo 30s</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Nota do último contato</label>
+                  <label className="text-xs text-muted-foreground mb-1 block">Nota do Ãºltimo contato</label>
                   <Textarea
                     rows={3}
                     value={contactNote}
                     onChange={(e) => setContactNote(e.target.value)}
                     onBlur={() => persistLocal({ contactNote })}
-                    placeholder="Ex.: falamos com o gerente, retornar terça 14h…"
+                    placeholder="Ex.: falamos com o gerente, retornar terÃ§a 14hâ€¦"
                   />
                 </div>
               </section>
 
               <p className="text-[10px] text-muted-foreground text-center pt-2">
-                Pipeline sincronizado com o CRM · campos de acompanhamento salvos localmente
+                Pipeline sincronizado com o CRM Â· campos de acompanhamento salvos localmente
               </p>
             </div>
           </>
@@ -251,3 +252,4 @@ export function OrvixCrmPanel({ lead, open, onOpenChange, onLeadChange }: OrvixC
     </Sheet>
   );
 }
+

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
+import { safeLocalStorage } from "@/lib/safeStorage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -43,7 +44,7 @@ type ServiceType =
   | "Logomarca"
   | "Fachada"
   | "Flyer"
-  | "Cartão de visita"
+  | "CartÃ£o de visita"
   | "Site"
   | "Outros";
 
@@ -63,7 +64,7 @@ const TYPES: ServiceType[] = [
   "Logomarca",
   "Fachada",
   "Flyer",
-  "Cartão de visita",
+  "CartÃ£o de visita",
   "Site",
   "Outros",
 ];
@@ -149,17 +150,17 @@ export default function Services() {
 
       if (error) {
         console.error("[services] load error", error);
-        toast.error("Erro ao carregar serviços");
+        toast.error("Erro ao carregar serviÃ§os");
         setLoading(false);
         return;
       }
 
       const rows = (data || []) as ServiceRow[];
 
-      const migratedFlag = localStorage.getItem(`${MIGRATED_KEY}:${user.id}`);
+      const migratedFlag = safeLocalStorage.getItem(`${MIGRATED_KEY}:${user.id}`);
       if (rows.length === 0 && !migratedFlag) {
         try {
-          const raw = localStorage.getItem(STORAGE_KEY);
+          const raw = safeLocalStorage.getItem(STORAGE_KEY);
           const local: ServiceItem[] = raw ? JSON.parse(raw) : [];
           if (Array.isArray(local) && local.length > 0) {
             const payload = local.map((s, idx) => ({
@@ -177,10 +178,10 @@ export default function Services() {
               .select("*");
             if (insErr) {
               console.error("[services] migration error", insErr);
-              toast.error("Não foi possível migrar serviços locais");
+              toast.error("NÃ£o foi possÃ­vel migrar serviÃ§os locais");
             } else {
-              localStorage.setItem(`${MIGRATED_KEY}:${user.id}`, new Date().toISOString());
-              toast.success(`${inserted?.length || 0} serviço(s) migrado(s) para a nuvem`);
+              safeLocalStorage.setItem(`${MIGRATED_KEY}:${user.id}`, new Date().toISOString());
+              toast.success(`${inserted?.length || 0} serviÃ§o(s) migrado(s) para a nuvem`);
               const migrated = ((inserted || []) as ServiceRow[])
                 .sort((a, b) => a.position - b.position)
                 .map(rowToItem);
@@ -189,7 +190,7 @@ export default function Services() {
               return;
             }
           } else {
-            localStorage.setItem(`${MIGRATED_KEY}:${user.id}`, new Date().toISOString());
+            safeLocalStorage.setItem(`${MIGRATED_KEY}:${user.id}`, new Date().toISOString());
           }
         } catch (e) {
           console.error("[services] migration parse error", e);
@@ -241,13 +242,13 @@ export default function Services() {
   };
 
   const handleSave = async () => {
-    if (!user) return toast.error("Sessão expirada");
+    if (!user) return toast.error("SessÃ£o expirada");
     const idNum = identifier.trim();
-    if (!idNum) return toast.error("Informe o número de identificação");
+    if (!idNum) return toast.error("Informe o nÃºmero de identificaÃ§Ã£o");
     const t = parseFloat(total.replace(",", "."));
     const p = parseFloat(paid.replace(",", ".")) || 0;
-    if (isNaN(t) || t < 0) return toast.error("Valor total inválido");
-    if (p < 0 || p > t) return toast.error("Sinal pago inválido");
+    if (isNaN(t) || t < 0) return toast.error("Valor total invÃ¡lido");
+    if (p < 0 || p > t) return toast.error("Sinal pago invÃ¡lido");
     const finalType =
       type === "Outros"
         ? customType.trim()
@@ -255,7 +256,7 @@ export default function Services() {
           : null
         : type;
     if (type === "Outros" && !finalType) {
-      return toast.error("Informe qual o tipo de serviço");
+      return toast.error("Informe qual o tipo de serviÃ§o");
     }
 
     setSaving(true);
@@ -292,10 +293,10 @@ export default function Services() {
             total: previous.total,
             paid: previous.paid,
           },
-          label: `Edição do Cliente #${previous.identifier}`,
+          label: `EdiÃ§Ã£o do Cliente #${previous.identifier}`,
         });
       }
-      toast.success("Serviço atualizado");
+      toast.success("ServiÃ§o atualizado");
     } else {
       const minPos = items.reduce((m, s: any) => {
         const p = typeof s.position === "number" ? s.position : 0;
@@ -325,9 +326,9 @@ export default function Services() {
       pushHistory({
         kind: "create",
         id: newItem.id,
-        label: `Criação do Cliente #${newItem.identifier}`,
+        label: `CriaÃ§Ã£o do Cliente #${newItem.identifier}`,
       });
-      toast.success("Serviço adicionado");
+      toast.success("ServiÃ§o adicionado");
     }
     setOpen(false);
     reset();
@@ -353,9 +354,9 @@ export default function Services() {
       kind: "delete",
       item,
       index,
-      label: `Exclusão do Cliente #${item.identifier}`,
+      label: `ExclusÃ£o do Cliente #${item.identifier}`,
     });
-    toast.success("Serviço removido — use Desfazer se preciso");
+    toast.success("ServiÃ§o removido â€” use Desfazer se preciso");
   };
 
   const handleToggleDone = async (id: string) => {
@@ -400,7 +401,7 @@ export default function Services() {
       const prevOrder = prev.map((s) => s.id);
       const next = arrayMove(prev, oldIndex, newIndex);
       persistOrder(next);
-      pushHistory({ kind: "reorder", prevOrder, label: "Reordenação" });
+      pushHistory({ kind: "reorder", prevOrder, label: "ReordenaÃ§Ã£o" });
       return next;
     });
   };
@@ -429,7 +430,7 @@ export default function Services() {
           .single();
         if (error || !data) {
           console.error("[services] undo delete error", error);
-          return toast.error("Não foi possível desfazer");
+          return toast.error("NÃ£o foi possÃ­vel desfazer");
         }
         setItems((prev) => {
           const next = [...prev];
@@ -441,7 +442,7 @@ export default function Services() {
         const { error } = await supabase.from("services").delete().eq("id", action.id);
         if (error) {
           console.error("[services] undo create error", error);
-          return toast.error("Não foi possível desfazer");
+          return toast.error("NÃ£o foi possÃ­vel desfazer");
         }
         setItems((prev) => prev.filter((s) => s.id !== action.id));
         toast.success(`Desfeito: ${action.label}`);
@@ -457,7 +458,7 @@ export default function Services() {
           .eq("id", action.id);
         if (error) {
           console.error("[services] undo edit error", error);
-          return toast.error("Não foi possível desfazer");
+          return toast.error("NÃ£o foi possÃ­vel desfazer");
         }
         setItems((prev) =>
           prev.map((s) => (s.id === action.id ? { ...s, ...action.prev } : s)),
@@ -470,7 +471,7 @@ export default function Services() {
           .eq("id", action.id);
         if (error) {
           console.error("[services] undo toggle error", error);
-          return toast.error("Não foi possível desfazer");
+          return toast.error("NÃ£o foi possÃ­vel desfazer");
         }
         setItems((prev) =>
           prev.map((s) => (s.id === action.id ? { ...s, done: action.prevDone } : s)),
@@ -513,10 +514,10 @@ export default function Services() {
         <div>
           <h1 className="text-2xl font-display font-bold flex items-center gap-2">
             <Briefcase className="h-6 w-6 text-primary" />
-            Serviços
+            ServiÃ§os
           </h1>
           <p className="text-sm text-muted-foreground">
-            Controle de trabalhos fechados — sincronizado na sua conta
+            Controle de trabalhos fechados â€” sincronizado na sua conta
           </p>
         </div>
         <div className="flex gap-2">
@@ -534,7 +535,7 @@ export default function Services() {
             )}
           </Button>
           <Button onClick={openCreate} className="gap-2">
-            <Plus className="h-4 w-4" /> Adicionar Serviço
+            <Plus className="h-4 w-4" /> Adicionar ServiÃ§o
           </Button>
         </div>
       </div>
@@ -542,7 +543,7 @@ export default function Services() {
       {items.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Card className="p-4 bg-card/60 backdrop-blur border-primary/20">
-            <div className="text-xs uppercase tracking-wider text-muted-foreground">Total de serviços</div>
+            <div className="text-xs uppercase tracking-wider text-muted-foreground">Total de serviÃ§os</div>
             <div className="text-2xl font-bold mt-1">{items.length}</div>
           </Card>
           <Card className="p-4 bg-card/60 backdrop-blur border-primary/20">
@@ -559,13 +560,13 @@ export default function Services() {
       {loading ? (
         <Card className="p-12 text-center border-dashed bg-card/40">
           <Loader2 className="h-8 w-8 mx-auto text-muted-foreground/60 mb-3 animate-spin" />
-          <p className="text-muted-foreground">Carregando serviços…</p>
+          <p className="text-muted-foreground">Carregando serviÃ§osâ€¦</p>
         </Card>
       ) : items.length === 0 ? (
         <Card className="p-12 text-center border-dashed bg-card/40">
           <Briefcase className="h-10 w-10 mx-auto text-muted-foreground/60 mb-3" />
           <p className="text-muted-foreground">
-            Nenhum serviço adicionado ainda.
+            Nenhum serviÃ§o adicionado ainda.
           </p>
         </Card>
       ) : (
@@ -595,12 +596,12 @@ export default function Services() {
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{editingId ? "Editar Serviço" : "Adicionar Serviço"}</DialogTitle>
+            <DialogTitle>{editingId ? "Editar ServiÃ§o" : "Adicionar ServiÃ§o"}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label htmlFor="svc-id">Cliente Nº</Label>
+              <Label htmlFor="svc-id">Cliente NÂº</Label>
               <Input
                 id="svc-id"
                 type="number"
@@ -612,7 +613,7 @@ export default function Services() {
             </div>
 
             <div className="space-y-1.5">
-              <Label>Tipo de serviço</Label>
+              <Label>Tipo de serviÃ§o</Label>
               <Select value={type} onValueChange={(v) => setType(v as ServiceType)}>
                 <SelectTrigger>
                   <SelectValue />
@@ -627,10 +628,10 @@ export default function Services() {
               </Select>
               {type === "Outros" && (
                 <div className="pt-2">
-                  <Label htmlFor="svc-custom">Qual serviço?</Label>
+                  <Label htmlFor="svc-custom">Qual serviÃ§o?</Label>
                   <Input
                     id="svc-custom"
-                    placeholder="Descreva o serviço"
+                    placeholder="Descreva o serviÃ§o"
                     value={customType}
                     onChange={(e) => setCustomType(e.target.value)}
                     className="mt-1.5"
@@ -688,7 +689,7 @@ export default function Services() {
               Cancelar
             </Button>
             <Button onClick={handleSave} disabled={saving}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : editingId ? "Salvar alterações" : "Salvar"}
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : editingId ? "Salvar alteraÃ§Ãµes" : "Salvar"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -834,3 +835,4 @@ function SortableServiceCard({
     </div>
   );
 }
+

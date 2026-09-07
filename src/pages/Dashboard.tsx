@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { safeLocalStorage } from "@/lib/safeStorage";
 import { Users, Star, Phone, Send, TrendingUp, Search as SearchIcon, ArrowUpRight, Trash2 } from "lucide-react";
 import { ParticleNetwork } from "@/components/app/ParticleNetwork";
 import { WelcomeBanner } from "@/components/app/WelcomeBanner";
@@ -37,7 +38,7 @@ const OFFSETS_KEY = "dashboard.metric.offsets.v1";
 
 function loadOffsets(): Record<MetricKey, number> {
   try {
-    const raw = localStorage.getItem(OFFSETS_KEY);
+    const raw = safeLocalStorage.getItem(OFFSETS_KEY);
     if (raw) return { total: 0, favorites: 0, contacted: 0, proposals: 0, conversion: 0, ...JSON.parse(raw) };
   } catch {/* ignore */}
   return { total: 0, favorites: 0, contacted: 0, proposals: 0, conversion: 0 };
@@ -98,7 +99,7 @@ function Dashboard() {
     const current = { total: rawTotal, favorites: rawFavorites, contacted: rawContacted, proposals: rawProposals, conversion: rawConversion }[key];
     const next = { ...offsets, [key]: current };
     setOffsets(next);
-    try { localStorage.setItem(OFFSETS_KEY, JSON.stringify(next)); } catch {/* ignore */}
+    try { safeLocalStorage.setItem(OFFSETS_KEY, JSON.stringify(next)); } catch {/* ignore */}
     toast.success(`${label} zerada com sucesso.`);
   }, [offsets, rawContacted, rawConversion, rawFavorites, rawProposals, rawTotal]);
 
