@@ -105,7 +105,8 @@ export function prepareProjectPreview(files: WorkspaceMap | Record<string, strin
   // history.replaceState/pushState LANÇAM SecurityError nesse contexto — o que
   // quebra o clique em itens de menu/âncora DENTRO do Prospector (fora, no
   // navegador real, funciona). Neutralizamos essas chamadas no preview.
-  const shim = `<script>(function(){try{if(location.protocol==='about:'||location.href.indexOf('about:srcdoc')===0){var noop=function(){return undefined;};try{history.replaceState=noop;}catch(e){}try{history.pushState=noop;}catch(e){}try{history.scrollRestoration='auto';}catch(e){}}}catch(e){}})();<\/script>`;
+  // Também neutraliza location.hash para evitar que âncoras mudem a URL do iframe.
+  const shim = `<script>(function(){try{if(location.protocol==='about:'||location.href.indexOf('about:srcdoc')===0){var noop=function(){return undefined;};var hashNoop={set:function(v){try{var a=document.querySelector(v);if(a)a.scrollIntoView({behavior:'smooth',block:'start'});}catch(e){}};get:function(){return '';}};try{history.replaceState=noop;}catch(e){}try{history.pushState=noop;}catch(e){}try{history.scrollRestoration='auto';}catch(e){}try{Object.defineProperty(location,'hash',{get:hashNoop.get,set:hashNoop.set,configurable:true});}catch(e){}}}catch(e){}})();<\/script>`;
   const bodyOpen = html.search(/<body[^>]*>/i);
   if (bodyOpen >= 0) {
     const close = html.indexOf(">", bodyOpen);

@@ -420,15 +420,17 @@ document.addEventListener("DOMContentLoaded", () => {
     onScroll();
   }
 
-  // Scroll suave para âncoras — SEMPRE previne comportamento padrão.
+  // Scroll suave para âncoras — SEMPRE previne comportamento padrão e usa scroll JS.
   document.querySelectorAll('a[href^="#"]').forEach((a) => {
     a.addEventListener("click", (e) => {
-      const id = a.getAttribute("href");
-      if (!id || id === "#") { e.preventDefault(); return; }
-      const el = document.querySelector(id);
       e.preventDefault();
+      const id = a.getAttribute("href");
+      if (!id || id === "#") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      const el = document.querySelector(id);
       if (!el) {
-        // Elemento não existe: rola para topo sem reload
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
