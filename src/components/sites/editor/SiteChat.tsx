@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, type ChangeEvent, type ReactNode } from "react";
-import { Sparkles, RotateCcw, Loader2, Mic, Paperclip, Send, X, CircleDot, ArrowDown, ChevronDown, Zap } from "lucide-react";
+import { Sparkles, RotateCcw, Loader2, Mic, Paperclip, Send, X, CircleDot, ArrowDown, ChevronDown, Zap, SquarePen } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { QUICK_STRATEGIES } from "@/lib/siteStrategies";
@@ -24,6 +24,8 @@ interface SiteChatProps {
   quickStrategyDisabled?: boolean;
   /** Atividades REAIS transmitidas ao vivo pelo runtime (5.34). */
   liveActivity?: Array<{ phase: string; detail: string }>;
+  /** Inicia uma conversa nova (sem contexto anterior do agente). */
+  onNewConversation?: () => void;
 }
 
 // Preserva o arquivo EXATAMENTE como enviado (transparência/formato/SVG/vídeo).
@@ -89,7 +91,7 @@ function fileRef2(detail: string): string | null {
   return m ? m[1] : null;
 }
 
-export function SiteChat({ messages, running, error, canUndo, dirty, runningLabel, onQuickStrategy, quickStrategyDisabled, liveActivity, onApply, onRevert }: SiteChatProps) {
+export function SiteChat({ messages, running, error, canUndo, dirty, runningLabel, onQuickStrategy, quickStrategyDisabled, liveActivity, onNewConversation, onApply, onRevert }: SiteChatProps) {
   const [instruction, setInstruction] = useState("");
   const [attachment, setAttachment] = useState<{ dataUrl: string; label: string } | null>(null);
   const [listening, setListening] = useState(false);
@@ -253,6 +255,11 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
           {canUndo && !running && (
             <button type="button" onClick={onRevert} title="Volta para antes da última alteração" className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors">
               <RotateCcw className="h-3 w-3" /> Desfazer
+            </button>
+          )}
+          {onNewConversation && !running && (
+            <button type="button" onClick={onNewConversation} title="Começa uma conversa nova (o agente esquece o contexto anterior)" className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors">
+              <SquarePen className="h-3 w-3" /> Nova conversa
             </button>
           )}
         </div>

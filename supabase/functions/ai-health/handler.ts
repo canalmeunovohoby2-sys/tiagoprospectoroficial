@@ -94,7 +94,8 @@ export async function runHealthCheck(opts: {
     const envConfigured = providerConfigured(getEnv, name);
     const uc = cfg?.providers?.[name];
     const userHasKey = Boolean(uc?.hasKey);
-    const configured = userHasKey || envConfigured;
+    // Ollama é local: validado por TESTE real sem precisar de chave → conta como configurado.
+    const configured = name === "ollama" ? (Boolean(uc?.validated) || envConfigured) : (userHasKey || envConfigured);
     const userModel = uc?.model ?? null;
     return {
       name,

@@ -60,6 +60,10 @@ export interface GenerateTextOptions {
 export interface GenerateTextResult { text: string; model: string; provider: ProviderName; fallbackUsed?: boolean }
 
 const TRANSIENT = new Set<AiKind>(["rate_limit", "upstream", "timeout"]);
+/** Providers LOCAIS/sem chave (ex.: Ollama). NÃO exigem API Key e NÃO enviam header de autorização. */
+export function isKeylessProvider(provider: string | ProviderName | null | undefined): boolean {
+  return provider === "ollama";
+}
 function getEnv(key: string): string | undefined {
   const deno = (globalThis as unknown as { Deno?: { env: { get(k: string): string | undefined } } }).Deno;
   return deno?.env?.get(key);
@@ -150,14 +154,17 @@ async function openAiLike(opts: { messages: AIMessage[]; temperature: number; to
   if (opts.noThinking && opts.provider === "ollama") {
     body.think = false;
   }
+  // Ollama é local e não usa chave: NÃO envia header de autorização.
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (opts.apiKey) headers.Authorization = `Bearer ${opts.apiKey}`;
   const endpoint = `${opts.baseUrl}/chat/completions`;
   const call = async (b: Record<string, unknown>): Promise<NormalizedAIResponse> => {
-    const res = await fetchRetry(endpoint, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.apiKey}` }, body: JSON.stringify(b) }, opts.provider, opts.timeoutMs, opts.maxRetries);
+    const res = await fetchRetry(endpoint, { method: "POST", headers, body: JSON.stringify(b) }, opts.provider, opts.timeoutMs, opts.maxRetries);
     if (res.ok) return parseOpenAi(res, opts.provider, opts.model);
     const detail = await res.text().catch(() => "");
     if (opts.provider === "nvidia" && res.status === 400 && /chat_template_kwargs|unknown argument|reasoning_effort|extra_for_body/i.test(detail)) {
       const b2 = { ...b }; delete b2.chat_template_kwargs;
-      const res2 = await fetchRetry(endpoint, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.apiKey}` }, body: JSON.stringify(b2) }, opts.provider, opts.timeoutMs, 0);
+      const res2 = await fetchRetry(endpoint, { method: "POST", headers, body: JSON.stringify(b2) }, opts.provider, opts.timeoutMs, 0);
       if (res2.ok) return parseOpenAi(res2, opts.provider, opts.model);
     }
     throw normError(opts.provider, res.status, detail);
@@ -189,8 +196,9 @@ function resolveProvider(opts: GenerateTextOptions): ProviderName {
 async function runProvider(provider: ProviderName, opts: GenerateTextOptions, temperature: number, topP: number, maxTokens: number, maxRetries: number, reasoningEffort: string | undefined, messages: AIMessage[]): Promise<NormalizedAIResponse> {
   const cfg = cfgFor(provider);
   const custom = opts.apiKeys?.[provider] ?? opts.apiKey;
-  const key = custom ?? getEnv(cfg.apiKeyEnv);
-  if (!key) throw new AIProviderConfigurationError(`Chave de API ausente para ${provider}. Configure nas Configurações ou como secret do Supabase.`, provider);
+  // Ollama é provider LOCAL sem chave: a chave é opcional e nunca é exigida.
+  const key = isKeylessProvider(provider) ? (custom ?? "") : (custom ?? getEnv(cfg.apiKeyEnv) ?? "");
+  if (!key && !isKeylessProvider(provider)) throw new AIProviderConfigurationError(`Chave de API ausente para ${provider}. Configure nas Configurações ou como secret do Supabase.`, provider);
   const model = opts.model ?? getEnv("AI_MODEL") ?? getEnv(cfg.modelEnv) ?? cfg.defaultModel;
   const timeoutMs = opts.timeoutMs ?? numEnv("AI_TIMEOUT_MS", cfg.defaultTimeout);
   const common = { model, timeoutMs, maxRetries, provider, apiKey: key };
@@ -201,7 +209,7 @@ async function runProvider(provider: ProviderName, opts: GenerateTextOptions, te
 export async function generateText(opts: GenerateTextOptions): Promise<GenerateTextResult> {
   const primary = resolveProvider(opts);
   const hasPrimaryKey = opts.apiKeys?.[primary] ?? opts.apiKey ?? getEnv(cfgFor(primary).apiKeyEnv);
-  if (!hasPrimaryKey) throw new AIProviderConfigurationError(`Chave de API ausente para ${primary}.`, primary);
+  if (!hasPrimaryKey && !isKeylessProvider(primary)) throw new AIProviderConfigurationError(`Chave de API ausente para ${primary}.`, primary);
   const temperature = opts.temperature ?? numEnv("AI_TEMPERATURE", 0.85);
   const topP = opts.topP ?? numEnv("AI_TOP_P", 0.95);
   const maxTokens = opts.maxOutputTokens ?? numEnv("AI_MAX_TOKENS", 4096);

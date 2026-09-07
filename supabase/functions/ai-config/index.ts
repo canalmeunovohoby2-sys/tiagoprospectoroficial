@@ -3,7 +3,7 @@
 // devolve a chave; o cliente vê apenas maskedLast4/estado.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
-import { generateText, AiError, DEFAULT_DEEPSEEK_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_NVIDIA_MODEL, DEFAULT_OLLAMA_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_OPENROUTER_MODEL, type ProviderName } from "../_shared/ai.ts";
+import { generateText, AiError, isKeylessProvider, DEFAULT_DEEPSEEK_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_NVIDIA_MODEL, DEFAULT_OLLAMA_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_OPENROUTER_MODEL, type ProviderName } from "../_shared/ai.ts";
 
 const PROVIDERS: Array<{ id: ProviderName; label: string; defaultModel: string }> = [
   { id: "deepseek", label: "DeepSeek", defaultModel: DEFAULT_DEEPSEEK_MODEL },
@@ -96,7 +96,9 @@ Deno.serve(async (req) => {
       const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : PROVIDERS.find((p) => p.id === provider)!.defaultModel;
       const apiKey = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : undefined;
       const enabled = body.enabled !== false;
-      const fallbackProvider = typeof body.fallbackProvider === "string" && body.fallbackProvider.trim() && body.fallbackProvider !== provider ? body.fallbackProvider.trim() : null;
+      // Ollama é local e sem fallback: NUNCA aceita fallback de outro provider.
+      const fallbackProvider = provider === "ollama" ? null
+        : typeof body.fallbackProvider === "string" && body.fallbackProvider.trim() && body.fallbackProvider !== provider ? body.fallbackProvider.trim() : null;
       if (fallbackProvider && !isProvider(fallbackProvider)) return json({ error: `Fallback desconhecido: ${fallbackProvider}` }, 400);
 
       const { data: existingRows } = await table.select("id,is_default").eq("user_id", userId).eq("provider", provider).limit(1);
@@ -112,7 +114,9 @@ Deno.serve(async (req) => {
         fallback_provider: fallbackProvider,
         updated_at: new Date().toISOString(),
       };
-      if (apiKey) patch.api_key = apiKey;
+      // Ollama local: NUNCA armazena chave (nem fictícia) — limpa qualquer resíduo.
+      if (isKeylessProvider(provider)) patch.api_key = null;
+      else if (apiKey) patch.api_key = apiKey;
 
       const { error: upsErr } = await table.upsert({ user_id: userId, provider, ...patch }, { onConflict: "user_id,provider" });
       if (upsErr) return json({ error: upsErr.message }, 500);
@@ -136,10 +140,9 @@ Deno.serve(async (req) => {
       const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : PROVIDERS.find((p) => p.id === provider)!.defaultModel;
       const { data: rows } = await table.select("api_key").eq("user_id", userId).eq("provider", provider);
       const storedKey = rows?.[0]?.api_key ?? undefined;
-      // Chave do usuário salva OU (fallback de diagnóstico) chave do ambiente.
-      // Ollama local ignora a chave — usa dummy se nenhuma foi salva.
-      const apiKey = storedKey ?? Deno.env.get(ENV_KEYS[provider]) ?? (provider === "ollama" ? "ollama" : undefined);
-      if (!apiKey) {
+      // Ollama é provider LOCAL e não usa API Key (nenhuma chave, real ou fictícia).
+      const apiKey = isKeylessProvider(provider) ? undefined : (storedKey ?? Deno.env.get(ENV_KEYS[provider]) ?? undefined);
+      if (!apiKey && !isKeylessProvider(provider)) {
         return json({ ok: false, kind: "missing_key", message: "Chave ausente. Adicione a API Key antes de testar." });
       }
       const started = Date.now();

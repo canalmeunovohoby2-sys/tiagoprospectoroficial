@@ -34,7 +34,7 @@ Deno.serve(async (req) => {
     if (!auth || auth !== Deno.env.get("RUNTIME_GATEWAY_SECRET")) {
       return json({ error: "runtime não autorizado" }, 403);
     }
-    const body = await req.json().catch(() => ({})) as { user_id?: string };
+    const body = await req.json().catch(() => ({})) as { user_id?: string; execution?: unknown; projectId?: string; conversationId?: string };
     const userId = String(body.user_id ?? "").trim();
     if (!userId) return json({ error: "user_id obrigatório" }, 400);
 
@@ -42,6 +42,21 @@ Deno.serve(async (req) => {
     const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!url || !key) return json({ error: "Supabase não configurado" }, 500);
     const admin = createClient(url, key);
+
+    // Carrega histórico da conversa (se conversationId informado) para initialMessages.
+    let initialMessages: unknown[] | null = null;
+    if (body.conversationId && body.projectId) {
+      const { data: conv } = await admin
+        .from("agent_conversation_memory")
+        .select("messages")
+        .eq("user_id", userId)
+        .eq("project_id", body.projectId)
+        .eq("conversation_id", body.conversationId)
+        .maybeSingle();
+      if (conv?.messages && Array.isArray(conv.messages)) {
+        initialMessages = conv.messages;
+      }
+    }
 
     const { data: rows } = await admin.from("ai_provider_config").select("provider,api_key,model,is_default,fallback_provider").eq("user_id", userId);
     const list = Array.isArray(rows) ? rows : [];
@@ -54,11 +69,11 @@ Deno.serve(async (req) => {
 
     const provider = def.provider as "deepseek" | "openai" | "nvidia" | "openrouter" | "gemini" | "ollama";
     const model = (def.model ?? "").trim() || DEFAULT_MODEL[provider];
-    // Ollama local não exige API Key real; serve um dummy se nenhuma chave foi salva.
-    const apiKey = provider === "ollama" && (!def.api_key || !def.api_key.trim())
-      ? "ollama"
+    // Ollama é local e NÃO usa API Key: sem chave exigida, sem chave fictícia.
+    const apiKey = provider === "ollama"
+      ? ""
       : String(def.api_key ?? "");
-    if (!apiKey) return json({ ok: false, code: "no_key", provider, model });
+    if (!apiKey && provider !== "ollama") return json({ ok: false, code: "no_key", provider, model });
 
     return json({
       ok: true,
@@ -67,6 +82,7 @@ Deno.serve(async (req) => {
       baseUrl: BASE[provider],
       apiKey,
       fallback: typeof def.fallback_provider === "string" && def.fallback_provider.trim() ? def.fallback_provider.trim() : null,
+      initialMessages: initialMessages ?? [],
     });
   } catch (e) {
     console.error("[runtime-ai-config] error", e instanceof Error ? e.message : String(e));

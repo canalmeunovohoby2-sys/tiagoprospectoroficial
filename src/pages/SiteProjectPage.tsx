@@ -123,6 +123,7 @@ export default function SiteProjectPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiMessages, setAiMessages] = useState<ChatMessage[]>([]);
   const [aiHistory, setAiHistory] = useState<Array<{ spec: SiteSpec; files?: Record<string, string> | null }>>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"pdf" | "zip" | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
@@ -337,19 +338,26 @@ export default function SiteProjectPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id, hasSpecNow]);
 
-  // Carrega a conversa persistida DO PROJETO (isolada por site_project).
+  // Carrega a conversa persistida DO PROJETO (isolada por site_project + conversationId).
   // Ao trocar de projeto, limpa o histórico anterior ANTES de carregar o novo,
   // para nunca exibir a conversa de outro projeto.
+  // O conversationId é persistido no localStorage para retomar a conversa ao recarregar.
   useEffect(() => {
     if (!project?.id || !user) return;
+    const convKey = `prospector-conv:${user.id}:${project.id}`;
+    const saved = localStorage.getItem(convKey);
+    const cid = saved ?? crypto.randomUUID();
+    localStorage.setItem(convKey, cid);
+    setConversationId(cid);
+
     let active = true;
     setAiMessages([]);
     setAiHistory([]);
-    loadSiteChatMessages(project.id)
+    loadSiteChatMessages(project.id, cid)
       .then((rows) => {
         if (!active) return;
         if (rows.length === 0) {
-          // Projeto sem histórico: garante chat limpo (nenhuma mensagem de outro projeto).
+          // Projeto/conversa sem histórico: garante chat limpo.
           setAiMessages([]);
           return;
         }
@@ -478,6 +486,18 @@ export default function SiteProjectPage() {
       { max: 5, maxChars: 260 },
     );
 
+  /** Nova conversa: gera outro conversationId, limpa o chat e o contexto do agente. */
+  function startNewConversation() {
+    if (!project?.id || !user) return;
+    const cid = crypto.randomUUID();
+    const convKey = `prospector-conv:${user.id}:${project.id}`;
+    localStorage.setItem(convKey, cid);
+    setConversationId(cid);
+    setAiMessages([]);
+    setAiHistory([]);
+    toast.success("Nova conversa iniciada. O agente vai começar sem contexto anterior.");
+  }
+
   async function runAiInstruction(
     instruction: string,
     attachment?: { dataUrl: string; label: string },
@@ -491,12 +511,12 @@ export default function SiteProjectPage() {
     setLiveWork([]);
     const stopProgress = runAgentProgress(EDIT_STEPS, 1400);
     const snapshot = draftSpec;
-    appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }]).catch(() => {});
+    appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }], conversationId ?? undefined).catch(() => {});
     const hasWorkspace = !!draftFiles && Object.keys(draftFiles).length > 0;
     const pushReply = (msg: string, activity?: Array<{ phase: string; detail: string }>, changedFiles?: string[]) => {
       const full = `${msg}${buildWorkTimeline(activity, changedFiles)}`;
       setAiMessages((prev) => [...prev, { role: "assistant", text: full }]);
-      appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: full }]).catch(() => {});
+      appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: full }], conversationId ?? undefined).catch(() => {});
     };
     try {
       // ===== CAMINHO PRINCIPAL: Cline Agent no workspace (código real) =====
@@ -523,6 +543,7 @@ export default function SiteProjectPage() {
             memory: designMemory(),
             attachments: attachment ? [{ name: attachment.label, dataUrl: attachment.dataUrl, mediaType: guessMediaType(attachment.dataUrl), label: attachment.label }] : [],
             conversation: chatConversation(),
+            conversationId: conversationId ?? undefined,
           }, (phase, detail) => {
             // Atividade REAL ao vivo (arquivo sendo lido/editado etc.).
             setLiveWork((prev) => [...prev.slice(-9), { phase, detail }]);
@@ -1001,6 +1022,7 @@ export default function SiteProjectPage() {
               onApply={runAiInstruction}
               onRevert={undoAi}
               onQuickStrategy={runQuickStrategy}
+              onNewConversation={startNewConversation}
               runningLabel={aiRunning && agentStep !== null && EDIT_STEPS[agentStep] ? EDIT_STEPS[agentStep].label : undefined}
               liveActivity={aiRunning ? liveWork : undefined}
             />

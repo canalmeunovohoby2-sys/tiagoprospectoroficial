@@ -315,9 +315,13 @@ export async function invokeProspectorAgent(input: {
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null };
   memory?: string[];
   attachments?: ChatAttachmentInput[];
+  /** Conversa recente (contexto de continuidade) — usada no prompt do agente. */
   conversation?: string[];
   userId?: string;
+  /** Override de execução (projeto) — metadados, nunca chaves. */
   execution?: { provider?: string; model?: string; fallback?: string } | null;
+  /** ID da conversa atual — liga histórico persistido (runtime-ai-config ↔ conversation-save). */
+  conversationId?: string;
 }, onLiveActivity?: (phase: string, detail: string) => void): Promise<AgentExecuteResult> {
   const runtimeUrl = await editorRuntimeUrl();
   if (!runtimeUrl) return editorUnavailableResult("not_configured");
@@ -329,7 +333,7 @@ export async function invokeProspectorAgent(input: {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({
         instruction: input.instruction,
-        files: input.files,
+         files: input.files,
         projectId: input.projectId,
         context: input.context,
         memory: input.memory ?? [],
@@ -337,6 +341,7 @@ export async function invokeProspectorAgent(input: {
         conversation: (input.conversation ?? []).slice(-8),
         user_id: input.userId,
         execution: input.execution ?? null,
+        conversationId: input.conversationId,
         stream: onLiveActivity ? true : false,
       }),
       signal: AbortSignal.timeout(600_000),
@@ -485,12 +490,13 @@ export interface PersistedChatMsg {
   created_at: string;
 }
 
-export async function loadSiteChatMessages(projectId: string): Promise<PersistedChatMsg[]> {
-  const { data, error } = await supabase
+export async function loadSiteChatMessages(projectId: string, conversationId?: string): Promise<PersistedChatMsg[]> {
+  let query = supabase
     .from("site_chat_messages")
     .select("id,role,text,attachment,created_at")
-    .eq("project_id", projectId)
-    .order("created_at", { ascending: true });
+    .eq("project_id", projectId);
+  if (conversationId) query = query.eq("conversation_id", conversationId);
+  const { data, error } = await query.order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []).map((r) => ({
     id: String(r.id),
@@ -501,11 +507,12 @@ export async function loadSiteChatMessages(projectId: string): Promise<Persisted
   }));
 }
 
-export async function appendSiteChatMessages(projectId: string, userId: string, messages: Array<{ role: "user" | "assistant"; text: string; label?: string; type?: string }>): Promise<void> {
+export async function appendSiteChatMessages(projectId: string, userId: string, messages: Array<{ role: "user" | "assistant"; text: string; label?: string; type?: string }>, conversationId?: string): Promise<void> {
   if (messages.length === 0) return;
   const rows = messages.map((m) => ({
     project_id: projectId,
     user_id: userId,
+    conversation_id: conversationId ?? null,
     role: m.role,
     text: m.text.slice(0, 4000),
     attachment: m.label ? { label: m.label.slice(0, 200), type: m.type ?? "file" } : null,

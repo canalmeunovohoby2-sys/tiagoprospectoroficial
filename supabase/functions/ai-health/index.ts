@@ -23,19 +23,21 @@ async function loadUserConfig(token: string): Promise<HealthConfigOverride | nul
     .select("provider,model,enabled,is_default,fallback_provider,api_key")
     .eq("user_id", user.user.id);
   const list = (rows ?? []) as Array<{ provider: string; model: string | null; enabled: boolean; is_default: boolean; fallback_provider: string | null; api_key: string | null }>;
-  const def = list.find((r) => r.is_default && r.api_key);
+  // Provider ativo: is_default com chave — EXCETO Ollama (local), que ativa sem chave.
+  const def = list.find((r) => r.is_default && (r.api_key || r.provider === "ollama"));
   const cfg: HealthConfigOverride = {
     activeProvider: def && isProvider(def.provider) ? def.provider : null,
     activeModel: def?.model ?? null,
     activeApiKey: def?.api_key ?? undefined,
-    fallbackProvider: (def?.fallback_provider && isProvider(def.fallback_provider) ? def.fallback_provider : null) ?? null,
+    fallbackProvider: (def?.fallback_provider && isProvider(def.fallback_provider) && def.provider !== "ollama" ? def.fallback_provider : null) ?? null,
     providers: {},
   };
   for (const r of list) {
     if (!isProvider(r.provider)) continue;
     cfg.providers![r.provider] = {
       hasKey: !!r.api_key,
-      validated: !!r.is_default && !!r.api_key,
+      // Ollama local é validado pelo TESTE real mesmo sem chave armazenada.
+      validated: r.is_default && (!!r.api_key || r.provider === "ollama"),
       model: r.model,
     };
   }

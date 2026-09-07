@@ -17,6 +17,7 @@ import { assertGenerationQuality } from "./generation-gate.js";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js";
 import { materializeAttachments, type ChatAttachment } from "./attachments.js";
 import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
+import { trimConversationWindow } from "./conversation-window.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -36,8 +37,8 @@ const MAX_SESSIONS = 40;
 
 // Chaves de sessão ISOLADAS POR USUÁRIO + PROJETO — nunca reutilizáveis entre
 // usuários e nunca indexadas só por projectId (anti-IDOR).
-const editKey = (uid: string, pid: string) => `edit:${uid}:${pid}`;
-const genKeyFor = (uid: string, pid: string) => `gen:${uid}:${pid}`;
+export const editKey = (uid: string, pid: string, cid?: string) => cid ? `edit:${uid}:${pid}:${cid}` : `edit:${uid}:${pid}`;
+export const genKeyFor = (uid: string, pid: string, cid?: string) => cid ? `gen:${uid}:${pid}:${cid}` : `gen:${uid}:${pid}`;
 
 // Ticket de execução assinado (HMAC-SHA256) emitido pela edge agent-ticket.
 // O Runtime NÃO confia em user_id/projectId do body — apenas no ticket.
@@ -138,12 +139,12 @@ function executionConfig(body: Record<string, unknown>): { provider?: string; mo
   };
 }
 
-interface RuntimeAiConfig { provider: string; model: string; baseUrl: string; apiKey: string }
+interface RuntimeAiConfig { provider: string; model: string; baseUrl: string; apiKey: string; initialMessages?: unknown[] }
 
 // Busca a config segura de execução do usuário via edge runtime-ai-config.
 // Autentica com RUNTIME_GATEWAY_SECRET; NUNCA vai ao cliente. Falha → null
 // (mantém o comportamento default sem quebrar o runtime).
-async function fetchRuntimeAiConfig(userId: string, execution?: unknown): Promise<RuntimeAiConfig | null> {
+async function fetchRuntimeAiConfig(userId: string, execution?: unknown, options?: { projectId?: string; conversationId?: string }): Promise<RuntimeAiConfig | null> {
   const secret = process.env.RUNTIME_GATEWAY_SECRET;
   const proxyBase = process.env.PROSPECTOR_BASE_URL ?? "";
   const funcBase = process.env.SUPABASE_FUNCTIONS_URL || (proxyBase.includes("/functions/v1") ? proxyBase.split("/functions/v1")[0] + "/functions/v1" : "");
@@ -152,15 +153,34 @@ async function fetchRuntimeAiConfig(userId: string, execution?: unknown): Promis
     const res = await fetch(`${funcBase.replace(/\/$/, "")}/runtime-ai-config`, {
       method: "POST",
       headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId, execution: execution ?? undefined }),
+      body: JSON.stringify({ user_id: userId, execution: execution ?? undefined, projectId: options?.projectId, conversationId: options?.conversationId }),
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as { provider?: string; model?: string; baseUrl?: string; apiKey?: string; error?: string };
-    if (data.error || !data.provider || !data.model || !data.baseUrl || !data.apiKey) return null;
-    return { provider: data.provider, model: data.model, baseUrl: data.baseUrl, apiKey: data.apiKey };
+    const data = (await res.json()) as { provider?: string; model?: string; baseUrl?: string; apiKey?: string; error?: string; initialMessages?: unknown[] };
+    if (data.error || !data.provider || !data.model || !data.baseUrl) return null;
+    // Ollama é provider local sem chave: apiKey pode vir vazio e ainda assim executar.
+    if (!data.apiKey && data.provider !== "ollama") return null;
+    return { provider: data.provider, model: data.model, baseUrl: data.baseUrl, apiKey: data.apiKey ?? "", initialMessages: data.initialMessages };
   } catch {
     return null;
+  }
+}
+
+async function saveConversation(userId: string, projectId: string, conversationId: string, messages: unknown[], filesChanged: string[], model?: string, provider?: string): Promise<void> {
+  const secret = process.env.RUNTIME_GATEWAY_SECRET;
+  const proxyBase = process.env.PROSPECTOR_BASE_URL ?? "";
+  const funcBase = process.env.SUPABASE_FUNCTIONS_URL || (proxyBase.includes("/functions/v1") ? proxyBase.split("/functions/v1")[0] + "/functions/v1" : "");
+  if (!secret || !funcBase) return;
+  try {
+    await fetch(`${funcBase.replace(/\/$/, "")}/conversation-save`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, project_id: projectId, conversation_id: conversationId, messages, files_changed: filesChanged, model, provider }),
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch {
+    // Non-blocking: persistência de conversa é best-effort
   }
 }
 
@@ -169,6 +189,7 @@ export interface ResolvedExec {
   modelId?: string;
   apiKey?: string;
   baseUrl?: string;
+  initialMessages?: unknown[];
   /** de onde veio a IA que SERÁ usada: "user_config" (conta validada) */
   source: "user_config" | "request" | "env";
   warning?: string;
@@ -196,7 +217,10 @@ async function prepareExec(body: Record<string, unknown>, authUid?: string): Pro
     };
   }
 
-  const runtimeCfg = await fetchRuntimeAiConfig(userId, body.execution);
+  const runtimeCfg = await fetchRuntimeAiConfig(userId, body.execution, {
+    projectId: typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : undefined,
+    conversationId: typeof body.conversationId === "string" && body.conversationId.trim() ? body.conversationId.trim() : undefined,
+  });
   if (runtimeCfg) {
     // Divergência entre o pedido e a IA validada → erro, não executa.
     if (explicitProvider && explicitProvider !== runtimeCfg.provider) {
@@ -218,6 +242,7 @@ async function prepareExec(body: Record<string, unknown>, authUid?: string): Pro
       modelId: runtimeCfg.model,
       apiKey: runtimeCfg.apiKey,
       baseUrl: runtimeCfg.baseUrl,
+      initialMessages: runtimeCfg.initialMessages,
       source: "user_config",
       key: `user:${runtimeCfg.provider}|${runtimeCfg.model}|${runtimeCfg.apiKey.slice(-6)}`,
     };
@@ -235,7 +260,7 @@ async function prepareExec(body: Record<string, unknown>, authUid?: string): Pro
 
 async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>, exec?: ResolvedExec): Promise<ProspectorSiteAgent> {
   const root = ensureWorkspaceDir(projectId, files);
-  const resolved = exec ?? await prepareExec(body);
+  const resolved = exec ?? await prepareExec(body, undefined);
   const apiKey = resolved.apiKey ?? (typeof body.apiKey === "string" ? body.apiKey : undefined);
   const baseUrl = resolved.baseUrl ?? (typeof body.baseUrl === "string" ? body.baseUrl : undefined);
 
@@ -249,7 +274,8 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
     maxIterations: typeof body.maxIterations === "number" ? body.maxIterations : Math.min(80, Math.max(8, Number(process.env.AGENT_MAX_ITERATIONS ?? 40))),
     initialFiles: files,
     mode: typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit",
-    enableBrowser: body.enableBrowser !== false, // default ligado (browser QA disponível)
+    enableBrowser: body.enableBrowser !== false,
+    initialMessages: resolved.initialMessages?.length ? trimConversationWindow(resolved.initialMessages) : undefined,
   });
 }
 
@@ -545,6 +571,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           const body = await readJson(req);
           const instruction = String(body.instruction ?? "").trim();
           const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
+          const conversationId = typeof body.conversationId === "string" && body.conversationId.trim() ? body.conversationId.trim() : "";
           if (!instruction) { send(res, 400, { error: "instruction é obrigatória" }); return; }
           if (ticket.pid && ticket.pid !== projectId) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
           const stream = body.stream === true; // NDJSON ao vivo (5.34)
@@ -565,7 +592,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         // conversa da geração reenvia o histórico inteiro a cada turno — a causa
         // medida da lentidão em edições simples.
         const surgicalEdit = isSurgicalEditTask(instruction);
-        const existing = fresh || surgicalEdit ? undefined : sessions.get(editKey(ticket.uid, projectId));
+        const existing = fresh || surgicalEdit ? undefined : sessions.get(editKey(ticket.uid, projectId, conversationId || undefined));
         let agent: ProspectorSiteAgent;
         let resume = false;
 
@@ -601,9 +628,9 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           // (arquivos podem ter mudado entre sessões por materialização de spec)
           ensureWorkspaceDir(projectId, files);
         } else {
-          if (providerChanged) sessions.delete(editKey(ticket.uid, projectId));
-          agent = await makeAgent(editKey(ticket.uid, projectId), projectId, files, business, body, exec);
-          sessions.set(editKey(ticket.uid, projectId), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
+          if (providerChanged) sessions.delete(editKey(ticket.uid, projectId, conversationId || undefined));
+          agent = await makeAgent(editKey(ticket.uid, projectId, conversationId || undefined), projectId, files, business, body, exec);
+          sessions.set(editKey(ticket.uid, projectId, conversationId || undefined), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
         }
 
         const events: string[] = [];
@@ -668,6 +695,16 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         }
 
         const outcome = await agent.runTask(`${memoryBlock}${attachBlock}${instruction}`, { continueSession: resume });
+
+        // Persiste transcript da conversa (best-effort, não bloqueia resposta)
+        if (conversationId && outcome.conversationMessages) {
+          void saveConversation(
+            ticket.uid, projectId, conversationId,
+            outcome.conversationMessages,
+            outcome.touched ?? [],
+            exec.modelId, exec.providerId,
+          );
+        }
 
         // workspace final
         const root = resolveWorkspaceRoot(projectId);

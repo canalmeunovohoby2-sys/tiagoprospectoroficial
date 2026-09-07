@@ -3,18 +3,22 @@ import { KeyRound, Plug, Trash2, RefreshCw, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 
-const AI_PROVIDERS: Array<{ id: string; label: string; defaultModel: string }> = [
+const AI_PROVIDERS: Array<{ id: string; label: string; defaultModel: string; local?: boolean }> = [
   { id: "deepseek", label: "DeepSeek", defaultModel: "deepseek-chat" },
   { id: "nvidia", label: "NVIDIA NIM", defaultModel: "deepseek-ai/deepseek-v4-flash-0731" },
   { id: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini" },
   { id: "gemini", label: "Gemini", defaultModel: "gemini-2.5-flash" },
   { id: "openrouter", label: "OpenRouter", defaultModel: "openrouter/auto" },
-  { id: "ollama", label: "Ollama Local", defaultModel: "qwen2.5-coder:3b-instruct" },
+  { id: "ollama", label: "Ollama Local", defaultModel: "qwen2.5-coder:3b-instruct", local: true },
 ];
+
+// Providers LOCAIS (ex.: Ollama) não usam API Key e não têm fallback.
+const isLocalProvider = (id: string) => AI_PROVIDERS.find((x) => x.id === id)?.local === true;
 
 interface ProviderState {
   provider: string;
   label: string;
+  saved: boolean;
   hasKey: boolean;
   maskedKey: string | null;
   model: string;
@@ -84,6 +88,7 @@ export function AiProvidersSettings() {
           return {
             provider: cat.id,
             label: String(found?.label ?? cat.label),
+            saved: Boolean(found),
             hasKey: Boolean(found?.hasKey),
             maskedKey: (found?.maskedKey as string | null) ?? null,
             model: String(found?.model ?? cat.defaultModel),
@@ -208,13 +213,15 @@ export function AiProvidersSettings() {
               <span className="text-base">{p.provider === "nvidia" ? "🟢" : p.provider === "deepseek" ? "🐋" : p.provider === "gemini" ? "💎" : p.provider === "openrouter" ? "🔀" : p.provider === "ollama" ? "🦙" : "⚡"}</span>
               {p.label}
               {p.isDefault && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">PADRÃO</span>}
-              {p.hasKey ? <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600"><KeyRound className="h-3 w-3" /> {p.maskedKey}</span> : <span className="text-[10px] text-muted-foreground">sem chave</span>}
+              {isLocalProvider(p.provider)
+                ? <span className="text-[10px] text-muted-foreground">sem chave — provider local</span>
+                : p.hasKey ? <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600"><KeyRound className="h-3 w-3" /> {p.maskedKey}</span> : <span className="text-[10px] text-muted-foreground">sem chave</span>}
             </div>
             <div className="flex items-center gap-1">
-              <button type="button" onClick={() => void test(p)} disabled={!p.hasKey || p.testing} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40">
+              <button type="button" onClick={() => void test(p)} disabled={(p.provider !== "ollama" && !p.hasKey) || p.testing} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40">
                 {p.testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3" />} Testar
               </button>
-              {p.hasKey && (
+              {p.hasKey && !isLocalProvider(p.provider) && (
                 <button type="button" onClick={() => void removeKey(p)} title="Remover chave" className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-destructive">
                   <Trash2 className="h-3 w-3" />
                 </button>
@@ -223,10 +230,18 @@ export function AiProvidersSettings() {
           </div>
 
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <label className="text-xs">
-              <span className="text-muted-foreground">API Key {p.hasKey ? "(nova opcional)" : ""}</span>
-              <input type="password" value={p.keyInput} onChange={(e) => patch(p.provider, { keyInput: e.target.value })} placeholder={p.hasKey ? "•••••••••••• (deixe vazio para manter)" : `Chave ${p.label}`} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
-            </label>
+            {!isLocalProvider(p.provider) && (
+              <label className="text-xs">
+                <span className="text-muted-foreground">API Key {p.hasKey ? "(nova opcional)" : ""}</span>
+                <input type="password" value={p.keyInput} onChange={(e) => patch(p.provider, { keyInput: e.target.value })} placeholder={p.hasKey ? "•••••••••••• (deixe vazio para manter)" : `Chave ${p.label}`} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
+              </label>
+            )}
+            {isLocalProvider(p.provider) && (
+              <div className="text-xs text-muted-foreground rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 flex items-center gap-2">
+                <span>🔒</span>
+                <span>Ollama é <strong>local</strong> e não usa API Key. Conecta direto no endpoint configurado (default <code className="rounded bg-muted px-1">http://localhost:11434</code>).</span>
+              </div>
+            )}
             <label className="text-xs">
               <span className="text-muted-foreground">Modelo</span>
               <input type="text" value={p.model} onChange={(e) => patch(p.provider, { model: e.target.value })} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm" />
@@ -239,12 +254,18 @@ export function AiProvidersSettings() {
             </label>
             <span className="flex items-center gap-1.5">
               Fallback
-              <select value={p.fallbackProvider ?? ""} onChange={(e) => patch(p.provider, { fallbackProvider: e.target.value || null })} className="rounded-md border border-border bg-background px-1.5 py-1 text-xs">
+              <select
+                value={isLocalProvider(p.provider) ? "" : (p.fallbackProvider ?? "")}
+                disabled={isLocalProvider(p.provider)}
+                onChange={(e) => patch(p.provider, { fallbackProvider: e.target.value || null })}
+                className="rounded-md border border-border bg-background px-1.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-40"
+                title={isLocalProvider(p.provider) ? "Providers locais não têm fallback." : undefined}
+              >
                 <option value="">— nenhum —</option>
                 {AI_PROVIDERS.filter((x) => x.id !== p.provider).map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
               </select>
             </span>
-            {!p.isDefault && p.hasKey && (
+            {!p.isDefault && p.saved && (p.hasKey || p.provider === "ollama") && (
               <span className="text-[10px] text-amber-600">Salvo, mas ainda não ativo — clique em TESTAR para validar e ativar.</span>
             )}
             {p.isDefault && <span className="rounded-full bg-emerald-600/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">✓ Validado e ATIVO (uso global)</span>}

@@ -71,6 +71,8 @@ export interface AgentRunOutcome {
   researchTrace?: ResearchTraceItem[];
   /** Diagnóstico de performance real desta execução (tempo por tool/modelo). */
   timing?: AgentRunTiming;
+  /** Transcript completo (messages do Cline Agent) para persistência de conversa. */
+  conversationMessages?: unknown[];
 }
 
 export interface ProspectorAgentOptions {
@@ -87,10 +89,12 @@ export interface ProspectorAgentOptions {
   mode?: "edit" | "generate";
   /** habilita browser tools (Playwright) — browser real para QA do site. */
   enableBrowser?: boolean;
-  /** habilita a tool web_search (quando houver chave de pesquisa configurada). */
+  /** habilita a tool web_search (quando há chave de pesquisa configurada). */
   enableResearch?: boolean;
   /** pesquisa web de referência executada antes da missão (só quando disponível). */
   research?: ResearchOutcome | null;
+  /** Mensagens iniciais para restaurar contexto de conversa anterior (persistente). */
+  initialMessages?: unknown[];
 }
 
 export class ProspectorSiteAgent {
@@ -237,6 +241,7 @@ export class ProspectorSiteAgent {
       tools: [...tools, ...browserTools, ...researchTools, complete],
       maxIterations: options.maxIterations ?? 40,
       hooks: { beforeModel, beforeTool },
+      initialMessages: options.initialMessages,
     });
   }
 
@@ -371,6 +376,7 @@ export class ProspectorSiteAgent {
         files, touched, iterations: 0, events, activity, timing,
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
         researchTrace: this.researchTrace.slice(),
+        conversationMessages: result?.messages ?? [],
       };
     } catch (e) {
       const files = readWorkspace(this.options.workspaceRoot);
@@ -380,6 +386,7 @@ export class ProspectorSiteAgent {
         error: e instanceof Error ? e.message : String(e),
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
         researchTrace: this.researchTrace.slice(),
+        conversationMessages: [],
       };
     } finally {
       unsub();

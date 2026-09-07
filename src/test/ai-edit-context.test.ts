@@ -43,4 +43,21 @@ describe("Conversational Design Intelligence (memória de contexto)", () => {
     expect(mem.length).toBe(2);
     expect(mem.every((m) => !m.startsWith("Assistente"))).toBe(true);
   });
+
+  it("prova de continuidade: mensagem 2 referenciando 'isso/ela' mantém a ação da mensagem 1", () => {
+    // mensagem 1 → ação/decisão; mensagem 2 usa referência sem repetir contexto.
+    const exchange = [
+      { role: "user" as const, text: "Crie uma seção de serviços." },
+      { role: "assistant" as const, text: "Criei a seção de serviços (#servicos) com 4 cards e hover." },
+      { role: "user" as const, text: "Agora deixe ela azul." },
+    ];
+    const ctx = buildConversationContext(exchange);
+    const joined = ctx.join(" | ");
+    // O contexto enviado ao agente contém o artefato da mensagem 1, então "ela"
+    // da mensagem 2 resolve contra "seção de serviços / #servicos" sem repetir.
+    expect(joined).toMatch(/seção de serviços/i);
+    expect(joined).toMatch(/#servicos/i);
+    expect(ctx[ctx.length - 1]).toContain("Agora deixe ela azul.");
+  });
+
 });
