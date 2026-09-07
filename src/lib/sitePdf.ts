@@ -78,6 +78,33 @@ function wrapLines(doc: jsPDF, t: string, w: number, maxLines: number): string[]
   const arr = doc.splitTextToSize(t, w) as string[];
   return arr.length > maxLines ? arr.slice(0, maxLines) : arr;
 }
+// Medição defensiva: garante que CADA linha cabe em `w`, reduzindo o corpo até
+// caber. Nunca deixa texto ultrapassar a largura do card.
+function fitText(doc: jsPDF, t: string, w: number, maxLines: number, startSize: number, style: "normal" | "bold"): { lines: string[]; size: number } {
+  doc.setFont("helvetica", style);
+  for (let size = startSize; size >= 6.5; size -= 0.5) {
+    doc.setFontSize(size);
+    const raw = doc.splitTextToSize(t, w) as string[];
+    if (raw.length <= maxLines) {
+      const fits = raw.every((l) => doc.getTextWidth(l) <= w + 0.6);
+      if (fits) return { lines: raw, size };
+    }
+  }
+  // fallback extremo: última linha cortada com reticências — nunca passa da borda.
+  doc.setFontSize(startSize);
+  let lines: string[] = [];
+  let rest = t;
+  for (let i = 0; i < maxLines && rest; i++) {
+    let cut = rest;
+    while (doc.getTextWidth(cut) > w && cut.length > 1) cut = cut.slice(0, -1);
+    const addDots = rest.length > cut.length;
+    const candidate = addDots ? `${cut.replace(/\s+$/, "")}…` : cut;
+    if (addDots && doc.getTextWidth(candidate) > w) cut = cut.slice(0, -1);
+    lines.push(addDots ? `${cut.replace(/\s+$/, "")}…` : cut);
+    rest = rest.slice(cut.length);
+  }
+  return { lines, size: startSize };
+}
 function imgAspect(doc: jsPDF, dataUrl: string): number | null {
   try { const p = doc.getImageProperties(dataUrl); if (p?.width > 0 && p?.height > 0) return p.width / p.height; } catch { /* ignore */ }
   return null;
@@ -414,14 +441,14 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   const noteY = accY + 4;
   const nTitle = "Uma proposta completa para o seu negócio crescer — sem mensalidade, sem letras miúdas.";
   const nBody = "O endereço público é estável: futuras edições são aplicadas no mesmo link.";
-  const nTitleLines = wrapLines(doc, nTitle, CW - 40, 2);
-  const nBodyLines = wrapLines(doc, nBody, CW - 40, 2);
-  const nCardH = 18 + nTitleLines.length * 15 + 6 + nBodyLines.length * 13 + 14;
+  const nt = fitText(doc, nTitle, CW - 40, 2, 11.5, "bold");
+  const nb = fitText(doc, nBody, CW - 40, 2, 9.5, "normal");
+  const nCardH = 18 + nt.lines.length * (nt.size * 1.32) + 6 + nb.lines.length * (nb.size * 1.4) + 12;
   rrect(doc, M, noteY, CW, nCardH, 12, brandSoft);
-  let nyy = noteY + 22;
-  for (const l of nTitleLines) { text(doc, l, M + 20, nyy, 11.5, brandDeep, "bold"); nyy += 15; }
-  nyy += 2;
-  for (const l of nBodyLines) { text(doc, l, M + 20, nyy, 9.5, ink); nyy += 13; }
+  let nyy = noteY + 21;
+  for (const l of nt.lines) { text(doc, l, M + 20, nyy, nt.size, brandDeep, "bold"); nyy += nt.size * 1.32; }
+  nyy += 3;
+  for (const l of nb.lines) { text(doc, l, M + 20, nyy, nb.size, ink); nyy += nb.size * 1.4; }
   footerPage(doc, W, company, 4);
 
   // ============ PÁGINA 5 — INVESTIMENTO ============
@@ -452,25 +479,23 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   const investY = ty2 + rows.length * rowH2 + 34;
   const invTitle = "INVESTIMENTO ÚNICO DE R$ 499,00";
   const invBody = "Sem mensalidade, sem taxa escondida. Você recebe site pronto, publicado e com ajustes incluídos.";
-  const invTitleLines = wrapLines(doc, invTitle, CW - 44, 1);
-  const invBodyLines = wrapLines(doc, invBody, CW - 44, 3);
-  const invCardH = 22 + invTitleLines.length * 16 + 6 + invBodyLines.length * 13 + 12;
+  const ivt = fitText(doc, invTitle, CW - 44, 1, 12.5, "bold");
+  const ivb = fitText(doc, invBody, CW - 44, 3, 10, "normal");
+  const invCardH = 24 + ivt.lines.length * (ivt.size * 1.3) + 6 + ivb.lines.length * (ivb.size * 1.4) + 12;
   rrect(doc, M, investY, CW, invCardH, 12, NIGHT);
   let iy = investY + 26;
-  for (const l of invTitleLines) { text(doc, l, M + 22, iy, 12.5, accent, "bold"); iy += 16; }
-  iy += 2;
-  for (const l of invBodyLines) { text(doc, l, M + 22, iy, 10, { r: 225, g: 228, b: 233 }); iy += 13; }
+  for (const l of ivt.lines) { text(doc, l, M + 22, iy, ivt.size, accent, "bold"); iy += ivt.size * 1.3; }
+  iy += 3;
+  for (const l of ivb.lines) { text(doc, l, M + 22, iy, ivb.size, { r: 225, g: 228, b: 233 }); iy += ivb.size * 1.4; }
   const sealY = investY + invCardH + 24;
-  const sealTitle = `Proposta gerada sob medida para ${company}.`;
-  const sealBody = "Identidade, layout, textos e imagens refletem exatamente este projeto — como o cliente verá no site.";
-  const sealTitleLines = wrapLines(doc, sealTitle, CW - 40, 2);
-  const sealBodyLines = wrapLines(doc, sealBody, CW - 40, 2);
-  const sealCardH = 20 + sealTitleLines.length * 14.5 + 6 + sealBodyLines.length * 12.5 + 14;
+  const st = fitText(doc, `Proposta gerada sob medida para ${company}.`, CW - 40, 2, 11, "bold");
+  const sb = fitText(doc, "Identidade, layout, textos e imagens refletem exatamente este projeto — como o cliente verá no site.", CW - 40, 2, 9.5, "normal");
+  const sealCardH = 22 + st.lines.length * (st.size * 1.32) + 6 + sb.lines.length * (sb.size * 1.4) + 14;
   rrect(doc, M, sealY, CW, sealCardH, 12, brandSoft);
   let sy = sealY + 24;
-  for (const l of sealTitleLines) { text(doc, l, M + 20, sy, 11, brandDeep, "bold"); sy += 14.5; }
-  sy += 2;
-  for (const l of sealBodyLines) { text(doc, l, M + 20, sy, 9.5, ink); sy += 12.5; }
+  for (const l of st.lines) { text(doc, l, M + 20, sy, st.size, brandDeep, "bold"); sy += st.size * 1.32; }
+  sy += 3;
+  for (const l of sb.lines) { text(doc, l, M + 20, sy, sb.size, ink); sy += sb.size * 1.4; }
   footerPage(doc, W, company, 5);
 
   const buffer = doc.output("arraybuffer");
