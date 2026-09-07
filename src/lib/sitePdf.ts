@@ -1,7 +1,8 @@
-// Proposta comercial em PDF — versão definitiva (5.39).
-// Máx. 4 páginas densas: capa c/ print → o site (desktop real + identidade) →
-// mobile + vantagens → orçamento. SEM botões/contato dentro do documento.
-// Contraste garantido; screenshots reais quando disponíveis (fallback elegante).
+// Proposta comercial em PDF — apresentação premium MOBILE-FIRST.
+// Regra de fidelidade: SITE REAL → SCREENSHOT REAL (Chromium) → MOCKUP → PDF.
+// O screenshot exibido dentro do notebook/celular é SEMPRE a captura real
+// renderizada no navegador — nunca reconstrução/hero/background aproximado.
+// Nenhum texto vaza de cards; todo texto é medido e quebrado pela largura.
 import { jsPDF } from "jspdf";
 import { sanitizeSlug } from "./siteExportCore";
 
@@ -33,7 +34,7 @@ export function contrastRatio(a: Rgb, b: Rgb): number {
 }
 export function ensureContrast(fg: Rgb, bg: Rgb, min = 4.2): Rgb {
   if (contrastRatio(fg, bg) >= min) return fg;
-  return luminance(bg) > 0.45 ? { r: 30, g: 34, b: 40 } : { r: 255, g: 255, b: 255 };
+  return luminance(bg) > 0.45 ? { r: 24, g: 28, b: 34 } : { r: 255, g: 255, b: 255 };
 }
 export function readableTextFor(bg: Rgb, darkText: Rgb, lightText: Rgb): Rgb {
   return contrastRatio(bg, darkText) >= contrastRatio(bg, lightText) ? darkText : lightText;
@@ -45,124 +46,155 @@ function mix(a: Rgb, b: Rgb, t: number): Rgb {
 function clampHex(hex: string): string {
   return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hex) ? hex : "";
 }
-function wrap(doc: jsPDF, t: string, w: number): string[] { return doc.splitTextToSize(t, w) as string[]; }
-
 export function pdfFileName(name: string): string {
   return `${sanitizeSlug(name, "projeto")}-proposta.pdf`;
 }
 
-const WHITE = { r: 255, g: 255, b: 255 };
-const SURFACE = { r: 246, g: 247, b: 249 };
-const HAIR = { r: 226, g: 229, b: 234 };
-const INK = { r: 22, g: 25, b: 31 };
-const MUT = { r: 88, g: 96, b: 106 };
-const NIGHT = { r: 11, g: 14, b: 18 };
+const WHITE: Rgb = { r: 255, g: 255, b: 255 };
+const SURFACE: Rgb = { r: 246, g: 247, b: 249 };
+const HAIR: Rgb = { r: 226, g: 229, b: 234 };
+const INK: Rgb = { r: 20, g: 23, b: 28 };
+const MUT: Rgb = { r: 92, g: 100, b: 110 };
+const NIGHT: Rgb = { r: 10, g: 12, b: 15 };
 
-function text(doc: jsPDF, t: string, x: number, y: number, size: number, color: Rgb, style: "normal" | "bold" = "normal", align: "left" | "center" | "right" = "left") {
+function text(doc: jsPDF, t: string, x: number, y: number, size: number, color: Rgb, style: "normal" | "bold" = "normal", align: "left" | "center" | "right" = "left", charSpace = 0) {
   doc.setFont("helvetica", style);
   doc.setFontSize(size);
   doc.setTextColor(color.r, color.g, color.b);
-  doc.text(t, x, y, { align });
+  doc.text(t, x, y, { align, charSpace });
 }
-function rrect(doc: jsPDF, x: number, y: number, w: number, h: number, r: number, fill?: Rgb, stroke?: Rgb) {
+function rrect(doc: jsPDF, x: number, y: number, w: number, h: number, r: number, fill?: Rgb, stroke?: Rgb, lineW = 0.8) {
   const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
   if (fill) { doc.setFillColor(fill.r, fill.g, fill.b); doc.roundedRect(x, y, w, h, rr, rr, "F"); }
-  if (stroke) { doc.setDrawColor(stroke.r, stroke.g, stroke.b); doc.setLineWidth(0.6); doc.roundedRect(x, y, w, h, rr, rr, "S"); }
+  if (stroke) { doc.setDrawColor(stroke.r, stroke.g, stroke.b); doc.setLineWidth(lineW); doc.roundedRect(x, y, w, h, rr, rr, "S"); }
 }
-function imgAspect(doc: jsPDF, dataUrl: string): number {
+function line(doc: jsPDF, x1: number, y1: number, x2: number, y2: number, color: Rgb, w = 0.7) {
+  doc.setDrawColor(color.r, color.g, color.b);
+  doc.setLineWidth(w);
+  doc.line(x1, y1, x2, y2);
+}
+function wrapLines(doc: jsPDF, t: string, w: number, maxLines: number): string[] {
+  if (!t) return [];
+  const arr = doc.splitTextToSize(t, w) as string[];
+  return arr.length > maxLines ? arr.slice(0, maxLines) : arr;
+}
+function imgAspect(doc: jsPDF, dataUrl: string): number | null {
   try { const p = doc.getImageProperties(dataUrl); if (p?.width > 0 && p?.height > 0) return p.width / p.height; } catch { /* ignore */ }
-  return 16 / 10;
+  return null;
 }
-function drawImageFitted(doc: jsPDF, dataUrl: string, x: number, y: number, boxW: number, boxH: number) {
+// Insere a imagem REAL contida no box (letterbox escuro quando a proporção
+// diferir — aparência premium, nunca distorce).
+function drawImageContain(doc: jsPDF, dataUrl: string, x: number, y: number, boxW: number, boxH: number, bg?: Rgb) {
+  if (bg) rrect(doc, x, y, boxW, boxH, 0, bg);
   const fmt = dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
   const ar = imgAspect(doc, dataUrl);
-  let w = boxW; let h = w / ar;
-  if (h > boxH) { h = boxH; w = h * ar; }
-  doc.addImage(dataUrl, fmt, x + (boxW - w) / 2, y + (boxH - h) / 2, w, h);
+  let w = boxW;
+  let h = w / (ar ?? boxW / boxH);
+  if (h > boxH) { h = boxH; w = h * (ar ?? boxW / boxH); }
+  try { doc.addImage(dataUrl, fmt, x + (boxW - w) / 2, y + (boxH - h) / 2, w, h); } catch { /* sem imagem */ }
 }
 
-// Notebook realista: sombra, corpo do laptop e tela com o screenshot real.
-function drawLaptopMock(doc: jsPDF, x: number, y: number, w: number, img?: string | null) {
+// ─── Notebook realista (corpo metálico, bisel, dobradiça, deck) ─────────────
+function drawLaptop(doc: jsPDF, cx: number, cy: number, w: number, img?: string | null) {
   const lidH = w * 0.66;
-  const bezel = w * 0.025;
-  // sombra
-  doc.setFillColor(222, 226, 231);
-  doc.roundedRect(x + 6, y + 8, w, lidH, 14, 14, "F");
-  // corpo (tampa) arredondado
-  rrect(doc, x, y, w, lidH, 14, { r: 56, g: 60, b: 66 });
-  // barra superior + webcam
-  doc.setFillColor(205, 209, 214);
-  doc.rect(x + bezel, y + 5, w - bezel * 2, 2, "F");
-  const sw = w - bezel * 2;
-  const sh = lidH - bezel * 2 - 4;
-  rrect(doc, x + bezel, y + bezel, sw, sh, 6, NIGHT);
-  if (img) {
-    const inner = 5;
-    try {
-      const fmt = img.startsWith("data:image/png") ? "PNG" : "JPEG";
-      const ar = imgAspect(doc, img);
-      let iw = sw - inner * 2;
-      let ih = iw / ar;
-      if (ih > sh - inner * 2) { ih = sh - inner * 2; iw = ih * ar; }
-      doc.addImage(img, fmt, x + bezel + (sw - iw) / 2, y + bezel + (sh - ih) / 2, iw, ih);
-    } catch { /* tela vazia elegante */ }
+  const x = cx - w / 2;
+  // sombra suave
+  rrect(doc, x + 7, cy + 10, w, lidH, 16, { r: 214, g: 219, b: 225 });
+  // tampa traseira (alumínio escuro)
+  rrect(doc, x, cy, w, lidH, 16, { r: 49, g: 53, b: 59 });
+  // laterais em tom mais claro (aresta)
+  line(doc, x + 2, cy + 4, x + 2, cy + lidH - 4, { r: 120, g: 125, b: 132 }, 1.4);
+  line(doc, x + w - 2, cy + 4, x + w - 2, cy + lidH - 4, { r: 120, g: 125, b: 132 }, 1.4);
+  // bisel preto
+  const bezel = w * 0.035;
+  rrect(doc, x + bezel, cy + bezel, w - bezel * 2, lidH - bezel * 2, 10, { r: 12, g: 14, b: 17 });
+  // webcam + barra
+  rrect(doc, x + w / 2 - 6, cy + bezel - 1.5, 12, 3, 1.5, { r: 28, g: 31, b: 35 });
+  doc.setFillColor(28, 30, 34);
+  doc.circle(x + w / 2, cy + bezel, 0.9, "F");
+  doc.setFillColor(90, 95, 100);
+  doc.circle(x + w / 2, cy + bezel, 0.4, "F");
+  // TELA (screenshot real)
+  const sx = x + bezel + 5;
+  const sy = cy + bezel + 6;
+  const sw = w - bezel * 2 - 10;
+  const sh = lidH - bezel * 2 - 10;
+  rrect(doc, sx, sy, sw, sh, 4, NIGHT);
+  if (img) drawImageContain(doc, img, sx + 1.5, sy + 1.5, sw - 3, sh - 3);
+  // dobradiça
+  rrect(doc, x + w * 0.06, cy + lidH - 3, w * 0.88, 4, 2, { r: 90, g: 95, b: 102 });
+  // deck (base)
+  const deckY = cy + lidH;
+  const deckH = w * 0.075;
+  rrect(doc, x - w * 0.03, deckY, w * 1.06, deckH, 8, { r: 70, g: 74, b: 80 });
+  // teclado implícito (faixas)
+  for (let i = 0; i < 6; i++) {
+    doc.setFillColor(120 + i * 4, 124 + i * 4, 130 + i * 4);
+    doc.rect(x + w * 0.06, deckY + 4 + i * (deckH - 8) / 6, w * 0.88 - (i % 2) * 4, (deckH - 8) / 7, "F");
   }
-  // base do laptop (deck)
-  rrect(doc, x - w * 0.02, y + lidH, w * 1.04, w * 0.055, 6, { r: 132, g: 137, b: 143 });
-  rrect(doc, x - w * 0.01, y + lidH - 3, w * 1.02, 5, 3, { r: 226, g: 229, b: 234 });
+  // trackpad
+  rrect(doc, x + w * 0.4, deckY + 4, w * 0.2, deckH * 0.45, 3, { r: 52, g: 55, b: 60 });
 }
 
-// Smartphone moderno: corpo escuro, cantos arredondados, notch e screenshot real.
-function drawPhoneMock(doc: jsPDF, x: number, y: number, w: number, img?: string | null) {
-  const h = w * 2.04;
+// ─── Smartphone realista (titânio, cantos, ilha dinâmica, tela real) ────────
+function drawPhone(doc: jsPDF, cx: number, cy: number, w: number, img?: string | null) {
+  const h = w * 2.08;
+  const x = cx - w / 2;
   // sombra
-  doc.setFillColor(222, 226, 231);
-  doc.roundedRect(x + 3, y + 6, w, h, w * 0.18, w * 0.18, "F");
+  rrect(doc, x + 4, cy + 8, w, h, w * 0.2, { r: 208, g: 213, b: 220 });
+  // frame metálico (contorno)
+  rrect(doc, x, cy, w, h, w * 0.18, { r: 86, g: 90, b: 96 });
   // corpo
-  rrect(doc, x, y, w, h, w * 0.16, { r: 24, g: 25, b: 28 });
+  const insetF = w * 0.022;
+  rrect(doc, x + insetF, cy + insetF, w - insetF * 2, h - insetF * 2, w * 0.16, { r: 12, g: 13, b: 16 });
   // botões laterais
-  doc.setFillColor(70, 72, 76);
-  doc.rect(x - 2, y + h * 0.16, 2.5, w * 0.08, "F");
-  doc.rect(x - 2, y + h * 0.27, 2.5, w * 0.14, "F");
-  doc.rect(x + w, y + h * 0.18, 2.5, w * 0.09, "F");
+  doc.setFillColor(120, 123, 128);
+  doc.rect(x - 2, cy + h * 0.15, 3, w * 0.09, "F");
+  doc.rect(x - 2, cy + h * 0.26, 3, w * 0.16, "F");
+  doc.rect(x + w - 1, cy + h * 0.18, 3, w * 0.1, "F");
   // tela
-  const inset = w * 0.045;
+  const inset = w * 0.05;
+  const sx = x + inset;
+  const sy = cy + inset;
   const sw = w - inset * 2;
   const sh = h - inset * 2;
-  rrect(doc, x + inset, y + inset, sw, sh, w * 0.09, NIGHT);
-  // notch (dynamic island)
-  doc.setFillColor(15, 16, 18);
-  doc.roundedRect(x + w * 0.3, y + inset + 5, w * 0.4, w * 0.07, w * 0.035, w * 0.035, "F");
-  if (img) {
-    const inner = 3;
-    try {
-      const fmt = img.startsWith("data:image/png") ? "PNG" : "JPEG";
-      const ar = imgAspect(doc, img);
-      let iw = sw - inner * 2;
-      let ih = iw / ar;
-      if (ih > sh - inner * 2 - 10) { ih = sh - inner * 2 - 10; iw = ih * ar; }
-      doc.addImage(img, fmt, x + inset + (sw - iw) / 2, y + inset + (sh - ih) / 2, iw, ih);
-    } catch { /* tela vazia elegante */ }
-  }
+  rrect(doc, sx, sy, sw, sh, w * 0.1, NIGHT);
+  if (img) drawImageContain(doc, img, sx + 2, sy + 2, sw - 4, sh - 4);
+  // ilha dinâmica (status)
+  rrect(doc, x + w * 0.27, cy + inset + 6, w * 0.46, w * 0.075, w * 0.037, { r: 8, g: 9, b: 11 });
 }
-function header(doc: jsPDF, W: number, label: string, n: string, brand: Rgb, y: number) {
+
+// Quebra texto por largura e desenha com espaçamento seguro; retorna altura.
+function drawParagraph(doc: jsPDF, t: string, x: number, y: number, w: number, size: number, color: Rgb, lineH = 1.38): number {
+  if (!t) return 0;
+  const lines = doc.splitTextToSize(t, w) as string[];
+  let yy = y;
+  for (const ln of lines) { text(doc, ln, x, yy, size, color); yy += size * lineH; }
+  return lines.length * size * lineH;
+}
+
+function pageBg(doc: jsPDF, W: number, H: number, brand: Rgb) {
+  doc.setFillColor(255, 255, 255);
+  doc.rect(0, 0, W, H, "F");
   doc.setFillColor(brand.r, brand.g, brand.b);
-  doc.rect(54, y, 20, 2.4, "F");
-  text(doc, `${n} · ${label.toUpperCase()}`, 54, y + 14, 9, brand, "bold");
+  doc.rect(0, 0, W, 6, "F");
 }
-function footer(doc: jsPDF, W: number, label: string, pageNo: number) {
-  doc.setDrawColor(HAIR.r, HAIR.g, HAIR.b);
-  doc.setLineWidth(0.6);
-  doc.line(54, 812, W - 54, 812);
-  text(doc, label.toUpperCase(), 54, 826, 6.5, MUT);
-  text(doc, String(pageNo).padStart(2, "0"), W - 54, 826, 6.5, MUT, "normal", "right");
+function sectionTitle(doc: jsPDF, x: number, y: number, kicker: string, title: string, brand: Rgb, ink: Rgb, w: number) {
+  text(doc, kicker.toUpperCase(), x, y, 8, brand, "bold", "left", 1.1);
+  doc.setFillColor(brand.r, brand.g, brand.b);
+  doc.rect(x, y + 5, 22, 1.6, "F");
+  text(doc, title, x, y + 24, 19, ink, "bold");
+}
+function footerPage(doc: jsPDF, W: number, name: string, page: number) {
+  line(doc, 48, 806, W - 48, 806, HAIR);
+  text(doc, name.toUpperCase(), 48, 822, 7, MUT, "bold", "left", 0.8);
+  text(doc, `PROPOSTA COMERCIAL · ${String(page).padStart(2, "0")}`, W - 48, 822, 7, MUT, "normal", "right", 0.4);
 }
 
 export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: string } | null, screenshots?: string[], realPalette?: Partial<Record<string, string>>): Promise<{ buffer: ArrayBuffer; fileName: string }> {
   const b = obj(spec.business);
   const ds = obj(spec.design_system);
   const specColors = obj(ds.colors) as Record<string, string>;
-  // Paleta REAL extraída do site tem prioridade sobre design_system.
   const colors = { ...specColors, ...(realPalette ?? {}) } as Record<string, string>;
   const typo = obj(ds.typography);
   const content = obj(spec.content);
@@ -170,15 +202,15 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   const company = str(b.name) || "Empresa";
   const segment = str(b.segment);
   const location = [str(b.city), str(b.state)].filter(Boolean).join("/");
-  const title = str(hero.title) || company;
-  const subtitle = str(hero.subtitle);
+  const tagline = str(hero.subtitle) || "Presença digital profissional, sob medida para este negócio.";
 
   const primary = clampHex(str(colors.primary)) || "#2563eb";
-  const accentRaw = clampHex(str(colors.accent)) || "#f59e0b";
-  const brand = ensureContrast(hexToRgb(primary), WHITE, 4.5);
-  const brandSoft = mix(hexToRgb(primary), WHITE, 0.88);
-  const accent = ensureContrast(hexToRgb(accentRaw), NIGHT, 3);
-  const inkOnLight = ensureContrast({ r: 24, g: 27, b: 32 }, WHITE, 6);
+  const accentHex = clampHex(str(colors.accent)) || "#f59e0b";
+  const brand = ensureContrast(hexToRgb(primary), WHITE, 4.6);
+  const brandDeep = mix(hexToRgb(primary), NIGHT, 0.35);
+  const accent = ensureContrast(hexToRgb(accentHex), NIGHT, 3);
+  const brandSoft = mix(brand, WHITE, 0.9);
+  const ink = ensureContrast({ r: 22, g: 26, b: 31 }, WHITE, 7);
   const swatches: Array<{ hex: string; name: string }> = [
     { hex: str(colors.primary) || "#2563eb", name: "Primária" },
     { hex: str(colors.secondary) || "#0f172a", name: "Secundária" },
@@ -186,159 +218,176 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
     { hex: str(colors.background) || "#f8fafc", name: "Fundo" },
   ];
   const headingFont = str(typo.heading_font);
-  const desktop = Array.isArray(screenshots) ? screenshots[0] ?? null : heroImage?.dataUrl ?? null;
-  const mobile = Array.isArray(screenshots) ? screenshots[1] ?? null : null;
+  const screens = screenshots ?? [];
+  const desktopShot = screens[0] ?? null;
+  const mobileShot = screens[1] ?? null;
 
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
-  const M = 54;
+  const M = 48;
   const CW = W - M * 2;
+  const MID = W / 2;
 
-  /* ==================== PÁGINA 1 — CAPA ==================== */
-  doc.setFillColor(255, 255, 255); doc.rect(0, 0, W, H, "F");
-  doc.setFillColor(brand.r, brand.g, brand.b); doc.rect(0, 0, W, 7, "F");
-  // decoração leve
-  doc.setFillColor(brandSoft.r, brandSoft.g, brandSoft.b); doc.circle(W - 30, 40, 170, "F");
+  // ============ PÁGINA 1 — CAPA ============
+  pageBg(doc, W, H, brand);
+  // blobs decorativos
+  doc.setFillColor(brandSoft.r, brandSoft.g, brandSoft.b);
+  doc.circle(W - 20, 50, 150, "F");
+  doc.circle(10, H - 80, 130, "F");
 
-  text(doc, "PROPOSTA COMERCIAL", M, 96, 10, brand, "bold");
-  doc.setFillColor(brand.r, brand.g, brand.b); doc.rect(M, 106, 30, 2.2, "F");
+  text(doc, "PROPOSTA COMERCIAL", M, 92, 10, brand, "bold", "left", 1.4);
+  doc.setFillColor(brand.r, brand.g, brand.b);
+  doc.rect(M, 102, 26, 2.2, "F");
 
-  text(doc, company, M, 172, 38, inkOnLight, "bold");
-  if (segment) text(doc, `${segment}${location ? `  ·  ${location}` : ""}`, M, 194, 12, MUT);
-  text(doc, title, M, 218, 15, inkOnLight, "bold");
-  const coverSub = wrap(doc, subtitle || "Presença digital profissional, sob medida para este negócio.", CW * 0.72).slice(0, 3);
-  text(doc, coverSub.join("\n"), M, 238, 10.5, MUT);
+  // Título da empresa — nunca estoura a largura
+  const nameLines = wrapLines(doc, company, CW * 0.94, 2);
+  let yy = 168;
+  for (const n of nameLines) { text(doc, n, M, yy, 36, ink, "bold"); yy += 44; }
+  if (segment) text(doc, `${segment}${location ? `   ·   ${location}` : ""}`, M, yy + 2, 13, MUT);
+  const tagLines = wrapLines(doc, tagline, CW * 0.7, 2);
+  let ty = yy + 24;
+  for (const t of tagLines) { text(doc, t, M, ty, 11.5, MUT); ty += 16; }
 
-  // Print principal (desktop) na capa — prova visual logo na 1ª página
-  const coverY = 300;
-  doc.setFillColor(238, 240, 243); doc.roundedRect(M + 2, coverY + 3, CW, 316, 12, 12, "F");
-  rrect(doc, M, coverY, CW, 316, 10, NIGHT);
-  text(doc, "seu-site.com.br", M + 18, coverY + 20, 7.5, { r: 190, g: 195, b: 202 });
-  doc.setFillColor(255, 255, 255); doc.rect(M + 1, coverY + 26, CW - 2, 1, "F");
-  if (desktop) {
-    const imgH = 262;
-    rrect(doc, M + 16, coverY + 38, CW - 32, imgH, 4, { r: 24, g: 27, b: 32 });
-    drawImageFitted(doc, desktop, M + 18, coverY + 40, CW - 36, imgH - 4);
+  // Captura REAL do site (desktop) na capa — prova visual imediata
+  const cardY = 318;
+  const cardH = 300;
+  rrect(doc, M + 5, cardY + 5, CW, cardH, 16, { r: 232, g: 235, b: 239 });
+  rrect(doc, M, cardY, CW, cardH, 14, { r: 15, g: 17, b: 20 });
+  text(doc, "www.site-profissional.com.br", M + 18, cardY + 20, 8, { r: 170, g: 176, b: 182 }, "normal", "left", 0.6);
+  line(doc, M + 18, cardY + 27, W - M - 18, cardY + 27, { r: 42, g: 46, b: 52 }, 1);
+  if (desktopShot) {
+    rrect(doc, M + 16, cardY + 36, CW - 32, cardH - 50, 6, { r: 12, g: 14, b: 17 });
+    drawImageContain(doc, desktopShot, M + 18, cardY + 38, CW - 36, cardH - 54);
   } else {
-    text(doc, "Visão do site", M + CW / 2, coverY + 160, 16, { r: 225, g: 228, b: 233 }, "bold", "center");
-    text(doc, "Captura será anexada após a publicação.", M + CW / 2, coverY + 184, 10, { r: 170, g: 175, b: 183 }, "normal", "center");
+    text(doc, "Captura do site", MID, cardY + cardH / 2, 16, { r: 225, g: 228, b: 233 }, "bold", "center");
+    text(doc, "A imagem real será gerada após publicar o site.", MID, cardY + cardH / 2 + 22, 10, { r: 160, g: 166, b: 174 }, "normal", "center");
   }
-  // faixa de assinatura
-  rrect(doc, M, 642, CW, 40, 8, SURFACE, HAIR);
-  text(doc, "SITE PROFISSIONAL · IDENTIDADE PRÓPRIA · RESPONSIVO", M + 18, 667, 9, brand, "bold");
-  footer(doc, W, company, 1);
 
-  /* ==================== PÁGINA 2 — O SITE + IDENTIDADE ==================== */
+  rrect(doc, M, 646, CW, 46, 10, SURFACE, HAIR);
+  text(doc, "SITE SOB MEDIDA · IDENTIDADE PRÓPRIA · 100% RESPONSIVO", M + 20, 674, 10, brand, "bold", "left", 1);
+  footerPage(doc, W, company, 1);
+
+  // ============ PÁGINA 2 — O SITE (notebook real + screenshot real) ============
   doc.addPage();
-  doc.setFillColor(255, 255, 255); doc.rect(0, 0, W, H, "F");
-  doc.setFillColor(brand.r, brand.g, brand.b); doc.rect(0, 0, W, 7, "F");
-  header(doc, W, "O site que você vai receber", "01", brand, 54);
-  let y = 96;
-
-  text(doc, "O projeto foi criado sob medida para este negócio — não é template:", M, y, 11.5, inkOnLight, "bold");
-  y += 16;
-  const bullets = [
-    "Identidade visual aplicada (cores, tipografia e composição próprias)",
-    "Estrutura orientada a conversão com CTAs claros",
-    "Conteúdo real e bem apresentado, seção por seção",
-    "Imagens contextuais, coerentes com o segmento",
-    "100% responsivo — computador, tablet e celular",
+  pageBg(doc, W, H, brand);
+  sectionTitle(doc, M, 78, "Apresentação do projeto", "O site pronto para o seu negócio", brand, ink, CW);
+  let y = 150;
+  text(doc, "Este site foi criado sob medida — nada de template genérico. Cada detalhe respeita a identidade e o público deste negócio.", M, y, 11.5, MUT);
+  y += 22;
+  const bullets: Array<[string, string]> = [
+    ["Identidade própria", "Cores, tipografia e composição desenvolvidas para a marca."],
+    ["Feito para converter", "Estrutura com chamadas claras em cada etapa da visita."],
+    ["Conteúdo real", "Textos, serviços e diferenciais apresentados com cuidado."],
+    ["Imagens contextuais", "Fotografias e referências coerentes com o segmento."],
+    ["Funciona em qualquer tela", "Desktop, tablet e celular com a mesma qualidade."],
   ];
-  for (const bt of bullets) {
-    doc.setFillColor(brand.r, brand.g, brand.b); doc.circle(M + 4, y - 3, 2.4, "F");
-    text(doc, bt, M + 15, y, 10.5, inkOnLight);
-    y += 19;
+  const colW = CW * 0.5;
+  for (let i = 0; i < bullets.length; i++) {
+    const [t, d] = bullets[i];
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const bx = M + col * (colW + 20);
+    const by = y + row * 66;
+    const dLines = wrapLines(doc, d, colW - 26, 2);
+    rrect(doc, bx, by, colW, 58, 10, SURFACE, HAIR);
+    text(doc, t, bx + 14, by + 20, 11, ink, "bold");
+    let dy = by + 34;
+    for (const l of dLines) { text(doc, l, bx + 14, dy, 9, MUT); dy += 12; }
   }
-  y += 12;
+  const lapSectionY = y + Math.ceil(bullets.length / 2) * 66 + 24;
+  text(doc, "Tela do computador — captura real do site", M, lapSectionY, 12, ink, "bold");
+  const lapW = Math.min(CW, 430);
+  drawLaptop(doc, MID, lapSectionY + 30, lapW, desktopShot);
+  footerPage(doc, W, company, 2);
 
-  // Print desktop (real) dentro de um notebook realista
-  const lapY = y + 6;
-  const lapW = Math.min(CW, 470);
-  const lapX = M + (CW - lapW) / 2;
-  text(doc, "Tela do computador", M, y - 2, 11, inkOnLight, "bold");
-  drawLaptopMock(doc, lapX, lapY, lapW, desktop);
-  y = lapY + lapW * 0.72 + 22;
+  // ============ PÁGINA 3 — CELULAR (screenshot mobile real) ============
+  doc.addPage();
+  pageBg(doc, W, H, brand);
+  sectionTitle(doc, M, 78, "Experiência mobile", "Seu site na palma da mão", brand, ink, CW);
 
-  // Identidade
-  text(doc, "Identidade visual do projeto", M, y, 11, inkOnLight, "bold");
-  y += 10;
-  const chipW = (CW - 3 * 12) / 4;
+  const phoneW = 172;
+  drawPhone(doc, M + 118, 128, phoneW, mobileShot);
+  text(doc, "Captura real da versão mobile", M + 118, 128 + phoneW * 2.08 + 22, 8.5, MUT, "normal", "center");
+
+  const rx = M + 280;
+  const rw = W - M - 48 - rx;
+  text(doc, "Experiência pensada para o celular", rx, 128, 12.5, ink, "bold");
+  let ay = 152;
+  const adv: Array<[string, string]> = [
+    ["Menu e navegação simples", "Encontra o que precisa em segundos, com botões grandes."],
+    ["Leitura confortável", "Tipografia e espaçamentos dimensionados para a tela."],
+    ["Contato direto", "Chamadas e botões que levam ao atendimento."],
+    ["Visual consistente", "Mesma identidade em qualquer tamanho de tela."],
+  ];
+  for (const [t, d] of adv) {
+    const dl = wrapLines(doc, d, rw - 22, 2);
+    const boxH = 30 + dl.length * 12;
+    rrect(doc, rx, ay, rw, Math.max(58, boxH), 10, SURFACE, HAIR);
+    text(doc, t, rx + 12, ay + 20, 10.5, ink, "bold");
+    let dy = ay + 33;
+    for (const l of dl) { text(doc, l, rx + 12, dy, 9, MUT); dy += 12; }
+    ay += Math.max(58, boxH) + 14;
+  }
+
+  // Identidade visual (cores reais do site)
+  const idY = Math.max(ay + 18, 470);
+  text(doc, "Identidade visual do projeto", M, idY, 12, ink, "bold");
+  const chipW = (CW - 3 * 14) / 4;
+  let cy = idY + 12;
   for (let i = 0; i < swatches.length; i++) {
     const s = swatches[i];
-    const cx = M + i * (chipW + 12);
-    const c = clampHex(s.hex) ? hexToRgb(s.hex) : { r: 200, g: 200, b: 200 };
-    rrect(doc, cx, y, chipW, 40, 6, c, HAIR);
-    text(doc, s.name, cx, y + 54, 7, MUT, "bold");
-    text(doc, (s.hex || "").toUpperCase(), cx, y + 64, 6.5, MUT);
+    const cx = M + i * (chipW + 14);
+    const c = clampHex(s.hex) ? hexToRgb(s.hex) : { r: 205, g: 205, b: 205 };
+    rrect(doc, cx, cy, chipW, 46, 8, c, HAIR);
+    text(doc, s.name, cx, cy + 58, 8, MUT, "bold");
+    text(doc, (s.hex || "").toUpperCase(), cx, cy + 68, 7, MUT);
   }
-  y += 76;
+  cy += 84;
   if (headingFont) {
-    rrect(doc, M, y, CW, 40, 8, SURFACE, HAIR);
-    text(doc, "Tipografia", M + 16, y + 16, 9, brand, "bold");
-    text(doc, `${headingFont} — cabeçalhos com presença e hierarquia clara; corpo confortável de leitura.`, M + 16, y + 30, 9, inkOnLight);
+    rrect(doc, M, cy, CW, 40, 10, SURFACE, HAIR);
+    text(doc, "Tipografia", M + 16, cy + 16, 9, brand, "bold");
+    text(doc, `${headingFont} — títulos com presença e corpo de leitura confortável.`, M + 16, cy + 30, 9.5, ink);
   }
-  footer(doc, W, company, 2);
+  footerPage(doc, W, company, 3);
 
-  /* ==================== PÁGINA 3 — MOBILE + VANTAGENS ==================== */
+  // ============ PÁGINA 4 — O QUE ESTÁ INCLUÍDO ============
   doc.addPage();
-  doc.setFillColor(255, 255, 255); doc.rect(0, 0, W, H, "F");
-  doc.setFillColor(brand.r, brand.g, brand.b); doc.rect(0, 0, W, 7, "F");
-  header(doc, W, "Seu site em qualquer tela", "02", brand, 54);
-  y = 92;
-
-  const leftW = CW * 0.46;
-  const rightX = M + leftW + 34;
-
-  text(doc, "Celular e tablet", M, y, 11, inkOnLight, "bold");
-  y += 12;
-  // Smartphone realista com o screenshot mobile dentro
-  const phoneW = Math.min(leftW, 158);
-  const phoneX = M + (leftW - phoneW) / 2;
-  drawPhoneMock(doc, phoneX, y, phoneW, mobile);
-
-  text(doc, "Suas vantagens", rightX, 92, 11, inkOnLight, "bold");
-  const adv: Array<[string, string]> = [
-    ["URL pública e estável", "O endereço do site não muda — edições futuras são aplicadas no mesmo link."],
-    ["Hospedagem inclusa", "Publicação e configuração cuidadas pela nossa equipe, sem mensalidade."],
-    ["Sem mensalidade", "Você paga só pelo desenvolvimento. O domínio custa cerca de R$ 40,00/ano."],
-    ["Edições simples", "Peça ajustes a qualquer momento; a identidade e o endereço são preservados."],
-    ["Identidade preservada", "Cores, tipografia e estrutura seguem o conceito aprovado por você."],
+  pageBg(doc, W, H, brand);
+  sectionTitle(doc, M, 78, "Entrega", "Tudo o que você recebe", brand, ink, CW);
+  const inc: Array<[string, string]> = [
+    ["Site profissional completo", "Páginas, seções e identidade visual aplicada no código."],
+    ["100% responsivo", "Desktop, tablet e celular com o mesmo capricho."],
+    ["Conteúdo estratégico", "Textos reais e organizados, sem invenções ou promessas."],
+    ["Imagens contextuais", "Fotos coerentes com o segmento e o posicionamento."],
+    ["Publicação online", "Site no ar em URL própria e estável."],
+    ["Ajustes futuros", "Edições preservando identidade e endereço."],
   ];
-  let ay = 108;
-  for (const [t2, d2] of adv) {
-    const dl = wrap(doc, d2, rightX > M ? CW - leftW - 34 : CW).slice(0, 2);
-    rrect(doc, rightX, ay - 10, (rightX > M ? CW - leftW - 34 : CW), 58, 8, SURFACE, HAIR);
-    text(doc, t2, rightX + 12, ay + 4, 10, inkOnLight, "bold");
-    let dy = ay + 20;
-    for (const l of dl) { text(doc, l, rightX + 12, dy, 8.5, MUT); dy += 11; }
-    ay += 68;
+  const gW = (CW - 22) / 2;
+  let gy = 152;
+  const rowH = 84;
+  for (let i = 0; i < inc.length; i++) {
+    const [t, d] = inc[i];
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const bx = M + col * (gW + 22);
+    const by = gy + row * (rowH + 16);
+    const dLines = wrapLines(doc, d, gW - 26, 3);
+    rrect(doc, bx, by, gW, rowH, 12, SURFACE, HAIR);
+    text(doc, t, bx + 14, by + 22, 11.5, ink, "bold");
+    let dy = by + 38;
+    for (const l of dLines) { text(doc, l, bx + 14, dy, 9.5, MUT); dy += 13; }
   }
-  footer(doc, W, company, 3);
+  const noteY = gy + 3 * (rowH + 16) + 6;
+  rrect(doc, M, noteY, CW, 52, 12, brandSoft);
+  text(doc, "Uma proposta completa para o seu negócio crescer — sem mensalidade, sem letras miúdas.", M + 18, noteY + 22, 11.5, brandDeep, "bold");
+  text(doc, "O endereço público é estável: futuras edições são aplicadas no mesmo link.", M + 18, noteY + 39, 9.5, ink);
+  footerPage(doc, W, company, 4);
 
-  /* ==================== PÁGINA 4 — INVESTIMENTO ==================== */
+  // ============ PÁGINA 5 — INVESTIMENTO ============
   doc.addPage();
-  doc.setFillColor(255, 255, 255); doc.rect(0, 0, W, H, "F");
-  doc.setFillColor(brand.r, brand.g, brand.b); doc.rect(0, 0, W, 7, "F");
-  header(doc, W, "Investimento e garantias", "03", brand, 54);
-  y = 96;
-
-  text(doc, "O que está incluído", M, y, 12, inkOnLight, "bold");
-  y += 14;
-  const inc = [
-    "Site profissional com identidade visual aplicada",
-    "Versão responsiva (desktop, tablet e celular)",
-    "Imagens contextuais integradas ao layout",
-    "Conteúdo real e estratégico, sem invenções",
-    "Publicação online + projeto completo entregue",
-    "Edições futuras no mesmo endereço público",
-  ];
-  for (const it of inc) {
-    text(doc, `—  ${it}`, M, y, 10, inkOnLight);
-    y += 19;
-  }
-  y += 8;
-
+  pageBg(doc, W, H, brand);
+  sectionTitle(doc, M, 78, "Investimento", "Valor claro, sem surpresas", brand, ink, CW);
   const rows: Array<[string, string, string]> = [
     ["Desenvolvimento do site", "Investimento único", "R$ 499,00"],
     ["Hospedagem", "Inclusa no primeiro ano", "R$ 0,00"],
@@ -346,31 +395,29 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
     ["Publicação e configuração", "Incluso", "R$ 0,00"],
     ["Domínio próprio", "Aproximadamente", "R$ 40,00/ano"],
   ];
-  const tblY = y;
-  rrect(doc, M, tblY, CW, rows.length * 32 + 16, 12, SURFACE, HAIR);
-  rows.forEach((r2, i) => {
-    const yy = tblY + 26 + i * 32;
-    text(doc, r2[0], M + 20, yy, 10.5, inkOnLight, "bold");
-    text(doc, r2[1], M + CW * 0.42, yy, 8.5, MUT);
-    text(doc, r2[2], W - M - 20, yy, 11.5, r2[2] === "R$ 499,00" ? brand : inkOnLight, "bold", "right");
-    if (i < rows.length - 1) {
-      doc.setDrawColor(HAIR.r, HAIR.g, HAIR.b); doc.setLineWidth(0.6);
-      doc.line(M + 20, yy + 13, W - M - 20, yy + 13);
-    }
-  });
-  y = tblY + rows.length * 32 + 30;
-
-  rrect(doc, M, y, CW, 52, 10, brandSoft);
-  text(doc, "Investimento único de R$ 499,00 — sem mensalidade e sem surpresa.", M + 18, y + 21, 11.5, brand, "bold");
-  text(doc, "O site fica em uma URL pública estável: futuras edições são aplicadas no mesmo endereço, sem mudar o link que você divulga.", M + 18, y + 38, 9.5, inkOnLight);
-
-  // selo de confiança (sem contato/botões)
-  const sealY = H - 150;
-  rrect(doc, M, sealY, CW, 74, 12, NIGHT);
-  text(doc, "PROPOSTA PREMIUM", M + 20, sealY + 22, 10, accent, "bold");
-  text(doc, `Documento gerado sob medida para ${company}. Identidade, layout e conteúdo refletem exatamente este projeto.`, M + 20, sealY + 40, 9.5, { r: 225, g: 228, b: 233 });
-  text(doc, `© ${new Date().getFullYear()} — Proposta comercial de desenvolvimento de site.`, M + 20, sealY + 58, 8, { r: 160, g: 165, b: 173 });
-  footer(doc, W, company, 4);
+  let ty2 = 160;
+  const rowH2 = 54;
+  rrect(doc, M, ty2 - 14, CW, rows.length * rowH2 + 18, 14, SURFACE, HAIR);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const ry = ty2 + i * rowH2;
+    if (i > 0) line(doc, M + 22, ry - 6, W - M - 22, ry - 6, HAIR, 0.8);
+    const nameW = CW * 0.46;
+    const nameLines = wrapLines(doc, r[0], nameW - 24, 2);
+    let ny = ry + (nameLines.length === 1 ? 18 : 14);
+    for (const n of nameLines) { text(doc, n, M + 22, ny, 10.5, ink, "bold"); ny += 13; }
+    text(doc, r[1], M + CW * 0.5, ry + (nameLines.length === 1 ? 18 : 24), 8.5, MUT);
+    text(doc, r[2], W - M - 22, ry + 18, 11.5, r[2] === "R$ 499,00" ? brand : ink, "bold", "right");
+  }
+  const investY = ty2 + rows.length * rowH2 + 34;
+  rrect(doc, M, investY, CW, 56, 12, NIGHT);
+  text(doc, "INVESTIMENTO ÚNICO DE R$ 499,00", M + 22, investY + 22, 12.5, accent, "bold");
+  text(doc, "Sem mensalidade, sem taxa escondida. Você recebe site pronto, publicado e com ajustes incluídos.", M + 22, investY + 40, 10, { r: 225, g: 228, b: 233 });
+  const sealY = investY + 86;
+  rrect(doc, M, sealY, CW, 62, 12, brandSoft);
+  text(doc, `Proposta gerada sob medida para ${company}.`, M + 20, sealY + 24, 11, brandDeep, "bold");
+  text(doc, "Identidade, layout, textos e imagens refletem exatamente este projeto — como o cliente verá no site.", M + 20, sealY + 41, 9.5, ink);
+  footerPage(doc, W, company, 5);
 
   const buffer = doc.output("arraybuffer");
   return { buffer, fileName: pdfFileName(company) };
