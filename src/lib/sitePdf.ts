@@ -412,9 +412,16 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
     accY += incRows[row];
   }
   const noteY = accY + 4;
-  rrect(doc, M, noteY, CW, 52, 12, brandSoft);
-  text(doc, "Uma proposta completa para o seu negócio crescer — sem mensalidade, sem letras miúdas.", M + 18, noteY + 22, 11.5, brandDeep, "bold");
-  text(doc, "O endereço público é estável: futuras edições são aplicadas no mesmo link.", M + 18, noteY + 39, 9.5, ink);
+  const nTitle = "Uma proposta completa para o seu negócio crescer — sem mensalidade, sem letras miúdas.";
+  const nBody = "O endereço público é estável: futuras edições são aplicadas no mesmo link.";
+  const nTitleLines = wrapLines(doc, nTitle, CW - 40, 2);
+  const nBodyLines = wrapLines(doc, nBody, CW - 40, 2);
+  const nCardH = 18 + nTitleLines.length * 15 + 6 + nBodyLines.length * 13 + 14;
+  rrect(doc, M, noteY, CW, nCardH, 12, brandSoft);
+  let nyy = noteY + 22;
+  for (const l of nTitleLines) { text(doc, l, M + 20, nyy, 11.5, brandDeep, "bold"); nyy += 15; }
+  nyy += 2;
+  for (const l of nBodyLines) { text(doc, l, M + 20, nyy, 9.5, ink); nyy += 13; }
   footerPage(doc, W, company, 4);
 
   // ============ PÁGINA 5 — INVESTIMENTO ============
@@ -443,13 +450,27 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
     text(doc, r[2], W - M - 22, ry + 18, 11.5, r[2] === "R$ 499,00" ? brand : ink, "bold", "right");
   }
   const investY = ty2 + rows.length * rowH2 + 34;
-  rrect(doc, M, investY, CW, 56, 12, NIGHT);
-  text(doc, "INVESTIMENTO ÚNICO DE R$ 499,00", M + 22, investY + 22, 12.5, accent, "bold");
-  text(doc, "Sem mensalidade, sem taxa escondida. Você recebe site pronto, publicado e com ajustes incluídos.", M + 22, investY + 40, 10, { r: 225, g: 228, b: 233 });
-  const sealY = investY + 86;
-  rrect(doc, M, sealY, CW, 62, 12, brandSoft);
-  text(doc, `Proposta gerada sob medida para ${company}.`, M + 20, sealY + 24, 11, brandDeep, "bold");
-  text(doc, "Identidade, layout, textos e imagens refletem exatamente este projeto — como o cliente verá no site.", M + 20, sealY + 41, 9.5, ink);
+  const invTitle = "INVESTIMENTO ÚNICO DE R$ 499,00";
+  const invBody = "Sem mensalidade, sem taxa escondida. Você recebe site pronto, publicado e com ajustes incluídos.";
+  const invTitleLines = wrapLines(doc, invTitle, CW - 44, 1);
+  const invBodyLines = wrapLines(doc, invBody, CW - 44, 3);
+  const invCardH = 22 + invTitleLines.length * 16 + 6 + invBodyLines.length * 13 + 12;
+  rrect(doc, M, investY, CW, invCardH, 12, NIGHT);
+  let iy = investY + 26;
+  for (const l of invTitleLines) { text(doc, l, M + 22, iy, 12.5, accent, "bold"); iy += 16; }
+  iy += 2;
+  for (const l of invBodyLines) { text(doc, l, M + 22, iy, 10, { r: 225, g: 228, b: 233 }); iy += 13; }
+  const sealY = investY + invCardH + 24;
+  const sealTitle = `Proposta gerada sob medida para ${company}.`;
+  const sealBody = "Identidade, layout, textos e imagens refletem exatamente este projeto — como o cliente verá no site.";
+  const sealTitleLines = wrapLines(doc, sealTitle, CW - 40, 2);
+  const sealBodyLines = wrapLines(doc, sealBody, CW - 40, 2);
+  const sealCardH = 20 + sealTitleLines.length * 14.5 + 6 + sealBodyLines.length * 12.5 + 14;
+  rrect(doc, M, sealY, CW, sealCardH, 12, brandSoft);
+  let sy = sealY + 24;
+  for (const l of sealTitleLines) { text(doc, l, M + 20, sy, 11, brandDeep, "bold"); sy += 14.5; }
+  sy += 2;
+  for (const l of sealBodyLines) { text(doc, l, M + 20, sy, 9.5, ink); sy += 12.5; }
   footerPage(doc, W, company, 5);
 
   const buffer = doc.output("arraybuffer");
