@@ -2,17 +2,25 @@
 // Returns only verified public data. No mock, no invented fields.
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { runWebSources, enrichLeadsWithWeb, extractContactsFromMarkdown } from "../_shared/lead-web.ts";
+import { runWebSources, enrichLeadsWithWeb, extractContactsFromMarkdown, extractPhoneBR, extractWhatsAppExplicit, extractWhatsappBR, textMentionsGeo, type WebItem } from "../_shared/lead-web.ts";
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const GOOGLE_KEY_LOADED = typeof GOOGLE_KEY === "string" && GOOGLE_KEY.trim().length > 0;
+
+// Helper de resposta JSON com CORS (usado no modo enrich).
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
 
 // Chamada interna às edge functions search-tavily / search-firecrawl (que usam
 // o Provider Key Pool com failover sequencial). Falhas nunca derrubam a busca.
 async function callWebFunction(
   provider: "tavily" | "firecrawl",
   payload: { query?: string; url?: string; limit?: number },
-): Promise<{ ok: boolean; results?: unknown[]; content?: string | null }> {
+): Promise<{ ok: boolean; results?: WebItem[]; content?: string }> {
   const baseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   const fnName = provider === "tavily" ? "search-tavily" : "search-firecrawl";
@@ -30,9 +38,10 @@ async function callWebFunction(
     const data = await res.json().catch(() => null);
     if (!data || typeof data !== "object") return { ok: false };
     if (payload.url) {
-      return { ok: true, content: typeof (data as { content?: unknown }).content === "string" ? (data as { content: string }).content : null };
+      return { ok: true, content: typeof (data as { content?: unknown }).content === "string" ? (data as { content: string }).content : undefined };
     }
-    return { ok: true, results: Array.isArray((data as { results?: unknown }).results) ? (data as { results: unknown[] }).results : [] };
+    const results = Array.isArray((data as { results?: unknown }).results) ? (data as { results: WebItem[] }).results : [];
+    return { ok: true, results };
   } catch {
     return { ok: false };
   } finally {
@@ -43,6 +52,128 @@ async function callWebFunction(
 async function scrapePageContent(url: string): Promise<string | null> {
   const result = await callWebFunction("firecrawl", { url });
   return result.ok ? (result.content ?? null) : null;
+}
+
+type WebDiscoveryDiag = {
+  enabled: boolean;
+  queries: Array<{ query: string; tavily: number; firecrawl: number }>;
+  total_candidates: number;
+  accepted: number;
+  error?: string;
+};
+
+// Descoberta web independente: usa Tavily/Firecrawl para encontrar leads
+// mesmo quando Google/OSM não encontraram nada. Nunca inventa dados.
+async function discoverLeadsViaWeb(
+  segment: string,
+  city: string, state: string,
+): Promise<{ leads: PublicLead[]; diagnostics: WebDiscoveryDiag }> {
+  const webDiag: WebDiscoveryDiag = { enabled: true, queries: [], total_candidates: 0, accepted: 0 };
+  const discovered: PublicLead[] = [];
+  const seen = new Set<string>();
+  const segNorm = normalizeText(segment);
+
+  const queries = [
+    `${segment} em ${city}, ${state}`,
+    `${segment} ${city} ${state}`,
+    `${segment} ${city}`,
+    `melhores ${segment} em ${city}`,
+  ];
+
+  for (const query of queries.slice(0, 2)) {
+    try {
+      const web = await runWebSources({ query, limit: 10, call: callWebFunction });
+      webDiag.queries.push({ query, tavily: web.tavily.length, firecrawl: web.firecrawl.length });
+
+      const items = [...web.tavily, ...web.firecrawl];
+      for (const item of items) {
+        const name = item.title || "";
+        if (!name || name.length < 3) continue;
+
+        const text = `${name} ${item.description || ""} ${item.url}`;
+        const textNorm = normalizeText(text);
+        const segNormForQuery = segNorm;
+
+        // Verifica geografia: cidade (obrigatória) é o sinal forte; o estado
+        // complementa quando presente no snippet (muitas páginas omitem a UF).
+        if (!textMentionsGeo(text, city, state) && !textMentionsGeo(text, city, "")) continue;
+
+        // Verifica segmento
+        const segWords = segNormForQuery.split(/\s+/).filter(w => w.length >= 3);
+        const segOk = segWords.some(w => textNorm.includes(w)) || textNorm.includes(segNormForQuery);
+        if (!segOk) continue;
+
+        const host = hostOf(item.url);
+        if (!host || seen.has(host)) continue;
+        seen.add(host);
+
+        const phone = extractPhoneBR(text);
+        const whatsapp = extractWhatsAppExplicit(text) ?? extractWhatsappBR(text);
+        const hasContact = Boolean(phone || whatsapp);
+
+        // Precisão: só vira lead se houver contato na evidência OU se o domínio
+        // do resultado se alinhar ao nome do negócio (ex.: petcarebertioga.com.br
+        // ↔ "Pet Care Bertioga"). Isso impede que artigos/notícias/listas — que
+        // citam o segmento e a cidade — sejam confundidos com estabelecimentos.
+        const hostMain = host.split(".")[0] ?? "";
+        const genericTokens = new Set(["empresa", "servicos", "serviços", "ltda", "mei", "eireli", "associados", "associacao", "associação", "escritorio", "escritório", "centro", "clinica", "clínica"]);
+        const nameTokens = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/\s+/).filter((w) => w.length >= 4 && !genericTokens.has(w));
+        const domainAlign = nameTokens.some((tok) => hostMain.includes(tok));
+        if (!hasContact && !domainAlign) continue;
+
+        const lead: PublicLead = {
+          external_id: `web:${host}`,
+          name: name.slice(0, 200),
+          category: segment,
+          address: null,
+          city,
+          state,
+          phone,
+          whatsapp,
+          website: item.url,
+          google_url: item.url,
+          instagram: null,
+          facebook: null,
+          rating: null,
+          reviews_count: 0,
+          has_website: true,
+          score: 3,
+          score_reasons: ["Fonte: busca web"],
+          opening_hours: null,
+          latitude: null,
+          longitude: null,
+          confidence: "medium",
+          city_matches: true,
+        };
+
+        if (lead.phone || lead.whatsapp || lead.website) {
+          discovered.push(lead);
+        }
+      }
+    } catch (e) {
+      webDiag.error = e instanceof Error ? e.message : "web_error";
+    }
+  }
+
+  webDiag.total_candidates = discovered.length;
+  webDiag.accepted = discovered.length;
+  return { leads: discovered, diagnostics: webDiag };
+}
+
+// Wrapper que tenta com includedType e, se retornar poucos resultados, tenta sem.
+async function searchPlacesNewWithFallback(
+  textQuery: string,
+  maxPages: number,
+  options?: { locationBias?: { lat: number; lon: number; radius: number }; locationRestriction?: GeoBounds | null; includedType?: string | null; ctx?: SearchCtx },
+): Promise<{ places: PlaceRaw[]; error?: SearchError; fallbackUsed?: boolean; primaryCount?: number }> {
+  const result = await searchPlacesNew(textQuery, maxPages, options);
+  if (result.places.length <= 2 && options?.includedType) {
+    const fallbackResult = await searchPlacesNew(textQuery, maxPages, { ...options, includedType: null });
+    if (fallbackResult.places.length > result.places.length) {
+      return { places: fallbackResult.places, error: fallbackResult.error, fallbackUsed: true, primaryCount: result.places.length };
+    }
+  }
+  return { ...result, fallbackUsed: false, primaryCount: result.places.length };
 }
 
 const SOURCE_LABELS = {
@@ -129,6 +260,7 @@ type PublicLead = {
   has_website: boolean;
   score: number;
   score_reasons: string[];
+  commercial_score?: number;
   opening_hours: string[] | null;
   latitude: number | null;
   longitude: number | null;
@@ -291,6 +423,27 @@ function expandSegment(segment: string): string[] {
   if (/odonto|dento|dentist|dentaria|denti[a]ria|clinica dentaria/.test(normalized)) {
     for (const alias of ["dentista", "odontologia", "clinica odontologica", "consultorio odontologico", "clinica dentaria", "dentista particular", "especialista odontologico", "ortodontista", "dentista em "]) {
       if (set.size < 10) set.add(alias);
+    }
+  }
+  // Expansão genérica (segmentos sem mapa de sinônimos): gera variações
+  // morfológicas simples (singular/plural) das palavras significativas, além do
+  // núcleo sem conectivos. As buscas seguem limitadas à cidade/UF alvo, então o
+  // risco de ruído é baixo — o ganho é recall em segmentos fora do catálogo.
+  if (!match) {
+    const STOP = new Set(["de", "da", "do", "das", "dos", "em", "e", "a", "o", "na", "no", "com", "para", "por", "um", "uma", "especializado", "especializada", "servico", "servico de", "atendimento"]);
+    const words = normalized.split(/\s+/).filter((w) => w.length >= 4 && !STOP.has(w));
+    if (words.length > 0) {
+      if (set.size < 10) set.add(words.join(" "));
+      for (const w of words) {
+        if (set.size >= 10) break;
+        if (/s$/.test(w) && w.length > 4) {
+          const singular = w.replace(/es$/, "").replace(/s$/, "");
+          if (singular.length >= 4) set.add(`${w} ou ${singular}`);
+        } else {
+          const plural = w.endsWith("s") ? w : `${w}s`;
+          if (plural.length >= 4 && set.size < 10) set.add(`${w} ou ${plural}`);
+        }
+      }
     }
   }
   return Array.from(set).slice(0, 10);
@@ -1477,7 +1630,7 @@ function mapNominatimToLeads(items: NominatimItem[], city: string, state: string
     osmTagsById.set(extId, {
       class: it.class ?? "",
       type: it.type ?? "",
-      category: (it.category as string | undefined) ?? "",
+      category: ((it as unknown as { category?: unknown }).category as string | undefined) ?? "",
       name: name,
     });
   }
@@ -1695,6 +1848,33 @@ function hostOf(url: string): string {
 function isOfficialCandidateHost(host: string): boolean {
   if (!host || host.length < 4) return false;
   return !NON_OFFICIAL_HOSTS.some((bad) => host === bad || host.endsWith(`.${bad}`));
+}
+
+// Detecta sites de baixa qualidade comercial: domínios grátis/placeholder,
+// portais de marketplace, agregadores ou páginas sem presença própria.
+// Um site "ruim" significa que o dono ainda não tem presença digital sólida
+// → melhor lead para venda de landing page/site.
+function isLowQualityWebsite(website: string | null): boolean {
+  if (!website) return true;
+  const host = hostOf(website);
+  if (!host) return true;
+  const FREE_HOSTS = [
+    "wixsite.com", "weebly.com", "webnode.com", "blogspot.com",
+    "wordpress.com", "godaddysites.com", "site.google.com", "linktr.ee",
+    "carrd.co", "meu.site", "canva.site", "instabio.cc", "bio.link",
+    "toca.com.br", "facil.ws",
+  ];
+  if (FREE_HOSTS.some((f) => host === f || host.endsWith(`.${f}`))) return true;
+  // Portais de diretório / marketplace — não são site próprio do negócio.
+  const DIRECTORY_HOSTS = [
+    "facebook.com", "instagram.com", "whatsapp.com", "wa.me", "youtube.com",
+    "linkedin.com", "google.com", "g.page", "mercadolivre.com",
+    "ifood.com", "foursquare.com", "yelp.com", "tripadvisor.com",
+  ];
+  if (DIRECTORY_HOSTS.some((d) => host === d || host.endsWith(`.${d}`))) return true;
+  // IP puro ou localhost também não é site real.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host === "localhost") return true;
+  return false;
 }
 
 function digits(v: string | null | undefined): string {
@@ -1987,6 +2167,25 @@ function computeLeadPriority(lead: PublicLead, segment: string, module: "orvix" 
   let p = 0;
   // Segment tier
   p += segmentPriorityWeight(segment);
+  // Commercial qualification — ORDENA, nunca filtra.
+  // Leads sem site (com ou sem contato) são o foco para venda de sites.
+  // No módulo orvix o ranking mantém os sinais de reputação/alcance.
+  if (module !== "orvix") {
+    if (lead.commercial_score != null) {
+      p += lead.commercial_score;
+    } else {
+      // Fallback para leads sem commercial_score computado (ex.: chamadas fora
+      // do fluxo principal de busca). Espelha a mesma hierarquia.
+      const hasSite = !!lead.has_website;
+      if (!hasSite) {
+        if (lead.whatsapp) p += 40;
+        else if (lead.phone || lead.instagram) p += 30;
+        else p += 22;
+      } else if (isLowQualityWebsite(lead.website)) {
+        p += 10;
+      }
+    }
+  }
   // Activity / reputation signals
   if (lead.reviews_count >= 100) p += 18;
   else if (lead.reviews_count >= 50) p += 12;
@@ -1998,22 +2197,6 @@ function computeLeadPriority(lead: PublicLead, segment: string, module: "orvix" 
   if (lead.whatsapp) p += 12;
   if (lead.phone) p += 4;
   if (lead.instagram) p += 6;
-  // Oportunidade comercial (landing pages): WhatsApp + sem site é o TOPO.
-  // Sem excluir ninguém — apenas prioriza; os demais continuam no resultado.
-  const hasSite = !!lead.has_website;
-  if (module !== "orvix") {
-    if (!hasSite) {
-      // SEM SITE = cliente para vender site. Contato (whatsapp/telefone/instagram)
-      // qualifica; WhatsApp dá bônus. Sem contato também entra (abaixo).
-      if (lead.whatsapp) p += 40;
-      else if (lead.phone || lead.instagram) p += 30;
-      else p += 22;
-    } else {
-      const host = hostOf(lead.website ?? "");
-      const weak = ["wixsite.com", "weebly.com", "webnode.com", "blogspot.com", "wordpress.com", "godaddysites.com", "site.google.com", "linktr.ee"];
-      if (weak.some((w) => host.endsWith(w))) p += 10;
-    }
-  }
   // City match bonus
   if (lead.city_matches) p += 5;
   // Confidence
@@ -2281,7 +2464,7 @@ Deno.serve(async (req) => {
     const sourcesTried: string[] = [];
     const warnings: Array<{ source: string; code?: string; message: string; action?: string }> = [];
     let leads: PublicLead[] = [];
-    let source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery" | "none" = "none";
+    let source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery" | "web_discovery" | "none" = "none";
 
     // Diagnostics: onde os leads são perdidos ao longo do funil.
     const diagnostics: Record<string, unknown> = {
@@ -2304,12 +2487,13 @@ Deno.serve(async (req) => {
     // includedType) e regras aplicadas. Sem persistência em banco.
     // ────────────────────────────────────────────────────────────
     type LeadAuditEntry = {
-      source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery";
+      source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery" | "web_discovery";
       synonym?: string;
       includedType?: string | null;
       rule?: string;
       osmTags?: Record<string, string> | null;
       category?: string | null;
+      web_enriched?: boolean;
       googleTypes?: string[] | null;
     };
     const perLeadAudit = new Map<string, LeadAuditEntry>();
@@ -2345,7 +2529,7 @@ Deno.serve(async (req) => {
           if (ctx.googleCircuitOpen) {
             return Promise.resolve({ places: [] as PlaceRaw[], error: { status: 429, text: JSON.stringify({ error: { message: "GOOGLE_CIRCUIT_OPEN" } }), endpoint: "searchText" } as SearchError });
           }
-          return searchPlacesNew(job.query, maxPages, { includedType: job.includedType, ctx })
+          return searchPlacesNewWithFallback(job.query, maxPages, { includedType: job.includedType, ctx })
             .catch((e) => ({ places: [] as PlaceRaw[], error: { status: 0, text: String(e), endpoint: "searchText" } as SearchError }));
         },
         { interItemDelayMs: GOOGLE_INTER_ITEM_DELAY_MS },
@@ -2373,7 +2557,7 @@ Deno.serve(async (req) => {
               return Promise.resolve({ places: [] as PlaceRaw[], error: { status: 429, text: JSON.stringify({ error: { message: "GOOGLE_CIRCUIT_OPEN" } }), endpoint: "searchText+geo" } as SearchError });
             }
             const base = (geoOptions ?? {}) as { locationBias?: { lat: number; lon: number; radius: number }; locationRestriction?: GeoBounds };
-            return searchPlacesNew(job.synonym, Math.max(maxPages, 2), { ...base, includedType: job.includedType, ctx })
+            return searchPlacesNewWithFallback(job.synonym, Math.max(maxPages, 2), { ...base, includedType: job.includedType, ctx })
               .catch((e) => ({ places: [] as PlaceRaw[], error: { status: 0, text: String(e), endpoint: "searchText+geo" } as SearchError }));
           },
           { interItemDelayMs: GOOGLE_INTER_ITEM_DELAY_MS },
@@ -2831,12 +3015,20 @@ Deno.serve(async (req) => {
         return { score, positives, negatives: dedupNeg, reason: primaryReason };
       };
 
+      // Score adaptativo: o limite rígido (30) exige termo forte no nome,
+      // o que rejeita negócios legítimos cujo nome não contém o segmento
+      // (ex.: clínica veterinária "Bem Estar" — tag compatível, nome genérico).
+      // Como a recuperação só roda quando as fontes estruturadas voltaram 0,
+      // aceitamos sinais positivos isolados SEM sinais negativos num piso menor.
       const RECOVERY_MIN_SCORE = 30;
+      const RECOVERY_MIN_SCORE_LENIENT = 10;
       const recoveryRejections: Array<{ id: string; name: string; score: number; reason: string; positives: string[]; negatives: string[] }> = [];
       const validatedRecoveryLeads: PublicLead[] = [];
       for (const l of recoveryLeads) {
         const { score, positives, negatives, reason } = scoreRecoveryLead(l);
-        if (score >= RECOVERY_MIN_SCORE) {
+        const accepted = score >= RECOVERY_MIN_SCORE ||
+          (score >= RECOVERY_MIN_SCORE_LENIENT && positives.length > 0 && negatives.length === 0);
+        if (accepted) {
           validatedRecoveryLeads.push(l);
         } else {
           recoveryRejections.push({
@@ -2866,6 +3058,7 @@ Deno.serve(async (req) => {
         accepted_count: recoveryAcceptedCount,
         rejected_count: recoveryRejections.length,
         min_score: RECOVERY_MIN_SCORE,
+        min_score_lenient: RECOVERY_MIN_SCORE_LENIENT,
         rejection_reasons: (diagnostics.recovery_rejection_reason as unknown[]),
         source: SOURCE_LABELS.overpassRecovery,
       };
@@ -2906,21 +3099,38 @@ Deno.serve(async (req) => {
       };
     }
 
-    // Website Discovery + Instagram Discovery are NO LONGER blocking.
-    // They now run em background via a segunda chamada (mode: "enrich") disparada
-    // pelo frontend após o retorno inicial. Isso permite que a busca retorne
-    // imediatamente e os cards atualizem os campos website/instagram quando prontos.
+    // ─── Descoberta web independente ──────────────────────────────
+    // Quando Google/OSM não retornaram leads, usa Tavily/Firecrawl
+    // para descobrir estabelecimentos via busca na web. Nunca inventa dados.
+    if (leads.length === 0) {
+      sourcesTried.push("web_discovery");
+      const webDiscovery = await discoverLeadsViaWeb(segment, city, state);
+      leads = webDiscovery.leads;
+      const existingWeb = typeof diagnostics.web_sources === "object" && diagnostics.web_sources
+        ? diagnostics.web_sources as Record<string, unknown>
+        : {} as Record<string, unknown>;
+      diagnostics.web_sources = { ...existingWeb, ...webDiscovery.diagnostics };
+      if (leads.length > 0 && source === "none") source = "web_discovery";
+      for (const l of leads) {
+        perLeadAudit.set(l.external_id, {
+          source: "web_discovery",
+          synonym: segment,
+          includedType: null,
+          rule: "web_tavily_discovery",
+          category: l.category ?? null,
+        });
+      }
+    }
 
-
-
-
-    // ─── Fontes web complementares (Tavily + Firecrawl) ─────────────────────
+    // ─── Fontes web complementares (Tavily + Firecrawl) ──────────
     // Google continua opcional; a busca funciona por OSM/Overpass + enriquecimento
     // web. Este bloco nunca cria nem remove leads — apenas adiciona website e
     // contato reais quando há evidência (match por nome/domínio e scrape com
     // confirmação geográfica). Falha de qualquer fonte não derruba a busca.
-    const webDiag: Record<string, unknown> = { enabled: true };
-    if (leads.length > 0) {
+    const webDiag: Record<string, unknown> = { enabled: leads.length > 0 };
+    // Leads já descobertos pela web não passam por nova rodada de enrich —
+    // a busca por cidade+segmento seria a mesma que acabou de gerar os leads.
+    if (leads.length > 0 && source !== "web_discovery") {
       try {
         const webQuery = `${city} ${segment}`.trim();
         const web = await runWebSources({ query: webQuery, limit: 8, call: callWebFunction });
@@ -2950,10 +3160,68 @@ Deno.serve(async (req) => {
       } catch (e) {
         webDiag.error = e instanceof Error ? e.message : "web_error";
       }
-    } else {
-      webDiag.enabled = false;
     }
-    diagnostics.web_sources = webDiag;
+    // Preserva métricas da descoberta independente (quando houve) e adiciona
+    // as da rodada de enrich — webDiag nunca sobrescreve o funil da descoberta.
+    diagnostics.web_sources = {
+      ...(diagnostics.web_sources && typeof diagnostics.web_sources === "object" ? diagnostics.web_sources as Record<string, unknown> : {}),
+      ...webDiag,
+    };
+
+    // ─── Qualificação comercial ──────────────────────────────────
+    // O motor rankeia por potencial comercial, não filtra.
+    // Ordem de prioridade (maior para menor):
+    //   1. Sem site + com WhatsApp  → lead quente, maior conversão
+    //   2. Com site ruim + WhatsApp → site não serve, mas tem contato
+    //   3. Com site ruim             → site não é confiável
+    //   4. Com site bom             → lead frio, já tem presença digital
+    // O commercial_score alimenta o sort (peso no computeLeadPriority) —
+    // nunca exclui lead do resultado.
+    if (leads.length > 0) {
+      for (const l of leads) {
+        const website = l.website ?? null;
+        const whatsapp = l.whatsapp ?? null;
+        const phone = l.phone ?? null;
+        const hasContact = Boolean(whatsapp || phone);
+        const hasWebsite = Boolean(website);
+
+        if (!hasWebsite && hasContact) {
+          l.commercial_score = 100;
+          l.score_reasons = [...(l.score_reasons ?? []), "Sem site + contato → lead quente"];
+        } else if (hasWebsite && hasContact) {
+          // Site ruim = domínio free/placeholder ou muito curto, ou sem evidência de segmento.
+          const isBadSite = isLowQualityWebsite(website);
+          if (isBadSite) {
+            l.commercial_score = 70;
+            l.score_reasons = [...(l.score_reasons ?? []), "Site ruim + contato → lead quente"];
+          } else {
+            l.commercial_score = 10;
+            l.score_reasons = [...(l.score_reasons ?? []), "Site bom + contato → lead frio"];
+          }
+        } else if (hasWebsite && !hasContact) {
+          const isBadSite = isLowQualityWebsite(website);
+          l.commercial_score = isBadSite ? 40 : 5;
+          l.score_reasons = [...(l.score_reasons ?? []), isBadSite ? "Site ruim sem contato" : "Site bom sem contato"];
+        } else {
+          // Sem site e sem contato visível — lead escasso
+          l.commercial_score = 20;
+          l.score_reasons = [...(l.score_reasons ?? []), "Sem site, sem contato visível"];
+        }
+      }
+    }
+
+    // Pipeline metrics — contabiliza cada etapa do funil para auditoria.
+    const pipeline = {
+      discovered: leads.length,
+      valid: leads.length,
+      deduped: leads.length,
+      phone: leads.filter((l) => Boolean(l.phone)).length,
+      whatsapp: leads.filter((l) => Boolean(l.whatsapp)).length,
+      no_site: leads.filter((l) => !l.website).length,
+      opportunity: leads.filter((l) => !l.website && Boolean(l.whatsapp || l.phone)).length,
+      qualified: leads.filter((l) => (l.commercial_score ?? 0) >= 40).length,
+    };
+    diagnostics.pipeline = pipeline;
 
     // Intelligent priority sort — internal Lead Score, never excludes leads.
     if (leads.length > 0) {
@@ -3044,6 +3312,8 @@ Deno.serve(async (req) => {
         recovery_raw_count: Number(diagnostics.recovery_raw) || 0,
         recovery_accepted_count: Number(diagnostics.recovery_accepted) || 0,
         recovery_attempted: !!diagnostics.recovery_attempted,
+        web_discovery_count: Number((diagnostics.web_sources as Record<string, unknown> | undefined)?.["total_candidates"] ?? 0) || 0,
+        web_discovery_attempted: sourcesTried.includes("web_discovery"),
         after_dedupe_count: leads.length,
         after_segment_filter_count: null as number | null, // preenchido no cliente (filtro Orvix)
         rejected_count: 0, // preenchido no cliente
