@@ -662,7 +662,8 @@ export default function SiteProjectPage() {
     const strategy = strategyById(id);
     if (!strategy) return;
     const label = `${strategy.emoji} ${strategy.label}`;
-    const instruction = buildStrategyInstruction(id, {
+    // strategy.id é StrategyId (validado por strategyById) — sem `as any`.
+    const instruction = buildStrategyInstruction(strategy.id, {
       name: project.company_name || project.name,
       segment: project.segment,
     });
