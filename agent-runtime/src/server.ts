@@ -303,6 +303,7 @@ export function startServer(port = PORT, host = HOST) {
           send(res, 200, {
             status: "error",
             error: genExec.blocked.message,
+            errors: [genExec.blocked.message],
             blocked_reason: genExec.blocked.message,
             blocked_code: genExec.blocked.code,
             runtime: "cline",
@@ -518,6 +519,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           send(res, 200, {
             status: "error",
             error: exec.blocked.message,
+            errors: [exec.blocked.message],
             blocked_reason: exec.blocked.message,
             blocked_code: exec.blocked.code,
             runtime: "cline",

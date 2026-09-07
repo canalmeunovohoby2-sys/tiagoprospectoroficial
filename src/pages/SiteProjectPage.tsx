@@ -571,7 +571,17 @@ export default function SiteProjectPage() {
           return;
         }
         if (agentErr || !agentRes || !agentRes.files || !Object.keys(agentRes.files).length) {
-          // Sem evidência de mudança → fallback para o fluxo spec (edit-site).
+          // PRINCÍPIO ABSOLUTO: sem IA validada comprovada → NÃO executa, e NÃO
+          // há fallback para uma IA "padrão" (o fallback legado foi removido).
+          const blocked = (agentRes as { blocked_reason?: string; blocked_code?: string } | undefined)?.blocked_reason;
+          const reason = blocked
+            ? blocked
+            : "Não foi possível executar com a IA validada (Agent Runtime indisponível ou falhou). Nenhuma IA padrão é usada — configure e valide a IA em Configurações e tente de novo.";
+          pushReply(`⚠ ${reason}`);
+          stopProgress();
+          setAgentStep(null);
+          setAiRunning(false);
+          return;
         }
       }
 
