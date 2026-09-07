@@ -125,10 +125,17 @@ export class BrowserSession {
       // perigo: só permitimos a própria origem (bloqueia acesso externo do agente)
       throw new Error("URL fora do workspace bloqueada (segurança).");
     }
-    if (!this.browser) this.browser = await chromium.launch({ 
-      headless: true, 
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu-sandbox"] 
-    });
+    if (!this.browser) {
+      try {
+        this.browser = await chromium.launch({ 
+          headless: true, 
+          args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu-sandbox"] 
+        });
+      } catch (launchErr) {
+        const msg = launchErr instanceof Error ? launchErr.message : String(launchErr);
+        throw new Error(`Falha ao iniciar Chromium (Playwright): ${msg}. Verifique se 'npx playwright install chromium' foi executado e se as dependências do sistema estão instaladas.`);
+      }
+    }
     this.page = await this.browser.newPage({ viewport: viewport ?? { width: 1366, height: 768 } });
     this.consoleLogs = [];
     this.requestErrors = [];

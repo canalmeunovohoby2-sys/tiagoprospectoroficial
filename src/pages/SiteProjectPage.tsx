@@ -37,7 +37,7 @@ export interface ChatMessage {
 }
 
 function friendlyAiError(e: unknown): string {
-  const raw = e instanceof Error ? e.message : "Erro ao aplicar alteração.";
+  const raw = e instanceof Error ? e.message : String(e);
   const lower = raw.toLowerCase();
   if (/non-2xx|edge function returned|http 5\d\d|503|529/.test(lower)) {
     return "O serviço de IA está temporariamente ocupado. Nada foi alterado — tente novamente em instantes.";
@@ -48,6 +48,10 @@ function friendlyAiError(e: unknown): string {
   if (/timeout|tempo limite|took too long/.test(lower)) {
     return "A IA demorou demais para responder. Nada foi alterado — tente novamente.";
   }
+  if (/fetch|network|connection|ssl|tls|cerificado|dns|resolve|enospc|.buffer|out of memory|heap|insufficient memory/i.test(lower)) {
+    return "Não foi possível conectar ao servidor de geração. Verifique sua conexão e tente novamente em instantes.";
+  }
+  if (raw.length > 200) return `Erro: ${raw.slice(0, 120)}…`;
   return raw;
 }
 
@@ -273,7 +277,8 @@ export default function SiteProjectPage() {
       saveBlob(new Blob([buffer], { type: "application/pdf" }), fileName);
       toast.success("Proposta em PDF gerada com capturas reais do site");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao gerar PDF");
+      console.error("[handlePdf]", e);
+      toast.error(friendlyAiError(e));
     } finally {
       setBusyAction(null);
     }
