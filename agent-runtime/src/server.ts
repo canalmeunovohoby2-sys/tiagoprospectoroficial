@@ -501,6 +501,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           gate_ok: gateResult.ok,
           gate_issues: gateResult.issues,
           interaction: { ok: interaction.ok, tested: interaction.tested, issues: interaction.issues, cycles: interaction.cycles },
+          timing: finalOutcome.timing,
           finish_skips: finalOutcome.finishSkips,
           finish_blocked: finalOutcome.finishBlocked,
           events: events.slice(0, 200),
@@ -698,6 +699,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           attach_errors: attachResult.errors,
           interaction,
           resumed_session: resume,
+          timing: outcome.timing,
           events: events.slice(0, 150),
           activity,
         };
