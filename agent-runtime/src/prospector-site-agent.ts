@@ -10,6 +10,7 @@ import { BrowserSession } from "./browser-session.js";
 import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
 import { decideFinishBlock } from "./completion-guard.js";
+import { hasImageReferenceChange, requestsImageSwap } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
 import { computeWorkEvidence, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
@@ -298,7 +299,9 @@ export class ProspectorSiteAgent {
       const reply = extractLastAssistantText(result?.messages ?? []) || "Concluído.";
       const activity = ProspectorSiteAgent.operationalEvents(events as unknown as never[]);
       return {
-        ok: true, reply, files, touched, iterations: 0, events, activity,
+        ok: true,
+        reply: this.honestReply(reply, files, touched),
+        files, touched, iterations: 0, events, activity,
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
         researchTrace: this.researchTrace.slice(),
       };
@@ -325,6 +328,25 @@ export class ProspectorSiteAgent {
     this.conversationStarted = false;
     this.beforeFiles = {};
     this.pendingScreenshotPath = null;
+  }
+
+  /**
+   * Reduz a "mentira" do agente em modo EDIÇÃO: se a resposta final afirma que
+   * alterou algo mas NENHUM arquivo mudou — ou prometeu trocar imagem/foto sem
+   * que nenhuma referência de imagem no código tenha mudado —, a resposta é
+   * substituída por uma mensagem curta e honesta pedindo nova tentativa.
+   */
+  private honestReply(reply: string, files: FileMap, touched: string[]): string {
+    if (this.options.mode === "edit") {
+      const claimsChange = /(corrigi|consert[ei]|troquei|alterei|modifiquei|atualizei|adicionei|reconstru[ií]|removi|mudei|implementei|apliquei|arrumei|resolvi|coloquei)/i.test(reply);
+      if (touched.length === 0 && claimsChange) {
+        return "⚠ Não consegui aplicar essa alteração: nenhum arquivo do site foi modificado nesta tentativa. Descreva de outro jeito (ex.: nome exato da foto/seção) que eu tento de novo.";
+      }
+      if (requestsImageSwap(this.currentInstruction) && !hasImageReferenceChange(this.runStartFiles ?? {}, files) && /(troquei|alterei|corrigi|coloquei|aplicada)/i.test(reply)) {
+        return "⚠ Não consegui trocar a imagem solicitada: nenhuma referência de imagem no código foi alterada nesta tentativa. Confirme o arquivo/foto exatos que eu aplico de verdade.";
+      }
+    }
+    return reply;
   }
 
   /** Capacidade de visão resolvida (provider/modelo). */

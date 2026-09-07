@@ -75,11 +75,14 @@ export function decideFinishBlock(opts: {
 
   // 1) EVIDÊNCIA: se a instrução pedia mudança e nenhum arquivo mudou nesta run,
   //    o agente não pode afirmar que executou. (aplica a edit E generate)
+  // Bloqueia a PRIMEIRA tentativa (força o modelo a reavaliar); na segunda, se
+  // ainda não houver mudança, o guard deixa finalizar e o runTask reescreve a
+  // resposta final para ser HONESTA (nunca afirmar o que não aconteceu).
   const requestedChange = opts.instruction ? instructionRequestsChange(opts.instruction) : false;
-  if (requestedChange && hasStart && !changed) {
+  if (requestedChange && hasStart && !changed && opts.finishSkips === 0) {
     return {
       block: true,
-      reason: `A instrução pedia uma alteração no site, mas NENHUM arquivo foi modificado nesta execução. Você NÃO pode afirmar que executou. Use as ferramentas (write_file/edit_file) para aplicar a alteração REAL e só então chame finish_task. Se não havia o que mudar, explique por quê sem afirmar que alterou.`,
+      reason: `A instrução pedia uma alteração no site, mas NENHUM arquivo foi modificado nesta execução. Você NÃO pode afirmar que executou. Use as ferramentas (write_file/edit_file) para aplicar a alteração REAL e só então chame finish_task. Se o estado pedido JÁ estava correto ou não havia o que mudar, finalize dizendo isso claramente (sem afirmar que alterou).`,
     };
   }
 
@@ -87,29 +90,31 @@ export function decideFinishBlock(opts: {
   //    finaliza com evidência de que uma referência de imagem MUDOU no código.
   if (opts.mode === "edit" && hasStart && changed && opts.startFiles && requestedChange) {
     const wantsSwap = requestsImageSwap(opts.instruction ?? "");
-    if (wantsSwap && !hasImageReferenceChange(opts.startFiles, files)) {
+    if (wantsSwap && !hasImageReferenceChange(opts.startFiles, files) && opts.finishSkips === 0) {
       return {
         block: true,
-        reason: `Você foi solicitado a TROCAR/SUBSTITUIR uma imagem, mas o CONJUNTO de imagens no código não mudou (nenhuma URL de imagem foi substituída). Localize o elemento solicitado, altere de verdade a URL/path da imagem com edit_file e verifique no navegador antes de chamar finish_task. Se a imagem já era a correta, explique sem afirmar que trocou.`,
+        reason: `Você foi solicitado a TROCAR/SUBSTITUIR uma imagem, mas o CONJUNTO de imagens no código não mudou (nenhuma URL de imagem foi substituída). Localize o elemento solicitado, altere de verdade a URL/path da imagem com edit_file e verifique no navegador antes de chamar finish_task. Se a imagem já era a correta, finalize dizendo que ela já estava assim.`,
       };
     }
   }
 
-  // 3) DEPTH GUARD (5.28, modo edit): tarefas amplas não finalizam sem evidência
-  //    de que o agente ENTENDEU o estado atual (inspeção antes da 1ª alteração) e
-  //    VERIFICOU o resultado (após a última alteração).
+  // 3) DEPTH GUARD (5.28, modo edit): tarefas amplas — e pedidos de TROCA DE
+  //    IMAGEM/FOTO — não finalizam sem evidência de que o agente ENTENDEU o
+  //    estado atual (inspeção antes da 1ª alteração) e VERIFICOU o resultado
+  //    (após a última alteração, com releitura ou browser/visual_review).
   if (opts.mode === "edit" && requestedChange && hasStart && changed && opts.work) {
     const broad = isBroadQualityRequest(opts.instruction ?? "");
-    if (broad && opts.work.inspectedBeforeEdit === false) {
+    const imageSwap = requestsImageSwap(opts.instruction ?? "");
+    if ((broad || imageSwap) && opts.work.inspectedBeforeEdit === false) {
       return {
         block: true,
-        reason: `Tarefa ampla de qualidade/transformação: você alterou arquivos, mas NÃO há evidência de que inspecionou o estado atual ANTES da primeira alteração. Para um resultado profissional: ENTENDA o projeto (leia os arquivos relevantes com read_file, use list_files/get_site_context e, se envolver aparência/UX, abra o site no navegador) e só então continue e finalize.`,
+        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de que inspecionou o estado atual ANTES da primeira alteração. ENTENDA o projeto: leia os arquivos relevantes com read_file (e, se envolver aparência/UX/imagem, abra o site no navegador) para localizar o elemento/foto exato — só então continue e finalize.`,
       };
     }
-    if (broad && opts.work.verifiedAfterLastEdit === false) {
+    if ((broad || imageSwap) && opts.work.verifiedAfterLastEdit === false) {
       return {
         block: true,
-        reason: `Tarefa ampla de qualidade/transformação: você alterou arquivos, mas NÃO há evidência de que verificou o resultado DEPOIS da última alteração. Releia o(s) arquivo(s) alterado(s) ou execute browser_inspect/browser_reload/visual_review (Gemini) para confirmar o resultado e corrigir qualquer problema antes de chamar finish_task.`,
+        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de verificação do resultado DEPOIS da última alteração. Releia o(s) arquivo(s) alterado(s) (read_file) e/ou execute browser_reload/browser_inspect/visual_review para confirmar que a mudança (inclusive imagem/foto) está realmente aplicada antes de chamar finish_task.`,
       };
     }
   }
