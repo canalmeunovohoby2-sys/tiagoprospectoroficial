@@ -35,7 +35,12 @@ Deno.serve(async (req) => {
     if (!supabaseUrl || !supabaseKey || !token) return json({ error: "autenticação necessária" }, 401);
 
     // Quem é o usuário autenticado (via service role + token do usuário).
-    const admin = createClient(supabaseUrl, supabaseKey, { global: { headers: { Authorization: auth } } });
+    // IMPORTANTE: NÃO sobrescrever o header Authorization do client admin —
+    // se sobrescrever com o token do usuário, TODAS as operações de banco
+    // passam a rodar no papel `authenticated` (sujeitas a RLS), e o upsert de
+    // chave nova quebra (a tabela não tem política de INSERT). getUser(token)
+    // já envia o token do usuário na chamada /auth/v1/user por parâmetro.
+    const admin = createClient(supabaseUrl, supabaseKey);
     const { data: user, error: userErr } = await admin.auth.getUser(token);
     if (userErr || !user?.user) return json({ error: "autenticação inválida" }, 401);
     const userId = user.user.id;

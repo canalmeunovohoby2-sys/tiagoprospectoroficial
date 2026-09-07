@@ -27,7 +27,23 @@ interface ProviderState {
 
 async function callAiConfig(body: Record<string, unknown>) {
   const { data, error } = await supabase.functions.invoke("ai-config", { body });
-  if (error) throw new Error(error.message || "Falha ao acessar configuração de IA");
+  if (error) {
+    // O supabase-js só expõe "Edge Function returned a non-2xx status code".
+    // Tenta ler o corpo real da resposta para mostrar o motivo verdadeiro.
+    let detail = "";
+    try {
+      const ctx = (error as { context?: { json?: () => Promise<unknown> } }).context;
+      if (ctx?.json) {
+        const parsed = (await ctx.json()) as { error?: unknown } | null;
+        if (parsed && typeof parsed === "object" && "error" in parsed && typeof parsed.error === "string" && parsed.error) {
+          detail = ` — ${parsed.error}`;
+        }
+      }
+    } catch {
+      /* sem corpo legível */
+    }
+    throw new Error(`${error.message || "Falha ao acessar configuração de IA"}${detail}`);
+  }
   return data as Record<string, unknown>;
 }
 
