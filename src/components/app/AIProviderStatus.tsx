@@ -64,6 +64,13 @@ export function AIProviderStatus() {
   }, [loading]);
 
   useEffect(() => { run(); /* eslint-disable-next-line */ }, []);
+  // Ao validar/ativar um provider nas configurações, o status ativo atualiza na hora.
+  useEffect(() => {
+    const handler = () => { run(); };
+    window.addEventListener("ai-config-validated", handler);
+    return () => window.removeEventListener("ai-config-validated", handler);
+    /* eslint-disable-next-line */
+  }, [run]);
 
   return (
     <div className="space-y-4">

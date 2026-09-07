@@ -39,7 +39,9 @@ Deno.serve(async (req) => {
 
     const { data: rows } = await admin.from("ai_provider_config").select("provider,api_key,model,enabled,is_default,fallback_provider").eq("user_id", userId);
     const list = Array.isArray(rows) ? rows : [];
-    const def = list.find((r) => r.is_default) ?? list.find((r) => r.enabled);
+    // Só o provider VALIDADO (teste real bem-sucedido → is_default=true) com chave
+    // é usado como ativo. "salvo" ou "enabled" sem validação NÃO ativa.
+    const def = list.find((r) => r.is_default && r.api_key);
     const global = def
       ? { provider: def.provider ?? undefined, model: def.model ?? undefined, fallback: def.fallback_provider ?? undefined }
       : undefined;
@@ -56,7 +58,9 @@ Deno.serve(async (req) => {
     if (!cfg.ok) return json({ error: cfg.error ?? "configuração inválida", provider: cfg.provider, model: cfg.model }, 400);
     if (cfg.provider === "gemini") return json({ error: "Gemini é suportado apenas no fluxo edge (sem adaptador Cline nesta fase).", provider: "gemini" }, 400);
 
-    const row = list.find((r) => r.provider === cfg.provider && r.enabled);
+    // Chave do provider ativo validado; env serve apenas como baseline quando o
+    // usuário ainda não validou nenhum provider.
+    const row = def ?? list.find((r) => r.provider === cfg.provider && r.is_default === false && r.enabled && r.api_key);
     const apiKey = row?.api_key || Deno.env.get(ENV_KEY[cfg.provider]) || "";
     if (!apiKey) return json({ error: `Chave de API não configurada para ${cfg.provider}.`, provider: cfg.provider, model: cfg.model }, 400);
 

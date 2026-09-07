@@ -12,6 +12,13 @@ const PROVIDERS: Array<{ id: ProviderName; label: string; defaultModel: string }
   { id: "gemini", label: "Gemini", defaultModel: DEFAULT_GEMINI_MODEL },
 ];
 
+const ENV_KEYS: Record<ProviderName, string> = {
+  deepseek: "DEEPSEEK_API_KEY",
+  nvidia: "NVIDIA_API_KEY",
+  openai: "OPENAI_API_KEY",
+  gemini: "GEMINI_API_KEY",
+};
+
 function isProvider(v: string): v is ProviderName {
   return v === "deepseek" || v === "nvidia" || v === "openai" || v === "gemini";
 }
@@ -64,49 +71,48 @@ Deno.serve(async (req) => {
           model: r.model,
           enabled: !!r.enabled,
           isDefault: !!r.is_default,
+          validated: !!r.is_default,
           fallbackProvider: r.fallback_provider ?? null,
           updatedAt: r.updated_at,
         };
       });
       for (const p of PROVIDERS) {
-        if (!seen.has(p.id)) items.push({ provider: p.id, label: p.label, hasKey: false, maskedKey: null, model: p.defaultModel, enabled: false, isDefault: false, fallbackProvider: null, updatedAt: null });
+        if (!seen.has(p.id)) items.push({ provider: p.id, label: p.label, hasKey: false, maskedKey: null, model: p.defaultModel, enabled: false, isDefault: false, validated: false, fallbackProvider: null, updatedAt: null });
       }
       return json({ providers: items });
     }
 
     // --- SET (gravar chave/modelo/estado; nunca retorna a chave) ---
+    // SET grava chave/modelo/estado. NÃO ativa o provider: "salvo no banco"
+    // nunca é igual a "provider ativo". A ativação (is_default) só acontece
+    // quando um TESTE REAL ao provider retorna com sucesso (action "test").
     if (action === "set") {
       const provider = String(body.provider ?? "").toLowerCase();
       if (!isProvider(provider)) return json({ error: `Provedor desconhecido: ${provider}` }, 400);
       const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : PROVIDERS.find((p) => p.id === provider)!.defaultModel;
       const apiKey = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : undefined;
-      const wantEnabled = body.enabled !== false;
-      const wantDefault = body.isDefault === true;
+      const enabled = body.enabled !== false;
       const fallbackProvider = typeof body.fallbackProvider === "string" && body.fallbackProvider.trim() && body.fallbackProvider !== provider ? body.fallbackProvider.trim() : null;
       if (fallbackProvider && !isProvider(fallbackProvider)) return json({ error: `Fallback desconhecido: ${fallbackProvider}` }, 400);
 
-      // Configuração automática p/ uso global: a PRIMEIRA chave cadastrada é
-      // ativada automaticamente e vira o provedor padrão do app (o "cérebro"
-      // global do usuário) — não depende do usuário lembrar de marcar nada.
-      const { data: existingRows } = await table.select("id,enabled,is_default,api_key").eq("user_id", userId).eq("provider", provider).limit(1);
+      const { data: existingRows } = await table.select("id,is_default").eq("user_id", userId).eq("provider", provider).limit(1);
       const existing = Array.isArray(existingRows) ? existingRows[0] : undefined;
-      const hadKey = Boolean(existing?.api_key);
-      const isFirstKey = !hadKey && Boolean(apiKey);
-      const enabled = isFirstKey ? true : wantEnabled;
-      const { data: defRows } = await table.select("provider").eq("user_id", userId).eq("is_default", true).limit(1);
-      const hasDefault = Array.isArray(defRows) && defRows.length > 0;
-      const isDefault = wantDefault || (enabled && !hasDefault);
+      // Mantém o provider ativo (default) apenas se já estava ativo E continuar
+      // ativado. Desativar remove o posto de ativo (sem derrubar os demais).
+      const keepDefault = Boolean(existing?.is_default) && enabled;
 
-      const patch: Record<string, unknown> = { model, enabled, is_default: isDefault, updated_at: new Date().toISOString() };
+      const patch: Record<string, unknown> = {
+        model,
+        enabled,
+        is_default: keepDefault,
+        fallback_provider: fallbackProvider,
+        updated_at: new Date().toISOString(),
+      };
       if (apiKey) patch.api_key = apiKey;
-      patch.fallback_provider = fallbackProvider;
 
       const { error: upsErr } = await table.upsert({ user_id: userId, provider, ...patch }, { onConflict: "user_id,provider" });
       if (upsErr) return json({ error: upsErr.message }, 500);
-      if (isDefault) {
-        await table.update({ is_default: false }).eq("user_id", userId).neq("provider", provider);
-      }
-      return json({ ok: true, enabled, is_default: isDefault, auto_default: !wantDefault && isDefault });
+      return json({ ok: true, enabled, is_default: keepDefault, activated: false, message: "Configuração salva. Clique em TESTAR para validar e ativar este provedor." });
     }
 
     // --- REMOVE KEY (mantém provider configurado mas sem chave) ---
@@ -117,13 +123,17 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
 
-    // --- TEST (conexão real server-side com a chave armazenada) ---
+    // --- TEST (chamada REAL à API do provider/modelo configurado) ---
+    // Só uma chamada bem-sucedida com a CHAVE SALVA do usuário ativa o provider
+    // (is_default=true, derrubando o default anterior). Falha → nada muda.
     if (action === "test") {
       const provider = String(body.provider ?? "").toLowerCase();
       if (!isProvider(provider)) return json({ error: "provedor inválido" }, 400);
       const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : PROVIDERS.find((p) => p.id === provider)!.defaultModel;
-      const { data: rows } = await table.select("api_key,enabled,is_default").eq("user_id", userId).eq("provider", provider);
-      const apiKey = rows?.[0]?.api_key ?? undefined;
+      const { data: rows } = await table.select("api_key").eq("user_id", userId).eq("provider", provider);
+      const storedKey = rows?.[0]?.api_key ?? undefined;
+      // Chave do usuário salva OU (fallback de diagnóstico) chave do ambiente.
+      const apiKey = storedKey ?? Deno.env.get(ENV_KEYS[provider]) ?? undefined;
       if (!apiKey) {
         return json({ ok: false, kind: "missing_key", message: "Chave ausente. Adicione a API Key antes de testar." });
       }
@@ -143,17 +153,30 @@ Deno.serve(async (req) => {
         });
         const reply = (res.text ?? "").trim().slice(0, 120);
         const latencyMs = Date.now() - started;
+        const usingStored = !!storedKey;
+
+        // Ativa SOMENTE se a chave salva do usuário respondeu (chamada real).
+        let activated = false;
+        let isDefaultNow = false;
+        if (usingStored) {
+          const { error: actErr } = await table.update({ is_default: true }).eq("user_id", userId).eq("provider", provider);
+          if (!actErr) {
+            await table.update({ is_default: false }).eq("user_id", userId).neq("provider", provider);
+            activated = true;
+            isDefaultNow = true;
+          }
+        }
         return json({
           ok: true,
           provider: res.provider,
           model: res.model,
           latencyMs,
           reply,
-          enabled: !!rows?.[0]?.enabled,
-          isDefault: !!rows?.[0]?.is_default,
+          activated,
+          isDefault: isDefaultNow,
           message: reply
-            ? `Conexão válida — resposta: "${reply}" (${(latencyMs / 1000).toFixed(1)}s).`
-            : "Conexão estabelecida, mas o provedor não retornou texto.",
+            ? `Conexão válida — resposta: "${reply}" (${(latencyMs / 1000).toFixed(1)}s).${activated ? " Provedor validado e ATIVO (uso global)." : " Conexão ok via chave do ambiente (sem chave salva deste usuário — salve a chave e teste de novo para ativar)."}`
+            : `Conexão estabelecida, mas o provedor não retornou texto.${activated ? " Provedor ATIVO." : ""}`,
         });
       } catch (e) {
         const err = e instanceof AiError ? e : new Error(String(e));
@@ -169,7 +192,8 @@ Deno.serve(async (req) => {
           missing_key: { label: "Chave ausente.", kind: "missing_key" },
         };
         const info = map[kind] ?? map.upstream!;
-        console.warn("[ai-config] test", { provider, model, kind, status: e instanceof AiError ? e.status : undefined }); // nunca loga a chave
+        // Falha no teste → NÃO ativa; o provider ativo anterior permanece.
+        console.warn("[ai-config] test falhou (sem ativar)", { provider, model, kind, status: e instanceof AiError ? e.status : undefined });
         return json({ ok: false, kind: info.kind, message: info.label, latencyMs: Date.now() - started });
       }
     }

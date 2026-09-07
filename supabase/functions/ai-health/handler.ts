@@ -49,6 +49,17 @@ export interface HealthProviderInfo {
   latencyMs?: number;
   model?: string;
   errorKind?: string;
+  /** Provider ativo do USUÁRIO (validado com sucesso via TESTAR) — não só env. */
+  validated?: boolean;
+}
+
+export interface HealthConfigOverride {
+  /** Provider ativo escolhido pelo usuário (ai_provider_config com is_default). */
+  activeProvider?: ProviderName | null;
+  activeModel?: string | null;
+  activeApiKey?: string;
+  fallbackProvider?: ProviderName | null;
+  providers?: Partial<Record<ProviderName, { hasKey?: boolean; validated?: boolean; model?: string | null }>>;
 }
 
 export interface HealthPayload {
@@ -62,17 +73,33 @@ export interface HealthPayload {
 
 export async function runHealthCheck(opts: {
   getEnv: (k: string) => string | undefined;
-  runProvider: (provider: ProviderName, model: string) => Promise<{ model: string }>;
+  runProvider: (provider: ProviderName, model: string, apiKey?: string) => Promise<{ model: string }>;
+  /** Config do usuário (provider ativo validado) — sobrepõe o default de env. */
+  config?: HealthConfigOverride | null;
 }): Promise<HealthPayload> {
   const { getEnv, runProvider } = opts;
-  const rawActive = getEnv("AI_PROVIDER") ?? DEFAULT_PROVIDER;
-  const active: ProviderName | null = isProvider(rawActive) ? rawActive : null;
+  const cfg = opts.config;
+  const envActiveRaw = getEnv("AI_PROVIDER") ?? DEFAULT_PROVIDER;
+  const envActive: ProviderName | null = isProvider(envActiveRaw) ? envActiveRaw : null;
   const rawFallback = getEnv("AI_FALLBACK_PROVIDER");
-  const fallback: ProviderName | null = rawFallback && isProvider(rawFallback) ? rawFallback : null;
+  const envFallback: ProviderName | null = rawFallback && isProvider(rawFallback) ? rawFallback : null;
+  // Provider ativo do usuário (validado/testado com sucesso) tem precedência.
+  const active: ProviderName | null = cfg?.activeProvider ?? envActive;
+  const fallback: ProviderName | null = cfg?.fallbackProvider ?? envFallback;
 
   const providers: HealthProviderInfo[] = PROVIDER_NAMES.map((name) => {
-    const configured = providerConfigured(getEnv, name);
-    return { name, configured, status: configured ? "configured" : "not_configured", model: configured ? resolveProviderModel(getEnv, name) : undefined };
+    const envConfigured = providerConfigured(getEnv, name);
+    const uc = cfg?.providers?.[name];
+    const userHasKey = Boolean(uc?.hasKey);
+    const configured = userHasKey || envConfigured;
+    const userModel = uc?.model ?? null;
+    return {
+      name,
+      configured,
+      status: configured ? "configured" : "not_configured",
+      validated: !!uc?.validated,
+      model: configured ? (userModel ?? resolveProviderModel(getEnv, name)) : undefined,
+    };
   });
 
   // Teste de conectividade apenas no provider ativo (chamada mínima e barata).
@@ -83,10 +110,11 @@ export async function runHealthCheck(opts: {
     if (entry && entry.configured) {
       tested = active;
       try {
-        const result = await runProvider(active, entry.model ?? resolveProviderModel(getEnv, active));
+        const result = await runProvider(active, entry.model ?? resolveProviderModel(getEnv, active), cfg?.activeApiKey);
         entry.status = "online";
         entry.latencyMs = Date.now() - started;
         entry.model = result.model;
+        entry.validated = true;
       } catch (e) {
         entry.latencyMs = Date.now() - started;
         const kind = e instanceof AIProviderConfigurationError ? e.kind
@@ -101,7 +129,7 @@ export async function runHealthCheck(opts: {
 
   return {
     activeProvider: active,
-    activeModel: active ? resolveProviderModel(getEnv, active) : null,
+    activeModel: active ? (cfg?.activeModel && active === cfg?.activeProvider ? cfg.activeModel : resolveProviderModel(getEnv, active)) : null,
     fallbackProvider: fallback,
     testedProvider: tested,
     providers,

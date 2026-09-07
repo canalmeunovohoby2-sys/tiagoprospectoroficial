@@ -125,6 +125,11 @@ export function AiProvidersSettings() {
     patch(p.provider, { testing: true, testResult: null, error: null });
     try {
       const data = await callAiConfig({ action: "test", provider: p.provider, model: p.model });
+      const activated = Boolean(data.activated) || Boolean(data.isDefault);
+      if (activated) {
+        // Teste real OK → provider vira o ATIVO (uso global). Recarrega estados.
+        await load();
+      }
       patch(p.provider, {
         testResult: {
           ok: Boolean(data.ok),
@@ -135,9 +140,12 @@ export function AiProvidersSettings() {
           provider: typeof data.provider === "string" ? data.provider : undefined,
           model: typeof data.model === "string" ? data.model : undefined,
           enabled: typeof data.enabled === "boolean" ? data.enabled : undefined,
-          isDefault: typeof data.isDefault === "boolean" ? data.isDefault : undefined,
+          isDefault: Boolean(data.isDefault),
         },
       });
+      if (activated) {
+        window.dispatchEvent(new Event("ai-config-validated"));
+      }
     } catch (e) {
       patch(p.provider, { testResult: { ok: false, message: e instanceof Error ? e.message : "Falha no teste" } });
     } finally {
@@ -166,7 +174,7 @@ export function AiProvidersSettings() {
       {reloadError && <p className="text-sm text-destructive">{reloadError}</p>}
       <p className="text-xs text-muted-foreground">
         As chaves ficam armazenadas somente no servidor (Supabase). Nunca são exibidas por completo — você verá apenas o estado (últimos 4 dígitos).
-        Ao salvar a primeira chave, o provedor é ativado e vira o padrão global do app automaticamente.
+        Salvar apenas grava a chave/modelo. Para o provedor virar o <strong>provider ativo (uso global)</strong>, clique em <strong>TESTAR</strong>: só uma chamada real bem-sucedida ativa o provedor e substitui o ativo anterior.
       </p>
       {providers.map((p) => (
         <div key={p.provider} className="rounded-xl border border-border bg-card p-4">
@@ -204,16 +212,17 @@ export function AiProvidersSettings() {
             <label className="flex items-center gap-1.5">
               <input type="checkbox" checked={p.enabled} onChange={(e) => patch(p.provider, { enabled: e.target.checked })} /> Ativado
             </label>
-            <label className="flex items-center gap-1.5">
-              <input type="radio" checked={p.isDefault} onChange={() => patch(p.provider, { isDefault: true })} /> Usar como padrão global
-            </label>
-            <label className="flex items-center gap-1.5">
+            <span className="flex items-center gap-1.5">
               Fallback
               <select value={p.fallbackProvider ?? ""} onChange={(e) => patch(p.provider, { fallbackProvider: e.target.value || null })} className="rounded-md border border-border bg-background px-1.5 py-1 text-xs">
                 <option value="">— nenhum —</option>
                 {AI_PROVIDERS.filter((x) => x.id !== p.provider).map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
               </select>
-            </label>
+            </span>
+            {!p.isDefault && p.hasKey && (
+              <span className="text-[10px] text-amber-600">Salvo, mas ainda não ativo — clique em TESTAR para validar e ativar.</span>
+            )}
+            {p.isDefault && <span className="rounded-full bg-emerald-600/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600">✓ Validado e ATIVO (uso global)</span>}
             <button type="button" onClick={() => void save(p)} disabled={p.saving} className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">
               {p.saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Salvar
             </button>
