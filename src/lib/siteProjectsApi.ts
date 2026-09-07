@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import type { LeadSource, SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { pickLeadForSpec } from "@/data/siteProjects";
+import { getAgentTicket } from "./agentTicket";
 
 function rowToProject(row: unknown): SiteProjectRow | null {
   if (!row || typeof row !== "object") return null;
@@ -285,10 +286,12 @@ export interface ChatAttachmentInput {
 export async function captureWorkspaceScreenshots(files: Record<string, string>): Promise<{ desktop?: string; mobile?: string }> {
   const runtimeUrl = await editorRuntimeUrl();
   if (!runtimeUrl || !files || !Object.keys(files).some((k) => k.endsWith("index.html"))) return {};
+  const token = await getAgentTicket();
+  if (!token) return {};
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/capture`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ files }),
       signal: AbortSignal.timeout(60_000),
     });
@@ -314,10 +317,12 @@ export async function invokeProspectorAgent(input: {
 }, onLiveActivity?: (phase: string, detail: string) => void): Promise<AgentExecuteResult> {
   const runtimeUrl = await editorRuntimeUrl();
   if (!runtimeUrl) return editorUnavailableResult("not_configured");
+  const token = await getAgentTicket(input.projectId);
+  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não autenticado para executar o agente neste projeto."] };
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/run`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({
         instruction: input.instruction,
         files: input.files,
@@ -449,10 +454,12 @@ export async function invokeProspectorGenerate(input: {
 }): Promise<AgentExecuteResult> {
   const runtimeUrl = await editorRuntimeUrl();
   if (!runtimeUrl) return editorUnavailableResult("not_configured");
+  const token = await getAgentTicket(input.projectId);
+  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não autenticado para gerar o site deste projeto."] };
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {}, user_id: input.userId ?? undefined }),
       signal: AbortSignal.timeout(600_000),
     });

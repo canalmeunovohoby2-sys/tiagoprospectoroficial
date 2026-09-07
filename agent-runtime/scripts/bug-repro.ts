@@ -28,18 +28,19 @@ async function flow(session: BrowserSession, vp: string, out: Record<string, unk
     return { clicked: l.getAttribute('href') || '' };
   })()`);
   await new Promise((r2) => setTimeout(r2, 350));
-  const afterItem = await session.evaluate(`(() => ({
+  const afterItemRes = await session.evaluate(`(() => ({
     bodyClass: document.body.className,
     bodyOverflow: getComputedStyle(document.body).overflow,
     navOpen: !!document.querySelector('#mainNav, [class*="menu"]') && Array.from(document.querySelectorAll('#mainNav, [class*="menu"]')).some(n => n.classList.contains('open'))
   }))()`);
+  const afterItem = ((afterItemRes as { value?: { bodyClass?: string; navOpen?: boolean } }).value ?? {});
   const afterItemBlack = await session.measureBlackScreen();
   out[vp] = {
     r, open, afterOpenBlack,
     clickItem,
     afterItemBlack,
-    bodyClassAfter: afterItem.bodyClass,
-    navStillOpen: afterItem.navOpen,
+    bodyClassAfter: afterItem.bodyClass ?? "",
+    navStillOpen: afterItem.navOpen ?? false,
     console: await session.evaluate(`JSON.stringify(window.__errs || [])`),
   };
 }

@@ -200,6 +200,14 @@ MENU MOBILE SEGURO (regra obrigatória de geração):
 - O menu mobile é um <button> (hambúrguer) que alterna um overlay/panel de navegação com o MESMO controle para abrir e fechar (toggle) — e um clique em QUALQUER link dentro do menu TAMBÉM fecha.
 - O overlay NUNCA pode ficar preso aberto: estado inicial fechado, sem depender de hover, e sem tela preta opaca permanente.
 - Teste no viewport mobile (390px): clique no hambúrguer → abre; clique num link → fecha e navega; clique de novo no hambúrguer/fora → fecha. Nenhum desses passos pode deixar a tela preta.
+- PADRÃO SEGURO (replicar, adaptando ids/classes): 
+  const btn = document.getElementById("menuToggle"), nav = document.getElementById("mainNav");
+  function setMenu(open){ nav.classList.toggle("open", open); btn.classList.toggle("open", open); document.body.style.overflow = open ? "hidden" : ""; }
+  btn.addEventListener("click", () => setMenu(!nav.classList.contains("open")));
+  nav.querySelectorAll("a").forEach(a => a.addEventListener("click", () => setMenu(false))); // item fecha o menu
+  document.addEventListener("keydown", e => { if (e.key === "Escape") setMenu(false); });
+  document.addEventListener("click", e => { if (nav.classList.contains("open") && !nav.contains(e.target) && !btn.contains(e.target)) setMenu(false); });
+- PROIBIDO causar tela preta: "filter: brightness(0)", overlay full-screen "background:#000" sem display/classe controlada e SEM fechar ao navegar/clicar item/Escape.
 
 ${BROWSER_QA_INSTRUCTIONS}
 

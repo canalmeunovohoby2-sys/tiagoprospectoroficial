@@ -6,6 +6,7 @@
 // memória; cada nova mensagem chama agent.continue() para manter o contexto.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { ProspectorSiteAgent } from "./prospector-site-agent.js";
 import { BrowserSession } from "./browser-session.js";
 import { auditSiteInteractions } from "./interaction-audit.js";
@@ -32,6 +33,39 @@ interface AgentSession {
 const sessions = new Map<string, AgentSession>();
 const SESSION_TTL_MS = 30 * 60_000; // 30min de inatividade encerra a sessão
 const MAX_SESSIONS = 40;
+
+// Chaves de sessão ISOLADAS POR USUÁRIO + PROJETO — nunca reutilizáveis entre
+// usuários e nunca indexadas só por projectId (anti-IDOR).
+const editKey = (uid: string, pid: string) => `edit:${uid}:${pid}`;
+const genKeyFor = (uid: string, pid: string) => `gen:${uid}:${pid}`;
+
+// Ticket de execução assinado (HMAC-SHA256) emitido pela edge agent-ticket.
+// O Runtime NÃO confia em user_id/projectId do body — apenas no ticket.
+interface TicketClaims { uid: string; pid: string | null; exp: number }
+export function verifyTicket(authHeader?: string | null): TicketClaims | null {
+  const raw = (authHeader ?? "").replace(/^Bearer\s+/i, "").trim();
+  if (!raw) return null;
+  const secret = process.env.AGENT_TICKET_SECRET;
+  if (!secret) return null;
+  const parts = raw.split(".");
+  if (parts.length !== 2) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(parts[0], "base64").toString("utf8")) as Partial<TicketClaims>;
+    if (typeof claims.uid !== "string" || !claims.uid) return null;
+    if (typeof claims.exp !== "number" || claims.exp < Date.now()) return null;
+    const pid = typeof claims.pid === "string" ? claims.pid : null;
+    const body = `${claims.uid}|${pid ?? ""}|${claims.exp}`;
+    const expected = createHmac("sha256", secret).update(body).digest();
+    const got = Buffer.from(parts[1], "base64");
+    if (expected.length !== got.length || !timingSafeEqual(expected, got)) return null;
+    return { uid: claims.uid, pid, exp: claims.exp };
+  } catch {
+    return null;
+  }
+}
+function sendDenied(res: ServerResponse, message: string, code = 403): void {
+  send(res, code, { status: "error", error: message, blocked_reason: message, blocked_code: "unauthorized" });
+}
 
 function send(res: ServerResponse, code: number, body: unknown): void {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
@@ -147,9 +181,10 @@ export interface ResolvedExec {
 // Resolve QUAL provider/modelo/chave o runtime REALMENTE vai usar nesta request.
 // Regra: SÓ a IA validada do usuário (is_default com chave, definida por um
 // TESTE real) pode executar. Sem prova → bloqueia (nunca env/DeepSeek padrão).
-async function prepareExec(body: Record<string, unknown>): Promise<ResolvedExec> {
+async function prepareExec(body: Record<string, unknown>, authUid?: string): Promise<ResolvedExec> {
   const exec = executionConfig(body);
-  const userId = typeof body.user_id === "string" && body.user_id.trim() ? body.user_id : "";
+  const userId = (authUid && authUid.trim() ? authUid.trim() : "")
+    || (typeof body.user_id === "string" && body.user_id.trim() ? body.user_id : "");
   const explicitProvider = exec?.provider ?? (typeof body.providerId === "string" && body.providerId.trim() ? body.providerId.toLowerCase() : undefined);
   const explicitModel = exec?.model ?? (typeof body.modelId === "string" && body.modelId.trim() ? body.modelId.trim() : undefined);
 
@@ -234,20 +269,28 @@ export function startServer(port = PORT, host = HOST) {
           hasKey: !!(process.env.DEEPSEEK_API_KEY ?? process.env.PROSPECTOR_API_KEY),
           activeSessions: sessions.size,
           runtime: "cline",
+          // Versão/commit identificável (sem secrets): Railway injeta
+          // RAILWAY_GIT_COMMIT_SHA; permitimos override explícito via env.
+          version: process.env.DEPLOY_VERSION ?? process.env.RAILWAY_GIT_COMMIT_SHA ?? process.env.GIT_SHA ?? "dev",
+          auth: process.env.AGENT_TICKET_SECRET ? "enabled" : "disabled",
         });
         return;
       }
 
       if (url.pathname === "/session" && req.method === "DELETE") {
+        const ticket = verifyTicket(req.headers.authorization);
+        if (!ticket) { sendDenied(res, "Sem autorização para encerrar a sessão.", 401); return; }
         const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
         const projectId = String(body.projectId ?? "").trim();
-        if (projectId) sessions.delete(projectId);
+        if (projectId) sessions.delete(editKey(ticket.uid, projectId));
         send(res, 200, { ok: true });
         return;
       }
 
       // Captura screenshots REAIS (desktop + mobile) do site para o PDF de proposta.
       if (url.pathname === "/capture" && req.method === "POST") {
+        const ticket = verifyTicket(req.headers.authorization);
+        if (!ticket) { sendDenied(res, "Autenticação necessária para capturar screenshots.", 401); return; }
         const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
         const files = (body.files && typeof body.files === "object" ? body.files : {}) as Record<string, string>;
         const hasIndex = Object.keys(files).some((k) => k.endsWith("index.html"));
@@ -274,9 +317,12 @@ export function startServer(port = PORT, host = HOST) {
       }
 
       if (url.pathname === "/generate" && req.method === "POST") {
+        const ticket = verifyTicket(req.headers.authorization);
+        if (!ticket) { sendDenied(res, "Autenticação necessária para gerar o site.", 401); return; }
         const body = (await readJson(req)) as Record<string, unknown>;
         const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
         if (!projectId) { send(res, 400, { error: "projectId é obrigatório" }); return; }
+        if (ticket.pid && ticket.pid !== projectId) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
         const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
         const briefing = (body.briefing && typeof body.briefing === "object" ? body.briefing : {}) as Record<string, unknown>;
 
@@ -287,7 +333,7 @@ export function startServer(port = PORT, host = HOST) {
             send(res, 400, { error: `Provedor "${gExec.provider}" não é suportado pelo runtime (use deepseek, openai ou nvidia). Gemini é apenas edge.` });
           return;
         }
-        const genKey = `generate:${projectId}`;
+        const genKey = genKeyFor(ticket.uid, projectId);
         pruneSessions();
         const existingGen = sessions.get(genKey);
         const genIter = Math.min(80, Math.max(10, Number(body.maxIterations ?? process.env.GENERATE_MAX_ITERATIONS ?? 32)));
@@ -297,7 +343,7 @@ export function startServer(port = PORT, host = HOST) {
         const genBrowser = process.env.GENERATE_BROWSER !== "0" && body.enableBrowser !== false;
         // Prova real: resolve a IA da conta; se a config mudou desde a última
         // geração, recria a sessão do agente com provider/modelo/chave novos.
-        const genExec = await prepareExec({ ...body, mode: "generate" });
+        const genExec = await prepareExec({ ...body, mode: "generate" }, ticket.uid);
         // PRINCÍPIO ABSOLUTO: sem prova da IA validada → NÃO gera.
         if (genExec.blocked) {
           send(res, 200, {
@@ -321,6 +367,7 @@ export function startServer(port = PORT, host = HOST) {
           ? existingGen.agent
           : await makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser }, genExec);
         sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
+        sessions.set(editKey(ticket.uid, projectId), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
 
         // ANEXOS (5.26) na geração: materializa no workspace (ex.: logo/foto real do cliente).
         const attachResult = materializeAttachments(resolveWorkspaceRoot(projectId), (body.attachments ?? []) as ChatAttachment[]);
@@ -431,7 +478,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         // Move o agente de geração para o pool de edição do mesmo projectId,
         // para que o chat continue a MESMA conversa/sessão após a geração.
         sessions.delete(genKey);
-        sessions.set(projectId, { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
+        sessions.set(editKey(ticket.uid, projectId), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
 
         send(res, 200, {
           status: genBlocked ? "error" : (finalOutcome.ok ? "ok" : "error"),
@@ -464,8 +511,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
 
       // PROVA real: qual IA o runtime USARÁ para este usuário (sanitizado).
       if (url.pathname === "/agent-config" && req.method === "POST") {
+        const ticket = verifyTicket(req.headers.authorization);
+        if (!ticket) { send(res, 200, { ok: false, provider: null, model: null, config_source: "blocked", blocked_reason: "Autenticação necessária para consultar a IA do usuário." }); return; }
         const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
-        const exec = await prepareExec(body);
+        const exec = await prepareExec(body, ticket.uid);
         if (exec.blocked) {
           send(res, 200, {
             ok: false,
@@ -487,10 +536,13 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
       }
 
       if (url.pathname === "/run" && req.method === "POST") {
+          const ticket = verifyTicket(req.headers.authorization);
+          if (!ticket) { sendDenied(res, "Autenticação necessária para executar o agente.", 401); return; }
           const body = await readJson(req);
           const instruction = String(body.instruction ?? "").trim();
           const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
           if (!instruction) { send(res, 400, { error: "instruction é obrigatória" }); return; }
+          if (ticket.pid && ticket.pid !== projectId) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
           const stream = body.stream === true; // NDJSON ao vivo (5.34)
           const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
           const rExec = executionConfig(body);
@@ -504,8 +556,8 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
 
         pruneSessions();
 
-        // Resolve a sessão existente OU cria uma nova.
-        const existing = fresh ? undefined : sessions.get(projectId);
+        // Resolve a sessão existente OU cria uma nova (ISOLADA POR USUÁRIO+PROJETO).
+        const existing = fresh ? undefined : sessions.get(editKey(ticket.uid, projectId));
         let agent: ProspectorSiteAgent;
         let resume = false;
 
@@ -513,7 +565,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         // sessão. Se a config mudou desde a última mensagem (outro provider/
         // modelo/chave validado), a sessão ANTIGA é descartada e uma nova é
         // criada com a IA correta — nunca continua no DeepSeek por inércia.
-        const exec = await prepareExec(body);
+        const exec = await prepareExec(body, ticket.uid);
         // PRINCÍPIO ABSOLUTO: sem prova da IA validada → NÃO executa.
         if (exec.blocked) {
           send(res, 200, {
@@ -541,9 +593,9 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           // (arquivos podem ter mudado entre sessões por materialização de spec)
           ensureWorkspaceDir(projectId, files);
         } else {
-          if (providerChanged) sessions.delete(projectId);
-          agent = await makeAgent(projectId, projectId, files, business, body, exec);
-          sessions.set(projectId, { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
+          if (providerChanged) sessions.delete(editKey(ticket.uid, projectId));
+          agent = await makeAgent(editKey(ticket.uid, projectId), projectId, files, business, body, exec);
+          sessions.set(editKey(ticket.uid, projectId), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
         }
 
         const events: string[] = [];

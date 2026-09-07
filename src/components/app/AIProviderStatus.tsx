@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Activity, Loader2, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { getAgentTicket } from "@/lib/agentTicket";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
@@ -62,9 +63,14 @@ export function AIProviderStatus() {
         return;
       }
       const { data: user } = await supabase.auth.getUser();
+      const token = await getAgentTicket();
+      if (!token) {
+        setRuntimeProof({ warning: "Não autenticado para consultar a IA do gerador (ticket não emitido)." });
+        return;
+      }
       const res = await fetch(`${String(rc.runtimeUrl).replace(/\/+$/, "")}/agent-config`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ user_id: user?.user?.id }),
       });
       const cfg = (await res.json().catch(() => null)) as { ok?: boolean; provider?: string; model?: string; config_source?: string; warning?: string; blocked_reason?: string } | null;
