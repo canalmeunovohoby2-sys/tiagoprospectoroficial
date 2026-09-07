@@ -26,11 +26,13 @@ interface SiteProjectLite {
 // Abre o WhatsApp do LEAD (número comprovado), com a mensagem EDITÁVEL e o
 // link da proposta/site correspondente quando o projeto já existir.
 export function ProposalWhatsAppDialog({
-  lead, open, onOpenChange,
+  lead, open, onOpenChange, projectSite,
 }: {
   lead: ProposalLeadLike | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Projeto/site conhecido (tela do projeto). Quando informado, não busca de novo. */
+  projectSite?: { slug: string | null; status: string | null } | null;
 }) {
   const [message, setMessage] = useState("");
   const [siteUrl, setSiteUrl] = useState<string | null>(null);
@@ -48,29 +50,34 @@ export function ProposalWhatsAppDialog({
     setSiteUrl(null);
     setSiteStatus(null);
     (async () => {
-      const { data } = await supabase
-        .from("site_projects")
-        .select("id, slug, status")
-        .eq("lead_id", String(lead.id))
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      let slug: string | null = null;
+      let status: string | null = null;
+      if (projectSite && projectSite.slug) {
+        slug = projectSite.slug;
+        status = projectSite.status ?? null;
+      } else {
+        const { data } = await supabase
+          .from("site_projects")
+          .select("id, slug, status")
+          .eq("lead_id", String(lead.id))
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const project = data as SiteProjectLite | null;
+        slug = project?.slug ?? null;
+        status = project?.status ?? null;
+      }
       if (cancelled) return;
-      const project = data as SiteProjectLite | null;
-      const hasProject = !!project?.slug;
-      const url = hasProject ? publicSiteUrl(window.location.origin, project.slug) : null;
+      const url = slug ? publicSiteUrl(window.location.origin, slug) : null;
+      // Só coloca o link na mensagem quando o site do projeto existe de fato.
+      const usable = url && (status === "generated" || status === "published") ? url : null;
       setSiteUrl(url);
-      setSiteStatus(project?.status ?? null);
-      setMessage(buildProposalMessage({
-        name: lead.name,
-        segment: lead.segment,
-        city: lead.city,
-        siteUrl: url,
-      }));
+      setSiteStatus(status);
+      setMessage(buildProposalMessage({ name: lead.name, segment: lead.segment, city: lead.city, siteUrl: usable }));
       setLoadingProject(false);
     })();
     return () => { cancelled = true; };
-  }, [open, lead?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, lead?.id, projectSite?.slug, projectSite?.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function send() {
     if (!lead || !target.hasWhatsapp || !target.phoneNumber) {

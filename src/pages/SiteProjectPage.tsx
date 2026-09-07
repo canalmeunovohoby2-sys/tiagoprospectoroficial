@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon, Code2 } from "lucide-react";
+import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon, Code2, Send } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,8 @@ import { buildStrategyInstruction, strategyById } from "@/lib/siteStrategies";
 import { buildWorkTimeline } from "@/lib/agentWorkActivity";
 import { captureWorkspaceScreenshotsClient } from "@/lib/clientScreenshots";
 import { extractSitePalette } from "@/lib/sitePalette";
+import { ProposalWhatsAppDialog } from "@/components/app/ProposalWhatsAppDialog";
+import type { ProposalLeadLike } from "@/lib/proposalWhatsApp";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -126,6 +128,26 @@ export default function SiteProjectPage() {
   const [agentStep, setAgentStep] = useState<number | null>(null);
   const [draftFiles, setDraftFiles] = useState<Record<string, string> | null>(null);
   const [previewNonce, setPreviewNonce] = useState(0);
+  const [proposalOpen, setProposalOpen] = useState(false);
+  const [projectLead, setProjectLead] = useState<ProposalLeadLike | null>(null);
+
+  // WhatsApp comprovado do lead vinculado ao projeto (leads.lead_id).
+  useEffect(() => {
+    const leadId = project?.lead_id ?? null;
+    setProjectLead(null);
+    if (!leadId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("leads")
+        .select("id, name, whatsapp, phone, segment, city")
+        .eq("id", String(leadId))
+        .maybeSingle();
+      if (cancelled || error || !data) return;
+      setProjectLead(data as unknown as ProposalLeadLike);
+    })();
+    return () => { cancelled = true; };
+  }, [project?.lead_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Avança por fases reais do ciclo do agente enquanto a IA trabalha.
   function runAgentProgress(steps: AgentProgress[], intervalMs = 1600) {
@@ -778,6 +800,14 @@ export default function SiteProjectPage() {
       {versionsOpen && project && (
         <SiteVersionsDialog projectId={project.id} onClose={() => setVersionsOpen(false)} onRestore={handleRestoreFromVersion} />
       )}
+      {project && projectLead && (
+        <ProposalWhatsAppDialog
+          lead={projectLead}
+          open={proposalOpen}
+          onOpenChange={setProposalOpen}
+          projectSite={{ slug: project.slug ?? null, status: project.status ?? null }}
+        />
+      )}
       <div>
         <Link to="/sites" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2">
           <ArrowLeft className="h-3 w-3" /> Sites
@@ -846,6 +876,10 @@ export default function SiteProjectPage() {
             <Button size="sm" variant="outline" onClick={handleUnpublish} disabled={unpublishing}>
               {unpublishing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <X className="h-3.5 w-3.5 mr-1" />} Despublicar
             </Button>
+            <Button size="sm" variant="outline" onClick={() => setProposalOpen(true)} disabled={!projectLead?.whatsapp}
+              title={projectLead?.whatsapp ? `Enviar proposta pelo WhatsApp (${projectLead.whatsapp})` : "Indisponível: lead sem WhatsApp comprovado"}>
+              <Send className="h-3.5 w-3.5 mr-1 text-emerald-500" /> Enviar proposta pelo WhatsApp
+            </Button>
           </div>
         </Card>
       )}
@@ -857,6 +891,10 @@ export default function SiteProjectPage() {
           </div>
           <Button size="sm" onClick={handlePublish} disabled={publishing}>
             {publishing ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Rocket className="h-3.5 w-3.5 mr-1" />} Publicar site
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setProposalOpen(true)} disabled={!projectLead?.whatsapp}
+            title={projectLead?.whatsapp ? `Enviar proposta pelo WhatsApp (${projectLead.whatsapp})` : "Indisponível: lead sem WhatsApp comprovado"}>
+            <Send className="h-3.5 w-3.5 mr-1 text-emerald-500" /> Enviar proposta pelo WhatsApp
           </Button>
         </Card>
       )}

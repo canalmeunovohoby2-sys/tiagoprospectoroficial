@@ -5,7 +5,7 @@ import {
   Star, Globe, MapPin, Phone, MessageSquare, Sparkles, Eye, Check,
   Search as SearchIcon, Trash2, Loader2, Instagram, Facebook, ExternalLink, Map as MapIcon, Copy, Plus,
   FileCode2,
-  ShieldCheck, Shield, ShieldAlert, Clock, Download, ClipboardCopy, Send,
+  ShieldCheck, Shield, ShieldAlert, Clock, Download, ClipboardCopy,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
@@ -23,7 +23,6 @@ import { useAuth } from "@/hooks/useAuth";
 import type { Lead, CrmStatus } from "@/data/types";
 import { CRM_COLUMNS } from "@/data/brazil";
 import { LandingPromptButton } from "@/components/app/LandingPromptButton";
-import { ProposalWhatsAppDialog } from "@/components/app/ProposalWhatsAppDialog";
 import { RoiBadge } from "@/components/app/RoiBadge";
 import { getLeadTemperature, buildScoreReasons, enrichLeadWithScores } from "@/lib/leadScoring";
 
@@ -85,7 +84,6 @@ export default function Leads() {
   const [whatsappFilter, setWhatsappFilter] = useState<"all" | "yes">("all");
   const [websiteFilter, setWebsiteFilter] = useState<"all" | "yes" | "no">("all");
   const [selected, setSelected] = useState<Lead | null>(null);
-  const [proposalLead, setProposalLead] = useState<Lead | null>(null);
   const [generating, setGenerating] = useState(false);
   const [openingSiteId, setOpeningSiteId] = useState<string | null>(null);
 
@@ -378,7 +376,6 @@ export default function Leads() {
               onContacted={() => updateLead(l.id, { is_contacted: !l.is_contacted })}
               onSendToCrm={() => updateLead(l.id, { in_crm: true, crm_status: l.crm_status || "new" })}
               onGenerateSite={() => openSite(l)}
-              onPropose={() => setProposalLead(l)}
               openingSite={openingSiteId === l.id}
             />
           ))}
@@ -394,7 +391,6 @@ export default function Leads() {
         onGenerateSite={openSite}
         generating={generating}
       />
-      <ProposalWhatsAppDialog lead={proposalLead} open={!!proposalLead} onOpenChange={(open) => { if (!open) setProposalLead(null); }} />
     </div>
   );
 }
@@ -452,9 +448,9 @@ function ScoreStars({ score }: { score: number }) {
 }
 
 function LeadRow({
-  lead, onOpen, onFavorite, onContacted, onSendToCrm, onGenerateSite, onPropose, openingSite,
+  lead, onOpen, onFavorite, onContacted, onSendToCrm, onGenerateSite, openingSite,
 }: {
-  lead: Lead; onOpen: () => void; onFavorite: () => void; onContacted: () => void; onSendToCrm: () => void; onGenerateSite: () => void; onPropose: () => void; openingSite: boolean;
+  lead: Lead; onOpen: () => void; onFavorite: () => void; onContacted: () => void; onSendToCrm: () => void; onGenerateSite: () => void; openingSite: boolean;
 }) {
   const isHot = (lead.final_score ?? 0) >= 80;
   return (
@@ -553,15 +549,6 @@ function LeadRow({
             {lead.whatsapp && (
               <Button size="icon" variant="ghost" asChild title="WhatsApp"><a href={`https://wa.me/${lead.whatsapp.replace(/\D/g, "")}`} target="_blank" rel="noreferrer"><MessageSquare className="h-4 w-4 text-emerald-500" /></a></Button>
             )}
-            <Button
-              size="sm" variant="outline"
-              disabled={!lead.whatsapp}
-              title={lead.whatsapp ? "Enviar proposta pelo WhatsApp (mensagem editável)" : "Indisponível: lead sem WhatsApp comprovado"}
-              onClick={onPropose}
-              className="text-xs"
-            >
-              <Send className="h-3 w-3 text-emerald-500 mr-1" /> Proposta
-            </Button>
             {lead.instagram && (
               <Button size="icon" variant="ghost" asChild title="Instagram"><a href={lead.instagram} target="_blank" rel="noreferrer"><Instagram className="h-4 w-4 text-pink-500" /></a></Button>
             )}
