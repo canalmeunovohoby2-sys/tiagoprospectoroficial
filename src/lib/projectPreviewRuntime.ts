@@ -101,6 +101,19 @@ export function prepareProjectPreview(files: WorkspaceMap | Record<string, strin
   // iframe srcDoc. Imagens até ~2MB viram data URL.
   html = embedLocalAssets(html, ws, names);
 
+  // Preview em iframe sandbox (about:srcdoc = origem opaca, sem allow-same-origin):
+  // history.replaceState/pushState LANÇAM SecurityError nesse contexto — o que
+  // quebra o clique em itens de menu/âncora DENTRO do Prospector (fora, no
+  // navegador real, funciona). Neutralizamos essas chamadas no preview.
+  const shim = `<script>(function(){try{if(location.protocol==='about:'||location.href.indexOf('about:srcdoc')===0){var noop=function(){return undefined;};try{history.replaceState=noop;}catch(e){}try{history.pushState=noop;}catch(e){}try{history.scrollRestoration='auto';}catch(e){}}}catch(e){}})();<\/script>`;
+  const bodyOpen = html.search(/<body[^>]*>/i);
+  if (bodyOpen >= 0) {
+    const close = html.indexOf(">", bodyOpen);
+    if (close >= 0) {
+      html = html.slice(0, close + 1) + "\n" + shim + html.slice(close + 1);
+    }
+  }
+
   // Remove qualquer referência a .env / arquivos sensíveis no documento.
   html = html.replace(/<script[^>]*src=["'][^"']*\.env[^"']*["'][^>]*>\s*<\/script>/gi, "");
 
