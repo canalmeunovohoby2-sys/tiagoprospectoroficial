@@ -21,7 +21,17 @@ interface ProviderState {
   keyInput: string;
   saving: boolean;
   testing: boolean;
-  testResult: { ok?: boolean; message?: string; kind?: string } | null;
+  testResult: {
+    ok?: boolean;
+    message?: string;
+    kind?: string;
+    reply?: string;
+    latencyMs?: number;
+    provider?: string;
+    model?: string;
+    enabled?: boolean;
+    isDefault?: boolean;
+  } | null;
   error: string | null;
 }
 
@@ -115,7 +125,19 @@ export function AiProvidersSettings() {
     patch(p.provider, { testing: true, testResult: null, error: null });
     try {
       const data = await callAiConfig({ action: "test", provider: p.provider, model: p.model });
-      patch(p.provider, { testResult: { ok: Boolean(data.ok), message: String(data.message ?? ""), kind: String(data.kind ?? "") } });
+      patch(p.provider, {
+        testResult: {
+          ok: Boolean(data.ok),
+          message: String(data.message ?? ""),
+          kind: String(data.kind ?? ""),
+          reply: typeof data.reply === "string" ? data.reply : undefined,
+          latencyMs: typeof data.latencyMs === "number" ? data.latencyMs : undefined,
+          provider: typeof data.provider === "string" ? data.provider : undefined,
+          model: typeof data.model === "string" ? data.model : undefined,
+          enabled: typeof data.enabled === "boolean" ? data.enabled : undefined,
+          isDefault: typeof data.isDefault === "boolean" ? data.isDefault : undefined,
+        },
+      });
     } catch (e) {
       patch(p.provider, { testResult: { ok: false, message: e instanceof Error ? e.message : "Falha no teste" } });
     } finally {
@@ -144,6 +166,7 @@ export function AiProvidersSettings() {
       {reloadError && <p className="text-sm text-destructive">{reloadError}</p>}
       <p className="text-xs text-muted-foreground">
         As chaves ficam armazenadas somente no servidor (Supabase). Nunca são exibidas por completo — você verá apenas o estado (últimos 4 dígitos).
+        Ao salvar a primeira chave, o provedor é ativado e vira o padrão global do app automaticamente.
       </p>
       {providers.map((p) => (
         <div key={p.provider} className="rounded-xl border border-border bg-card p-4">
@@ -198,9 +221,23 @@ export function AiProvidersSettings() {
 
           {p.error && <p className="mt-2 text-xs text-destructive">{p.error}</p>}
           {p.testResult && (
-            <p className={`mt-2 text-xs ${p.testResult.ok ? "text-emerald-600" : "text-destructive"}`}>
-              {p.testResult.ok ? "✓ Conexão válida." : `✗ ${p.testResult.message ?? "Falha no teste."}`}
-            </p>
+            <div className={`mt-2 text-xs ${p.testResult.ok ? "text-emerald-600" : "text-destructive"}`}>
+              <p>
+                {p.testResult.ok ? "✓ Conexão válida." : `✗ ${p.testResult.message ?? "Falha no teste."}`}
+                {typeof p.testResult.latencyMs === "number" && <span className="text-muted-foreground"> · {(p.testResult.latencyMs / 1000).toFixed(1)}s</span>}
+              </p>
+              {p.testResult.reply && (
+                <p className="mt-1 rounded-md bg-muted/60 px-2 py-1 font-mono text-[11px] break-words">
+                  {p.testResult.reply}
+                </p>
+              )}
+              {p.testResult.ok && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Provedor: {p.testResult.provider ?? p.provider} · Modelo: {p.testResult.model ?? p.model}
+                  {p.testResult.isDefault && <span className="ml-1 rounded-full bg-primary/10 px-1.5 py-0.5 font-semibold text-primary">USO GLOBAL (padrão)</span>}
+                </p>
+              )}
+            </div>
           )}
         </div>
       ))}

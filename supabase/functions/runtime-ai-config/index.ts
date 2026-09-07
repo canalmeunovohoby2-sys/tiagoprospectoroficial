@@ -4,7 +4,7 @@
 // chave ao frontend; nunca loga secrets. Gemini → erro explícito (edge-only).
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
-import { resolveExecutionConfig } from "../_shared/ai-routing.ts";
+import { resolveExecutionConfig, type ExecutionPreference } from "../_shared/ai-routing.ts";
 
 const BASE: Record<string, string> = {
   deepseek: "https://api.deepseek.com",
@@ -43,7 +43,14 @@ Deno.serve(async (req) => {
     const global = def
       ? { provider: def.provider ?? undefined, model: def.model ?? undefined, fallback: def.fallback_provider ?? undefined }
       : undefined;
-    const projectExec = (body.execution ?? null) as Parameters<typeof resolveExecutionConfig>[0]["project"] ?? undefined;
+    const rawExec = body.execution && typeof body.execution === "object" ? body.execution : undefined;
+    const projectExec: ExecutionPreference | null | undefined = rawExec
+      ? {
+          provider: typeof rawExec.provider === "string" && rawExec.provider.trim() ? rawExec.provider.trim() : undefined,
+          model: typeof rawExec.model === "string" && rawExec.model.trim() ? rawExec.model.trim() : undefined,
+          fallback: typeof rawExec.fallback === "string" && rawExec.fallback.trim() ? rawExec.fallback.trim() : undefined,
+        }
+      : undefined;
 
     const cfg = resolveExecutionConfig({ project: projectExec, global });
     if (!cfg.ok) return json({ error: cfg.error ?? "configuração inválida", provider: cfg.provider, model: cfg.model }, 400);

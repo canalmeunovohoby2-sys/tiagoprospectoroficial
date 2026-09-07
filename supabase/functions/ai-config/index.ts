@@ -80,14 +80,25 @@ Deno.serve(async (req) => {
       if (!isProvider(provider)) return json({ error: `Provedor desconhecido: ${provider}` }, 400);
       const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : PROVIDERS.find((p) => p.id === provider)!.defaultModel;
       const apiKey = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : undefined;
-      const enabled = body.enabled !== false;
-      const isDefault = body.isDefault === true;
+      const wantEnabled = body.enabled !== false;
+      const wantDefault = body.isDefault === true;
       const fallbackProvider = typeof body.fallbackProvider === "string" && body.fallbackProvider.trim() && body.fallbackProvider !== provider ? body.fallbackProvider.trim() : null;
       if (fallbackProvider && !isProvider(fallbackProvider)) return json({ error: `Fallback desconhecido: ${fallbackProvider}` }, 400);
 
-      const patch: Record<string, unknown> = { model, enabled, updated_at: new Date().toISOString() };
+      // Configuração automática p/ uso global: a PRIMEIRA chave cadastrada é
+      // ativada automaticamente e vira o provedor padrão do app (o "cérebro"
+      // global do usuário) — não depende do usuário lembrar de marcar nada.
+      const { data: existingRows } = await table.select("id,enabled,is_default,api_key").eq("user_id", userId).eq("provider", provider).limit(1);
+      const existing = Array.isArray(existingRows) ? existingRows[0] : undefined;
+      const hadKey = Boolean(existing?.api_key);
+      const isFirstKey = !hadKey && Boolean(apiKey);
+      const enabled = isFirstKey ? true : wantEnabled;
+      const { data: defRows } = await table.select("provider").eq("user_id", userId).eq("is_default", true).limit(1);
+      const hasDefault = Array.isArray(defRows) && defRows.length > 0;
+      const isDefault = wantDefault || (enabled && !hasDefault);
+
+      const patch: Record<string, unknown> = { model, enabled, is_default: isDefault, updated_at: new Date().toISOString() };
       if (apiKey) patch.api_key = apiKey;
-      patch.is_default = isDefault;
       patch.fallback_provider = fallbackProvider;
 
       const { error: upsErr } = await table.upsert({ user_id: userId, provider, ...patch }, { onConflict: "user_id,provider" });
@@ -95,14 +106,14 @@ Deno.serve(async (req) => {
       if (isDefault) {
         await table.update({ is_default: false }).eq("user_id", userId).neq("provider", provider);
       }
-      return json({ ok: true });
+      return json({ ok: true, enabled, is_default: isDefault, auto_default: !wantDefault && isDefault });
     }
 
     // --- REMOVE KEY (mantém provider configurado mas sem chave) ---
     if (action === "remove_key") {
       const provider = String(body.provider ?? "").toLowerCase();
       if (!isProvider(provider)) return json({ error: "provedor inválido" }, 400);
-      await table.update({ api_key: null }).eq("user_id", userId).eq("provider", provider);
+      await table.update({ api_key: null, enabled: false, is_default: false }).eq("user_id", userId).eq("provider", provider);
       return json({ ok: true });
     }
 
@@ -111,14 +122,39 @@ Deno.serve(async (req) => {
       const provider = String(body.provider ?? "").toLowerCase();
       if (!isProvider(provider)) return json({ error: "provedor inválido" }, 400);
       const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : PROVIDERS.find((p) => p.id === provider)!.defaultModel;
-      const { data: rows } = await table.select("api_key").eq("user_id", userId).eq("provider", provider);
+      const { data: rows } = await table.select("api_key,enabled,is_default").eq("user_id", userId).eq("provider", provider);
       const apiKey = rows?.[0]?.api_key ?? undefined;
       if (!apiKey) {
         return json({ ok: false, kind: "missing_key", message: "Chave ausente. Adicione a API Key antes de testar." });
       }
+      const started = Date.now();
       try {
-        const res = await generateText({ user: "Responda apenas: OK", model, provider, apiKey, maxOutputTokens: 16, temperature: 0 });
-        return json({ ok: true, provider: res.provider, model: res.model, message: "Conexão válida." });
+        // Prompt curto + sem thinking (NIM) + tokens suficientes: garante que a
+        // resposta venha no campo "content" e sirva como PROVA real de conexão.
+        const res = await generateText({
+          user: "Responda exatamente com a palavra: OK",
+          model,
+          provider,
+          apiKey,
+          maxOutputTokens: 256,
+          temperature: 0,
+          noThinking: true,
+          timeoutMs: 60_000,
+        });
+        const reply = (res.text ?? "").trim().slice(0, 120);
+        const latencyMs = Date.now() - started;
+        return json({
+          ok: true,
+          provider: res.provider,
+          model: res.model,
+          latencyMs,
+          reply,
+          enabled: !!rows?.[0]?.enabled,
+          isDefault: !!rows?.[0]?.is_default,
+          message: reply
+            ? `Conexão válida — resposta: "${reply}" (${(latencyMs / 1000).toFixed(1)}s).`
+            : "Conexão estabelecida, mas o provedor não retornou texto.",
+        });
       } catch (e) {
         const err = e instanceof AiError ? e : new Error(String(e));
         const kind = (e instanceof AiError ? e.kind : "upstream") ?? "upstream";
@@ -129,12 +165,12 @@ Deno.serve(async (req) => {
           timeout: { label: "Timeout — provedor não respondeu.", kind: "timeout" },
           upstream: { label: "Provedor indisponível.", kind: "provider_unavailable" },
           config: { label: "Configuração inválida.", kind: "config" },
-          empty: { label: "Resposta vazia.", kind: "empty" },
+          empty: { label: "Resposta vazia — o provedor respondeu sem texto. Confira o modelo e a chave.", kind: "empty" },
           missing_key: { label: "Chave ausente.", kind: "missing_key" },
         };
         const info = map[kind] ?? map.upstream!;
         console.warn("[ai-config] test", { provider, model, kind, status: e instanceof AiError ? e.status : undefined }); // nunca loga a chave
-        return json({ ok: false, kind: info.kind, message: info.label });
+        return json({ ok: false, kind: info.kind, message: info.label, latencyMs: Date.now() - started });
       }
     }
 

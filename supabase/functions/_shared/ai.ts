@@ -46,6 +46,8 @@ export interface GenerateTextOptions {
   system?: string; user: string; temperature?: number; topP?: number; json?: boolean;
   maxOutputTokens?: number; model?: string; provider?: ProviderName | "auto";
   timeoutMs?: number; reasoningEffort?: "low" | "medium" | "high"; fallbackProvider?: ProviderName;
+  /** Desliga o modo "thinking" de modelos NVIDIA NIM (evita resposta vazia em chamadas curtas como testes). */
+  noThinking?: boolean;
   /** Chave custom por chamada (server-side). Usada no lugar da env para este provider. */
   apiKey?: string;
   /** Chaves por provider (ex.: fallback em provider diferente). Nunca vai ao cliente. */
@@ -124,12 +126,12 @@ async function parseOpenAi(res: Response, provider: ProviderName, model: string)
   return { content, provider, model, usage: data.usage ? { inputTokens: data.usage.prompt_tokens, outputTokens: data.usage.completion_tokens, totalTokens: data.usage.total_tokens } : undefined };
 }
 
-async function openAiLike(opts: { messages: AIMessage[]; temperature: number; topP: number; maxTokens: number; json: boolean; provider: ProviderName; apiKey: string; baseUrl: string; model: string; timeoutMs: number; maxRetries: number; reasoningEffort?: string }): Promise<NormalizedAIResponse> {
+async function openAiLike(opts: { messages: AIMessage[]; temperature: number; topP: number; maxTokens: number; json: boolean; provider: ProviderName; apiKey: string; baseUrl: string; model: string; timeoutMs: number; maxRetries: number; reasoningEffort?: string; noThinking?: boolean }): Promise<NormalizedAIResponse> {
   const body: Record<string, unknown> = { model: opts.model, messages: opts.messages, temperature: opts.temperature, top_p: opts.topP, max_tokens: opts.maxTokens, stream: false };
   if (opts.json && (opts.provider === "openai" || opts.provider === "deepseek")) body.response_format = { type: "json_object" };
   if (opts.provider === "nvidia") {
     const kwargs: Record<string, unknown> = {};
-    if (getEnv("NVIDIA_THINKING") !== "false") {
+    if (!opts.noThinking && getEnv("NVIDIA_THINKING") !== "false") {
       kwargs[getEnv("NVIDIA_THINKING_PARAM") ?? "enable_thinking"] = true;
       if (opts.reasoningEffort === "high" || opts.reasoningEffort === "medium" || opts.reasoningEffort === "low") kwargs.reasoning_effort = opts.reasoningEffort;
     }
@@ -180,7 +182,7 @@ async function runProvider(provider: ProviderName, opts: GenerateTextOptions, te
   const timeoutMs = opts.timeoutMs ?? numEnv("AI_TIMEOUT_MS", cfg.defaultTimeout);
   const common = { model, timeoutMs, maxRetries, provider, apiKey: key };
   if (cfg.type === "gemini") return geminiLike({ messages, temperature, maxTokens, json: !!opts.json, ...common });
-  return openAiLike({ messages, temperature, topP, maxTokens, json: !!opts.json, baseUrl: cfg.baseUrl, reasoningEffort, ...common });
+  return openAiLike({ messages, temperature, topP, maxTokens, json: !!opts.json, baseUrl: cfg.baseUrl, reasoningEffort, noThinking: opts.noThinking, ...common });
 }
 
 export async function generateText(opts: GenerateTextOptions): Promise<GenerateTextResult> {
