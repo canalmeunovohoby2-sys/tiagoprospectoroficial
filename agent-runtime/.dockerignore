@@ -1,0 +1,13 @@
+node_modules
+.git
+*.log
+*.tmp
+dist
+coverage
+.vscode
+.idea
+*.test.ts
+*.spec.ts
+scripts/*.ts
+src/**/*.test.ts
+src/**/*.spec.ts
