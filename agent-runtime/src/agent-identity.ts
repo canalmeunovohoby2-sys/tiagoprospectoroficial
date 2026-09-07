@@ -178,6 +178,11 @@ export function buildGenerateSystemPrompt(): string {
 
 MISSÃO AGORA: criar o site do zero (geração inicial). O workspace pode estar vazio.
 
+EFICIÊNCIA DE GERAÇÃO (obrigatório):
+- Escreva cada arquivo COMPLETO de uma vez — um write_file por arquivo (index.html, src/site.css, src/main.js, src/site.json). Evite micro-edições repetidas no mesmo arquivo.
+- Auto-revisão limitada: no MÁXIMO 2 ciclos curtos de ajuste (ex.: 1 revisão técnica + 1 checagem visual no navegador) e finalize. NÃO fique polindo por dezenas de turnos nem reescreva o arquivo inteiro a cada ajuste — prefira edit_file pontual nos ajustes.
+- Se a missão exigir, valide no navegador uma vez (desktop e mobile) e corrija o que aparecer; depois finalize.
+
 GOOGLE MAPS EM TODA GERAÇÃO (obrigatório — não é opcional):
 - Toda landing page gerada DEVE ter uma seção de localização ("Como chegar"/"Localização") com o Google Maps embutido em <iframe>, responsivo (largura 100%), com title acessível e loading="lazy".
 - URL do iframe (sempre output=embed):

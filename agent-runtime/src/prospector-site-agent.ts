@@ -15,6 +15,34 @@ import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identi
 import { computeWorkEvidence, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
 
+// Detector de tarefa CIRÚRGICA (uma alteração pontual — cor, texto, botão, logo,
+// imagem, título, seção pequena). Para essas tarefas NÃO se reexecuta análise
+// ampla nem o fluxo de geração — o agente faz o mínimo de passos (read→edit→verify).
+function isSurgicalEditTask(instruction: string): boolean {
+  const text = String(instruction ?? "").trim();
+  if (!text) return false;
+  if (/^(o\s+que|como|qual|quando|onde|por\s+que|pode|poderia|voc[eê]\s+acha|diga|explique|resuma|liste|analis|audit)/i.test(text)) return false;
+  if (/premium|profissional|sofisticad|primeiro\s+mundo|alto\s+n[ií]vel|melhore\s+o\s+(site|mobile|design)|redesenha|transforma\s+o|redesign\s+completo|reconstru|do\s+zero/i.test(text)) return false;
+  return /(troque?|troca|altere?|muda|mude|corrija?|conserta|adicione?|inclua?|coloque|remova?|apague|deixe|arrume|tire)\b/i.test(text);
+}
+
+const SURGICAL_HINT = `
+
+[TAREFA CIRÚRGICA — modo rápido, obrigatório]
+Esta é uma alteração PONTUAL. Execute no MÍNIMO de passos possível:
+1) Se precisar localizar, faça NO MÁXIMO um read_file apenas do arquivo/trecho-alvo (src/site.css, o <img> do logo no index.html etc.).
+2) Aplique a mudança exata com UM edit_file (nunca reescreva o arquivo inteiro).
+3) Confira com um read_file do trecho alterado e finalize.
+NESTA TAREFA É PROIBIDO: list_files, get_site_context, browser_* , visual_review, reescrever arquivos completos, tocar em outras seções/arquivos, reanalisar o projeto ou refazer o que já está pronto.`;
+
+export interface AgentRunTiming {
+  totalMs: number;
+  turnCount: number;                       // nº de chamadas ao modelo (turnos)
+  toolMs: number;                          // soma do tempo dentro de tools
+  modelMs: number;                         // tempo estimado do modelo (total - tools)
+  tools: Record<string, { count: number; ms: number }>;
+}
+
 export interface AgentRunOutcome {
   ok: boolean;
   reply: string;
@@ -30,6 +58,8 @@ export interface AgentRunOutcome {
   finishBlocked?: boolean;
   /** Telemetria segura da pesquisa web REALMENTE executada nesta missão. */
   researchTrace?: ResearchTraceItem[];
+  /** Diagnóstico de performance real desta execução (tempo por tool/modelo). */
+  timing?: AgentRunTiming;
 }
 
 export interface ProspectorAgentOptions {
@@ -268,12 +298,26 @@ export class ProspectorSiteAgent {
   async runTask(instruction: string, opts?: { continueSession?: boolean }): Promise<AgentRunOutcome> {
     const events: AgentRuntimeEvent[] = [];
     this.currentToolEvents = []; // nova missão → nova trilha de evidência da run
+    const tStart = Date.now();
+    const timing: AgentRunTiming = { totalMs: 0, turnCount: 0, toolMs: 0, modelMs: 0, tools: {} };
+    let toolStart: { name: string; at: number } | null = null;
     const unsub = this.agent.subscribe((event: AgentRuntimeEvent) => {
       events.push(event);
       // Registra só o início das tools (ordem real), usado pelo Depth Guard.
       const ev = event as Partial<AgentRuntimeEvent> & WorkEventLike;
-      if (ev?.type === "tool-started" && (ev.toolName || ev.toolCall?.toolName)) {
+      const name = ev.toolName ?? ev.toolCall?.toolName ?? "";
+      if (ev?.type === "tool-started" && name) {
         this.currentToolEvents.push({ type: ev.type, toolName: ev.toolName, toolCall: ev.toolCall });
+        timing.tools[name] ??= { count: 0, ms: 0 };
+        timing.tools[name].count += 1;
+        toolStart = { name, at: Date.now() };
+      } else if (ev?.type === "tool-finished") {
+        if (toolStart) {
+          timing.tools[toolStart.name].ms += Date.now() - toolStart.at;
+          toolStart = null;
+        }
+      } else if (ev?.type === "turn-finished") {
+        timing.turnCount += 1;
       }
     });
     const shouldContinue = opts?.continueSession === true && this.conversationStarted;
@@ -288,27 +332,34 @@ export class ProspectorSiteAgent {
     // Snapshot do início desta execução (para detectar "disse que alterou mas nada mudou").
     this.runStartFiles = readWorkspace(this.options.workspaceRoot);
     this.currentInstruction = instruction;
+    // Tarefas cirúrgicas (edição pontual) ganham um modo rápido: nunca reexecutar
+    // o fluxo amplo de análise/geração para trocar cor/texto/logo/imagem/botão.
+    const prompt = this.options.mode === "edit" && isSurgicalEditTask(instruction)
+      ? `${instruction}\n${SURGICAL_HINT}`
+      : instruction;
     try {
       // Estado "antes" real (para touched correto em continuações).
       const stateBefore = shouldContinue || this.conversationStarted ? readWorkspace(this.options.workspaceRoot) : this.beforeFiles;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = (await (shouldContinue ? this.agent.continue(instruction) : this.agent.run(instruction))) as { messages?: unknown[] };
+      const result = (await (shouldContinue ? this.agent.continue(prompt) : this.agent.run(prompt))) as { messages?: unknown[] };
       this.conversationStarted = true;
       const files = readWorkspace(this.options.workspaceRoot);
       const touched = Object.keys(files).filter((p) => stateBefore[p] !== files[p]);
       const reply = extractLastAssistantText(result?.messages ?? []) || "Concluído.";
       const activity = ProspectorSiteAgent.operationalEvents(events as unknown as never[]);
+      this.finalizeTiming(timing, tStart);
       return {
         ok: true,
         reply: this.honestReply(reply, files, touched),
-        files, touched, iterations: 0, events, activity,
+        files, touched, iterations: 0, events, activity, timing,
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
         researchTrace: this.researchTrace.slice(),
       };
     } catch (e) {
       const files = readWorkspace(this.options.workspaceRoot);
+      this.finalizeTiming(timing, tStart);
       return {
-        ok: false, reply: "", files, touched: [], iterations: 0, events,
+        ok: false, reply: "", files, touched: [], iterations: 0, events, timing,
         error: e instanceof Error ? e.message : String(e),
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
         researchTrace: this.researchTrace.slice(),
@@ -320,6 +371,12 @@ export class ProspectorSiteAgent {
         this.browserSession = null;
       }
     }
+  }
+
+  private finalizeTiming(timing: AgentRunTiming, tStart: number): void {
+    timing.totalMs = Date.now() - tStart;
+    timing.toolMs = Object.values(timing.tools).reduce((acc, t) => acc + t.ms, 0);
+    timing.modelMs = Math.max(0, timing.totalMs - timing.toolMs);
   }
 
   // Reinicia a conversa (nova tarefa sem contexto anterior) — usado ao trocar
