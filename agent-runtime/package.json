@@ -13,7 +13,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "postinstall": "npx playwright install chromium"
   },
   "dependencies": {
     "@cline/sdk": "^0.0.82",

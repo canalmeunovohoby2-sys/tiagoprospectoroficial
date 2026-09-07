@@ -125,7 +125,10 @@ export class BrowserSession {
       // perigo: só permitimos a própria origem (bloqueia acesso externo do agente)
       throw new Error("URL fora do workspace bloqueada (segurança).");
     }
-    if (!this.browser) this.browser = await chromium.launch({ headless: true });
+    if (!this.browser) this.browser = await chromium.launch({ 
+      headless: true, 
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu-sandbox"] 
+    });
     this.page = await this.browser.newPage({ viewport: viewport ?? { width: 1366, height: 768 } });
     this.consoleLogs = [];
     this.requestErrors = [];
@@ -135,7 +138,7 @@ export class BrowserSession {
     this.page.on("requestfailed", (req) => {
       this.requestErrors.push(`${req.method()} ${req.url()} (${req.failure()?.errorText ?? "failed"})`);
     });
-    await this.page.goto(fullUrl, { waitUntil: "networkidle", timeout: 20_000 }).catch(() => {});
+    await this.page.goto(fullUrl, { waitUntil: "networkidle", timeout: 30_000 });
     return this.inspectCurrent();
   }
 
@@ -328,7 +331,7 @@ export class BrowserSession {
     if (!this.page) throw new Error("Página não aberta.");
     this.consoleLogs = [];
     this.requestErrors = [];
-    await this.page.reload({ waitUntil: "networkidle", timeout: 20_000 }).catch(() => {});
+    await this.page.reload({ waitUntil: "networkidle", timeout: 30_000 });
     return this.inspectCurrent();
   }
 

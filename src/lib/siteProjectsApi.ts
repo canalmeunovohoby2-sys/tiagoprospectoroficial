@@ -295,12 +295,16 @@ export async function captureWorkspaceScreenshots(files: Record<string, string>)
       body: JSON.stringify({ files }),
       signal: AbortSignal.timeout(60_000),
     });
-    if (!res.ok) return {};
     const data = (await res.json()) as { ok?: boolean; desktop?: string; mobile?: string; error?: string };
-    if (!data.ok || typeof data.desktop !== "string") return {};
+    if (!res.ok) {
+      throw new Error(data.error || `Falha na captura (HTTP ${res.status})`);
+    }
+    if (!data.ok || typeof data.desktop !== "string") {
+      throw new Error(data.error || "Captura sem desktop válido");
+    }
     return { desktop: data.desktop, mobile: typeof data.mobile === "string" ? data.mobile : undefined };
-  } catch {
-    return {};
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : "Falha na captura");
   }
 }
 

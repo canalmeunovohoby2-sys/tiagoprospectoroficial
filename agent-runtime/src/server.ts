@@ -299,16 +299,19 @@ export function startServer(port = PORT, host = HOST) {
         const root = ensureWorkspaceDir(pid, files);
         const session = new BrowserSession(root);
         const toDataUrl = (p: string) => `data:image/png;base64,${readFileSync(p).toString("base64")}`;
+        const err = (e: unknown) => send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
         try {
           const base = await session.startServer();
           await session.open(base, { width: 1366, height: 850 });
+          await new Promise((r) => setTimeout(r, 300));
           const desktop = await session.screenshot("desktop", { fullPage: false });
           await session.setViewport(390, 844);
           await session.reload();
+          await new Promise((r) => setTimeout(r, 600));
           const mobile = await session.screenshot("mobile", { fullPage: false });
           send(res, 200, { ok: true, desktop: toDataUrl(desktop), mobile: toDataUrl(mobile) });
         } catch (e) {
-          send(res, 500, { ok: false, error: e instanceof Error ? e.message : "falha na captura" });
+          err(e);
         } finally {
           await session.close().catch(() => {});
           cleanupWorkspace(pid);
