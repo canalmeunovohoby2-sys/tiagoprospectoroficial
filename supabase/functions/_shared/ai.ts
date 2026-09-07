@@ -131,7 +131,11 @@ async function openAiLike(opts: { messages: AIMessage[]; temperature: number; to
   if (opts.json && (opts.provider === "openai" || opts.provider === "deepseek")) body.response_format = { type: "json_object" };
   if (opts.provider === "nvidia") {
     const kwargs: Record<string, unknown> = {};
-    if (!opts.noThinking && getEnv("NVIDIA_THINKING") !== "false") {
+    const isMiniMaxM3 = opts.model.startsWith("minimaxai/") || opts.model === "minimaxai/minimax-m3";
+    if (isMiniMaxM3) {
+      // MiniMax-M3 usa chat_template_kwargs.thinking_mode em vez de enable_thinking.
+      kwargs.thinking_mode = getEnv("NVIDIA_MINIMAX_THINKING_MODE") ?? "adaptive";
+    } else if (!opts.noThinking && getEnv("NVIDIA_THINKING") !== "false") {
       kwargs[getEnv("NVIDIA_THINKING_PARAM") ?? "enable_thinking"] = true;
       if (opts.reasoningEffort === "high" || opts.reasoningEffort === "medium" || opts.reasoningEffort === "low") kwargs.reasoning_effort = opts.reasoningEffort;
     }
