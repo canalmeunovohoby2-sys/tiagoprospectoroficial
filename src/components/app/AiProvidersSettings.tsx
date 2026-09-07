@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { KeyRound, Plug, Trash2, RefreshCw, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
 const AI_PROVIDERS: Array<{ id: string; label: string; defaultModel: string }> = [
   { id: "deepseek", label: "DeepSeek", defaultModel: "deepseek-chat" },
@@ -59,6 +60,7 @@ async function callAiConfig(body: Record<string, unknown>) {
 }
 
 export function AiProvidersSettings() {
+  const { ensureSession } = useAuth();
   const [providers, setProviders] = useState<ProviderState[]>([]);
   const [loading, setLoading] = useState(true);
   const [reloadError, setReloadError] = useState<string | null>(null);
@@ -67,6 +69,12 @@ export function AiProvidersSettings() {
     setLoading(true);
     setReloadError(null);
     try {
+      const ok = await ensureSession();
+      if (!ok) {
+        setReloadError("Sessão não disponível. Recarregue a página.");
+        setLoading(false);
+        return;
+      }
       const data = await callAiConfig({ action: "list" });
       const items = (data.providers as Array<Record<string, unknown>>) ?? [];
       setProviders(
@@ -102,30 +110,40 @@ export function AiProvidersSettings() {
     setProviders((prev) => prev.map((p) => (p.provider === provider ? { ...p, ...part } : p)));
   }
 
-  async function save(p: ProviderState) {
-    patch(p.provider, { saving: true, error: null });
-    try {
-      await callAiConfig({
-        action: "set",
-        provider: p.provider,
-        apiKey: p.keyInput || undefined,
-        model: p.model,
-        enabled: p.enabled,
-        isDefault: p.isDefault,
-        fallbackProvider: p.fallbackProvider || undefined,
-      });
-      await load();
-    } catch (e) {
-      patch(p.provider, { error: e instanceof Error ? e.message : "Falha ao salvar" });
-    } finally {
-      patch(p.provider, { saving: false });
-    }
-  }
+   async function save(p: ProviderState) {
+     patch(p.provider, { saving: true, error: null });
+     try {
+       const ok = await ensureSession();
+       if (!ok) {
+         patch(p.provider, { error: "Sessão não disponível. Recarregue a página." });
+         return;
+       }
+       await callAiConfig({
+         action: "set",
+         provider: p.provider,
+         apiKey: p.keyInput || undefined,
+         model: p.model,
+         enabled: p.enabled,
+         isDefault: p.isDefault,
+         fallbackProvider: p.fallbackProvider || undefined,
+       });
+       await load();
+     } catch (e) {
+       patch(p.provider, { error: e instanceof Error ? e.message : "Falha ao salvar" });
+     } finally {
+       patch(p.provider, { saving: false });
+     }
+   }
 
-  async function test(p: ProviderState) {
-    patch(p.provider, { testing: true, testResult: null, error: null });
-    try {
-      const data = await callAiConfig({ action: "test", provider: p.provider, model: p.model });
+   async function test(p: ProviderState) {
+     patch(p.provider, { testing: true, testResult: null, error: null });
+     try {
+       const ok = await ensureSession();
+       if (!ok) {
+         patch(p.provider, { testResult: { ok: false, message: "Sessão não disponível. Recarregue a página." } });
+         return;
+       }
+       const data = await callAiConfig({ action: "test", provider: p.provider, model: p.model });
       const activated = Boolean(data.activated) || Boolean(data.isDefault);
       if (activated) {
         // Teste real OK → provider vira o ATIVO (uso global). Recarrega estados.
@@ -154,17 +172,22 @@ export function AiProvidersSettings() {
     }
   }
 
-  async function removeKey(p: ProviderState) {
-    patch(p.provider, { saving: true, error: null });
-    try {
-      await callAiConfig({ action: "remove_key", provider: p.provider });
-      await load();
-    } catch (e) {
-      patch(p.provider, { error: e instanceof Error ? e.message : "Falha" });
-    } finally {
-      patch(p.provider, { saving: false });
-    }
-  }
+   async function removeKey(p: ProviderState) {
+     patch(p.provider, { saving: true, error: null });
+     try {
+       const ok = await ensureSession();
+       if (!ok) {
+         patch(p.provider, { error: "Sessão não disponível. Recarregue a página." });
+         return;
+       }
+       await callAiConfig({ action: "remove_key", provider: p.provider });
+       await load();
+     } catch (e) {
+       patch(p.provider, { error: e instanceof Error ? e.message : "Falha" });
+     } finally {
+       patch(p.provider, { saving: false });
+     }
+   }
 
   if (loading) {
     return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando provedores…</div>;
