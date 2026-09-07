@@ -283,19 +283,34 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
     ["Funciona em qualquer tela", "Desktop, tablet e celular com a mesma qualidade."],
   ];
   const colW = CW * 0.5;
+  // Cards com altura medida (título + descrição nunca vazam).
+  const cardW = colW - 12;
+  const measureCard = (t: string, d: string): number => {
+    const tl = wrapLines(doc, t, cardW - 26, 2);
+    const dl = wrapLines(doc, d, cardW - 26, 3);
+    return 16 + tl.length * 14.5 + 5 + dl.length * 12.5 + 12;
+  };
+  const heights: number[] = bullets.map(([t, d]) => measureCard(t, d));
+  const rowHByRow: number[] = [];
+  for (let i = 0; i < heights.length; i += 2) {
+    rowHByRow.push(Math.max(heights[i], heights[i + 1] ?? heights[i]) + 18);
+  }
   for (let i = 0; i < bullets.length; i++) {
     const [t, d] = bullets[i];
     const col = i % 2;
     const row = Math.floor(i / 2);
     const bx = M + col * (colW + 20);
-    const by = y + row * 66;
-    const dLines = wrapLines(doc, d, colW - 26, 2);
-    rrect(doc, bx, by, colW, 58, 10, SURFACE, HAIR);
-    text(doc, t, bx + 14, by + 20, 11, ink, "bold");
-    let dy = by + 34;
-    for (const l of dLines) { text(doc, l, bx + 14, dy, 9, MUT); dy += 12; }
+    const by = y + (row > 0 ? rowHByRow.slice(0, row).reduce((a, b) => a + b, 0) : 0);
+    const bh = heights[i];
+    const tl = wrapLines(doc, t, cardW - 26, 2);
+    const dl = wrapLines(doc, d, cardW - 26, 3);
+    rrect(doc, bx, by, cardW, bh, 10, SURFACE, HAIR);
+    let cyy = by + 18;
+    for (const l of tl) { text(doc, l, bx + 13, cyy, 11, ink, "bold"); cyy += 14.5; }
+    cyy += 3;
+    for (const l of dl) { text(doc, l, bx + 13, cyy, 9, MUT); cyy += 12.5; }
   }
-  const lapSectionY = y + Math.ceil(bullets.length / 2) * 66 + 24;
+  const lapSectionY = y + rowHByRow.reduce((a, b) => a + b, 0) + 10;
   text(doc, "Tela do computador — captura real do site", M, lapSectionY, 12, ink, "bold");
   const lapW = Math.min(CW, 430);
   drawLaptop(doc, MID, lapSectionY + 30, lapW, desktopShot);
@@ -310,6 +325,7 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   drawPhone(doc, M + 118, 128, phoneW, mobileShot);
   text(doc, "Captura real da versão mobile", M + 118, 128 + phoneW * 2.08 + 22, 8.5, MUT, "normal", "center");
 
+  const phoneBottom = 128 + phoneW * 2.08 + 40;
   const rx = M + 280;
   const rw = W - M - 48 - rx;
   text(doc, "Experiência pensada para o celular", rx, 128, 12.5, ink, "bold");
@@ -321,17 +337,21 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
     ["Visual consistente", "Mesma identidade em qualquer tamanho de tela."],
   ];
   for (const [t, d] of adv) {
-    const dl = wrapLines(doc, d, rw - 22, 2);
-    const boxH = 30 + dl.length * 12;
-    rrect(doc, rx, ay, rw, Math.max(58, boxH), 10, SURFACE, HAIR);
-    text(doc, t, rx + 12, ay + 20, 10.5, ink, "bold");
-    let dy = ay + 33;
-    for (const l of dl) { text(doc, l, rx + 12, dy, 9, MUT); dy += 12; }
-    ay += Math.max(58, boxH) + 14;
+    // Título e descrição medidos e quebrados — card cresce, nunca estoura.
+    const tl = wrapLines(doc, t, rw - 24, 2);
+    const dl = wrapLines(doc, d, rw - 24, 2);
+    const cardH = 16 + tl.length * 13.5 + 5 + dl.length * 12.5 + 12;
+    rrect(doc, rx, ay, rw, cardH, 10, SURFACE, HAIR);
+    let ty2 = ay + 19;
+    for (const l of tl) { text(doc, l, rx + 12, ty2, 10.5, ink, "bold"); ty2 += 13.5; }
+    ty2 += 2;
+    for (const l of dl) { text(doc, l, rx + 12, ty2, 9, MUT); ty2 += 12.5; }
+    ay += cardH + 12;
   }
 
-  // Identidade visual (cores reais do site)
-  const idY = Math.max(ay + 18, 470);
+  // Identidade visual (cores reais do site) — começa DEPOIS da área do
+  // celular/caption, para nunca desenhar texto por cima do aparelho.
+  const idY = Math.max(phoneBottom, ay) + 6;
   text(doc, "Identidade visual do projeto", M, idY, 12, ink, "bold");
   const chipW = (CW - 3 * 14) / 4;
   let cy = idY + 12;
@@ -365,20 +385,33 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   ];
   const gW = (CW - 22) / 2;
   let gy = 152;
-  const rowH = 84;
-  for (let i = 0; i < inc.length; i++) {
-    const [t, d] = inc[i];
-    const col = i % 2;
-    const row = Math.floor(i / 2);
-    const bx = M + col * (gW + 22);
-    const by = gy + row * (rowH + 16);
-    const dLines = wrapLines(doc, d, gW - 26, 3);
-    rrect(doc, bx, by, gW, rowH, 12, SURFACE, HAIR);
-    text(doc, t, bx + 14, by + 22, 11.5, ink, "bold");
-    let dy = by + 38;
-    for (const l of dLines) { text(doc, l, bx + 14, dy, 9.5, MUT); dy += 13; }
+  // Grid com altura medida por linha (nunca vaza texto).
+  const incHeights: number[] = inc.map(([t, d]) => {
+    const tl = wrapLines(doc, t, gW - 28, 2);
+    const dl = wrapLines(doc, d, gW - 28, 3);
+    return 16 + tl.length * 15 + 5 + dl.length * 13.5 + 14;
+  });
+  const incRows: number[] = [];
+  for (let i = 0; i < incHeights.length; i += 2) incRows.push(Math.max(incHeights[i], incHeights[i + 1] ?? incHeights[i]) + 18);
+  let accY = gy;
+  for (let row = 0; row < incRows.length; row++) {
+    for (let col = 0; col < 2; col++) {
+      const idx = row * 2 + col;
+      if (idx >= inc.length) break;
+      const [t, d] = inc[idx];
+      const bx = M + col * (gW + 22);
+      const tl = wrapLines(doc, t, gW - 28, 2);
+      const dl = wrapLines(doc, d, gW - 28, 3);
+      const bh = incHeights[idx];
+      rrect(doc, bx, accY, gW, bh, 12, SURFACE, HAIR);
+      let cyy = accY + 18;
+      for (const l of tl) { text(doc, l, bx + 14, cyy, 11.5, ink, "bold"); cyy += 15; }
+      cyy += 3;
+      for (const l of dl) { text(doc, l, bx + 14, cyy, 9.5, MUT); cyy += 13.5; }
+    }
+    accY += incRows[row];
   }
-  const noteY = gy + 3 * (rowH + 16) + 6;
+  const noteY = accY + 4;
   rrect(doc, M, noteY, CW, 52, 12, brandSoft);
   text(doc, "Uma proposta completa para o seu negócio crescer — sem mensalidade, sem letras miúdas.", M + 18, noteY + 22, 11.5, brandDeep, "bold");
   text(doc, "O endereço público é estável: futuras edições são aplicadas no mesmo link.", M + 18, noteY + 39, 9.5, ink);
