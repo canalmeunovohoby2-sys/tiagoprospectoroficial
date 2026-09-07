@@ -494,6 +494,17 @@ export default function SiteProjectPage() {
         }
 
         if (!agentErr && agentRes && agentRes.files && Object.keys(agentRes.files).length > 0 && (agentRes.changed || JSON.stringify(agentRes.files) !== JSON.stringify(draftFiles))) {
+          // Trava de entrega do runtime: auditoria de interação não passou
+          // (clique deixa tela preta) → NÃO salvar/entregar como concluído.
+          const agentAny = agentRes as { interaction_blocked?: boolean; errors?: string[] };
+          if (agentAny.interaction_blocked) {
+            const blocked = agentAny.errors?.length ? agentAny.errors.slice(0, 3).join("; ") : "alguns cliques deixam a tela preta";
+            pushReply(`⚠ Auditoria de interação bloqueou a entrega: ${blocked}. A alteração NÃO foi salva como concluída — continue me pedindo o ajuste que eu tento de novo.`, agentRes.activity);
+            stopProgress();
+            setAgentStep(null);
+            setAiRunning(false);
+            return;
+          }
           // EVIDÊNCIA real de mudança (arquivos retornados diferem). Aplica no
           // preview ANTES de persistir — assim a edição nunca "some".
           setAiHistory((prev) => [{ spec: snapshot, files: draftFiles }, ...prev].slice(0, 10));

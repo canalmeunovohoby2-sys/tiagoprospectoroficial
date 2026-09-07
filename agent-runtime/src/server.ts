@@ -391,17 +391,22 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         // Auditoria de interação: clica nos elementos e corrige tela preta antes
         // de entregar o site (garantia de "pronto para uso").
         const interaction = await runInteractionGate(agent, resolveWorkspaceRoot(projectId), activity);
-        if (interaction.cycles > 0) activity.push({ phase: "verifying", detail: interaction.ok ? "Interações corrigidas e revalidadas." : "Interações ainda com problema (visto no log)." });
+        if (interaction.cycles > 0) activity.push({ phase: "verifying", detail: interaction.ok ? "Interações corrigidas e revalidadas." : "Interações ainda com problema (entrega bloqueada)." });
         const finalFiles = readWorkspace(resolveWorkspaceRoot(projectId));
+        const genBlocked = !interaction.ok;
         // Move o agente de geração para o pool de edição do mesmo projectId,
         // para que o chat continue a MESMA conversa/sessão após a geração.
         sessions.delete(genKey);
-        sessions.set(projectId, { agent, projectId, lastActive: Date.now(), resetToken: "" });
+        sessions.set(projectId, { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
 
         send(res, 200, {
-          status: finalOutcome.ok ? "ok" : "error",
+          status: genBlocked ? "error" : (finalOutcome.ok ? "ok" : "error"),
           reply: finalOutcome.reply,
-          error: finalOutcome.error,
+          error: genBlocked
+            ? "O site gerado reprovou na auditoria de interação (clique deixa a tela preta) e a correção automática não resolveu. A entrega foi BLOQUEADA — gere novamente para tentar de novo."
+            : finalOutcome.error,
+          errors: genBlocked ? interaction.issues.slice(0, 5) : undefined,
+          interaction_blocked: genBlocked || undefined,
           changed: true,
           touched: finalOutcome.touched,
           files: finalFiles,
@@ -423,7 +428,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         return;
       }
 
-        // PROVA real: qual IA o runtime USARÁ para este usuário (sanitizado).
+      // PROVA real: qual IA o runtime USARÁ para este usuário (sanitizado).
       if (url.pathname === "/agent-config" && req.method === "POST") {
         const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
         const exec = await prepareExec(body);
@@ -549,14 +554,23 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         const interaction = isBugReport(instruction)
           ? await runInteractionGate(agent, root, activity)
           : { ok: true, tested: 0, issues: [] as string[], cycles: 0 };
+        // Trava de entrega: se a auditoria de interação NÃO passou depois dos
+        // ciclos de correção, o runtime NÃO entrega como concluído.
+        const interactionBlocked = interaction.cycles > 0 && !interaction.ok;
         const finalFiles = readWorkspace(root);
         const touched = outcome.touched;
         const changed = touched.length > 0 || interaction.cycles > 0;
 
         const payload = {
-          status: outcome.ok ? "ok" : "error",
-          reply: outcome.reply,
-          error: outcome.error,
+          status: interactionBlocked ? "error" : (outcome.ok ? "ok" : "error"),
+          reply: interactionBlocked
+            ? `⚠ Não concluído: ${interaction.issues[0] ?? "alguns cliques deixam a tela preta"}. A auditoria automática de interação não passou mesmo após a correção. Continue pedindo o ajuste que eu tento de novo (o site NÃO foi entregue como corrigido).`
+            : outcome.reply,
+          error: interactionBlocked
+            ? "A auditoria de interação detectou tela preta/overlay ao clicar e a correção automática não resolveu. Entrega bloqueada até nova validação."
+            : outcome.error,
+          errors: interactionBlocked ? interaction.issues.slice(0, 5) : undefined,
+          interaction_blocked: interactionBlocked || undefined,
           changed,
           touched,
           files: finalFiles,
