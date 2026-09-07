@@ -379,6 +379,9 @@ export default function SiteProjectPage() {
       // cai no gerador clássico (spec) — fallback preservado.
       const genRes = await invokeProspectorGenerate({
         projectId: project.id,
+        // IDENTIDADE: o runtime exige o usuário autenticado para resolver a IA
+        // validada dele — sem user_id o runtime BLOQUEIA (regra absoluta).
+        userId: user?.id ?? project.user_id ?? undefined,
         context: {
           name: project.company_name || project.name,
           segment: project.segment,
