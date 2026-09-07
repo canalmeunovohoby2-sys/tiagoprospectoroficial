@@ -297,6 +297,33 @@ export class BrowserSession {
     }, sel);
   }
 
+  // Seletor do elemento no centro da tela (backdrop/overlay) ou ancestral clicável.
+  async topCenterSelector(): Promise<string | null> {
+    if (!this.page) return null;
+    const code = `(() => {
+      let el = document.elementFromPoint(Math.floor(window.innerWidth / 2), Math.floor(window.innerHeight / 2));
+      let e = el;
+      for (let i = 0; i < 7 && e; i++) {
+        if (e.id) return '#' + CSS.escape(e.id);
+        if (e.hasAttribute && (e.hasAttribute('onclick') || e.getAttribute('role') === 'button') && e.classList && e.classList.length) {
+          return e.tagName.toLowerCase() + '.' + CSS.escape(e.classList[0]);
+        }
+        e = e.parentElement;
+      }
+      return null;
+    })()`;
+    try {
+      const value = await this.page.evaluate((c) => {
+        // eslint-disable-next-line no-new-func
+        const fn = new Function(`return (${c});`);
+        return fn();
+      }, code);
+      return typeof value === "string" && value ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
   async reload(): Promise<BrowserInspection> {
     if (!this.page) throw new Error("Página não aberta.");
     this.consoleLogs = [];

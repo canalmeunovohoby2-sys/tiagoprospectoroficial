@@ -5,17 +5,23 @@ import { BrowserSession } from "../src/browser-session.ts";
 import { auditSiteInteractions } from "../src/interaction-audit.ts";
 
 const GOOD = `<!doctype html><html><head><style>
-#ov{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none}
+#ov{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none}
 #ov.open{display:block}
 </style></head><body>
-<button id="open">Abrir menu</button><div id="ov" onclick="this.classList.remove('open')"><a href="#home">Item</a></div>
-<section id="home"><h1>Site bom</h1><a class="cta" href="#home">Botao</a></section></body></html>`;
+<button id="open">Abrir menu</button><div id="ov" onclick="this.classList.remove('open')"><a href="#home" onclick="document.getElementById('ov').classList.remove('open')">Item 1</a><a href="#bolos" onclick="document.getElementById('ov').classList.remove('open')">Item 2</a></div>
+<section id="home"><h1>Site bom</h1><a class="cta" href="#home">Botao</a></section>
+<script>document.getElementById('open').addEventListener('click',function(){document.getElementById('ov').classList.toggle('open');});</script>
+</body></html>`;
 
+// Bug clássico: abrir o menu escurece tudo e CLICAR num item NÃO fecha o overlay.
 const BAD = `<!doctype html><html><head><style>
-#overlay{position:fixed;inset:0;background:#000;z-index:99999;display:none}
+#ov{position:fixed;inset:0;background:#000;z-index:99999;display:none}
+#ov.on{display:block}
 </style></head><body>
-<button id="btn" onclick="document.getElementById('overlay').style.display='block'">Clique</button><div id="overlay"></div>
-<p>conteudo</p><a href="#x">link</a></body></html>`;
+<button id="btn" onclick="document.getElementById('ov').classList.add('on')">Abrir menu</button>
+<div id="ov"><a href="#home">Item 1</a><a href="#bolos">Item 2</a></div>
+<section id="home"><h1>Conteudo</h1></section>
+</body></html>`;
 const BAD2 = `<!doctype html><html><body><button id="b" onclick="document.body.style.background='#000';document.body.style.color='#000'">X</button><p>oi</p></body></html>`;
 
 async function run(label: string, html: string) {
