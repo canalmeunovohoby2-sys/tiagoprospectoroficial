@@ -133,4 +133,48 @@ describe("AI Adapter — NVIDIA NIM (fetch mockado)", () => {
     expect(calls.length).toBe(2);
     expect(calls[1].body.chat_template_kwargs).toBeUndefined();
   });
+
+  it("13) Kimi K2.6 (moonshotai/kimi-k2.6) é aceito como modelo NVIDIA", async () => {
+    const KIMI_MODEL = "moonshotai/kimi-k2.6";
+    mockFetch(() => jsonResponse({ choices: [{ message: { content: "OK" } }] }));
+    const res = await generateText({ ...opts, model: KIMI_MODEL });
+    expect(res.text).toBe("OK");
+    expect(res.provider).toBe("nvidia");
+    expect(res.model).toBe(KIMI_MODEL);
+    expect(calls[0].body.model).toBe(KIMI_MODEL);
+    expect(calls[0].body.chat_template_kwargs).toBeDefined(); // Kimi K2.6 recebe enable_thinking (padrão NVIDIA)
+    expect(calls[0].body.chat_template_kwargs.enable_thinking).toBe(true);
+  });
+
+  it("13b) Kimi K3 (moonshotai/kimi-k3) é aceito como modelo NVIDIA", async () => {
+    const KIMI_MODEL = "moonshotai/kimi-k3";
+    mockFetch(() => jsonResponse({ choices: [{ message: { content: "OK" } }] }));
+    const res = await generateText({ ...opts, model: KIMI_MODEL });
+    expect(res.text).toBe("OK");
+    expect(res.provider).toBe("nvidia");
+    expect(res.model).toBe(KIMI_MODEL);
+    expect(calls[0].body.model).toBe(KIMI_MODEL);
+    expect(calls[0].body.chat_template_kwargs).toBeDefined(); // Kimi K3 recebe enable_thinking (padrão NVIDIA)
+    expect(calls[0].body.chat_template_kwargs.enable_thinking).toBe(true);
+  });
+
+  it("14) MiniMax-M3 (minimaxai/minimax-m3) usa chat_template_kwargs.thinking_mode", async () => {
+    const MINIMAX_MODEL = "minimaxai/minimax-m3";
+    mockFetch(() => jsonResponse({ choices: [{ message: { content: "OK", reasoning_content: "pensando" } }] }));
+    const res = await generateText({ ...opts, model: MINIMAX_MODEL });
+    expect(res.text).toBe("OK");
+    expect(res.provider).toBe("nvidia");
+    expect(res.model).toBe(MINIMAX_MODEL);
+    expect(calls[0].body.model).toBe(MINIMAX_MODEL);
+    expect(calls[0].body.chat_template_kwargs).toBeDefined();
+    expect(calls[0].body.chat_template_kwargs.thinking_mode).toBe("adaptive");
+  });
+
+  it("15) qualquer modelo NVIDIA custom é aceito e passado corretamente", async () => {
+    const CUSTOM_MODEL = "nvidia/llama-3.1-nemotron-70b-instruct";
+    mockFetch(() => jsonResponse({ choices: [{ message: { content: "OK" } }] }));
+    const res = await generateText({ ...opts, model: CUSTOM_MODEL });
+    expect(res.text).toBe("OK");
+    expect(calls[0].body.model).toBe(CUSTOM_MODEL);
+  });
 });
