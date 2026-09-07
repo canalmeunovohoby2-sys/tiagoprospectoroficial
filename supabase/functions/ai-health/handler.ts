@@ -83,9 +83,10 @@ export async function runHealthCheck(opts: {
   const envActive: ProviderName | null = isProvider(envActiveRaw) ? envActiveRaw : null;
   const rawFallback = getEnv("AI_FALLBACK_PROVIDER");
   const envFallback: ProviderName | null = rawFallback && isProvider(rawFallback) ? rawFallback : null;
-  // Provider ativo do usuário (validado/testado com sucesso) tem precedência.
-  const active: ProviderName | null = cfg?.activeProvider ?? envActive;
-  const fallback: ProviderName | null = cfg?.fallbackProvider ?? envFallback;
+  // Com usuário autenticado (config presente): o ativo é SOMENTE a IA validada
+  // (is_default com chave). Sem IA validada → não há ativo (env NÃO é fallback).
+  const active: ProviderName | null = cfg ? (cfg.activeProvider ?? null) : envActive;
+  const fallback: ProviderName | null = cfg ? (cfg.fallbackProvider ?? null) : envFallback;
 
   const providers: HealthProviderInfo[] = PROVIDER_NAMES.map((name) => {
     const envConfigured = providerConfigured(getEnv, name);

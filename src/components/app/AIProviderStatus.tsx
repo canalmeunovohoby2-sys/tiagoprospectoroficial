@@ -67,12 +67,12 @@ export function AIProviderStatus() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: user?.user?.id }),
       });
-      const cfg = (await res.json().catch(() => null)) as { provider?: string; model?: string; config_source?: string; warning?: string } | null;
+      const cfg = (await res.json().catch(() => null)) as { ok?: boolean; provider?: string; model?: string; config_source?: string; warning?: string; blocked_reason?: string } | null;
       setRuntimeProof({
-        provider: cfg?.provider,
-        model: cfg?.model,
-        source: cfg?.config_source,
-        warning: cfg?.warning ?? null,
+        provider: cfg?.ok === false ? undefined : cfg?.provider,
+        model: cfg?.ok === false ? undefined : cfg?.model,
+        source: cfg?.ok === false ? undefined : cfg?.config_source,
+        warning: cfg?.ok === false ? (cfg?.blocked_reason ?? cfg?.warning ?? "Execução bloqueada: nenhuma IA validada na conta.") : (cfg?.warning ?? null),
       });
     } catch (e) {
       setRuntimeProof({ warning: e instanceof Error ? e.message : "Falha ao consultar o Agent Runtime." });

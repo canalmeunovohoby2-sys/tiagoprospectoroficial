@@ -135,24 +135,49 @@ export interface ResolvedExec {
   modelId?: string;
   apiKey?: string;
   baseUrl?: string;
-  /** de onde veio a IA que SERÁ usada: "user_config" (conta) | "request" (pedido) | "env" (padrão) */
+  /** de onde veio a IA que SERÁ usada: "user_config" (conta validada) */
   source: "user_config" | "request" | "env";
   warning?: string;
   /** identifica a config usada na sessão (troca de IA → recria a sessão) */
   key: string;
+  /** PRINCÍPIO ABSOLUTO: se não provar a IA configurada → não executar. */
+  blocked?: { code: string; message: string };
 }
 
 // Resolve QUAL provider/modelo/chave o runtime REALMENTE vai usar nesta request.
-// user_config (validada via TESTAR) tem precedência; se não alcançar
-// runtime-ai-config, retorna env + warning (NUNCA silencioso).
+// Regra: SÓ a IA validada do usuário (is_default com chave, definida por um
+// TESTE real) pode executar. Sem prova → bloqueia (nunca env/DeepSeek padrão).
 async function prepareExec(body: Record<string, unknown>): Promise<ResolvedExec> {
   const exec = executionConfig(body);
   const userId = typeof body.user_id === "string" && body.user_id.trim() ? body.user_id : "";
   const explicitProvider = exec?.provider ?? (typeof body.providerId === "string" && body.providerId.trim() ? body.providerId.toLowerCase() : undefined);
   const explicitModel = exec?.model ?? (typeof body.modelId === "string" && body.modelId.trim() ? body.modelId.trim() : undefined);
 
-  const runtimeCfg = userId ? await fetchRuntimeAiConfig(userId, body.execution) : null;
+  if (!userId) {
+    return {
+      source: "env",
+      key: "blocked",
+      blocked: { code: "no_user_id", message: "Execução bloqueada: não é possível provar qual IA foi configurada/validada sem o usuário autenticado (user_id). Envie o usuário e valide a IA em Configurações." },
+    };
+  }
+
+  const runtimeCfg = await fetchRuntimeAiConfig(userId, body.execution);
   if (runtimeCfg) {
+    // Divergência entre o pedido e a IA validada → erro, não executa.
+    if (explicitProvider && explicitProvider !== runtimeCfg.provider) {
+      return {
+        source: "user_config",
+        key: `blocked:${explicitProvider}`,
+        blocked: { code: "provider_divergence", message: `Divergência de IA: o pedido indicou "${explicitProvider}", mas a IA validada da sua conta é "${runtimeCfg.provider}". Corrija a configuração ou o pedido e tente de novo (nenhuma execução foi feita).` },
+      };
+    }
+    if (explicitModel && explicitModel !== runtimeCfg.model) {
+      return {
+        source: "user_config",
+        key: `blocked:${explicitModel}`,
+        blocked: { code: "model_divergence", message: `Divergência de modelo: o pedido indicou "${explicitModel}", mas a IA validada usa "${runtimeCfg.model}". Nenhuma execução foi feita.` },
+      };
+    }
     return {
       providerId: runtimeCfg.provider,
       modelId: runtimeCfg.model,
@@ -162,23 +187,14 @@ async function prepareExec(body: Record<string, unknown>): Promise<ResolvedExec>
       key: `user:${runtimeCfg.provider}|${runtimeCfg.model}|${runtimeCfg.apiKey.slice(-6)}`,
     };
   }
-  if (explicitProvider) {
-    return {
-      providerId: explicitProvider,
-      modelId: explicitModel,
-      source: "request",
-      key: `request:${explicitProvider}|${explicitModel ?? "default"}`,
-    };
-  }
-  const warning = userId
-    ? "A IA configurada na sua conta NÃO foi aplicada: o Agent Runtime não conseguiu buscar runtime-ai-config. Confira no Railway: RUNTIME_GATEWAY_SECRET (igual à função) e SUPABASE_FUNCTIONS_URL/PROSPECTOR_BASE_URL apontando para /functions/v1. Usando o provider padrão do ambiente."
-    : undefined;
+
   return {
-    providerId: undefined,
-    modelId: undefined,
     source: "env",
-    warning,
-    key: "env:default",
+    key: "blocked",
+    blocked: {
+      code: "no_validated_ai",
+      message: "Execução bloqueada: nenhuma IA validada foi encontrada na sua conta. Vá em Configurações → IA, adicione a chave do provedor e clique em TESTAR — só uma IA testada com sucesso pode executar gerações e edições. (DeepSeek padrão NÃO é usado como fallback.)",
+    },
   };
 }
 
@@ -282,6 +298,23 @@ export function startServer(port = PORT, host = HOST) {
         // Prova real: resolve a IA da conta; se a config mudou desde a última
         // geração, recria a sessão do agente com provider/modelo/chave novos.
         const genExec = await prepareExec({ ...body, mode: "generate" });
+        // PRINCÍPIO ABSOLUTO: sem prova da IA validada → NÃO gera.
+        if (genExec.blocked) {
+          send(res, 200, {
+            status: "error",
+            error: genExec.blocked.message,
+            blocked_reason: genExec.blocked.message,
+            blocked_code: genExec.blocked.code,
+            runtime: "cline",
+            changed: false,
+            touched: [],
+            files: seed,
+            provider: null,
+            model: null,
+            config_source: "blocked",
+          });
+          return;
+        }
         const genProviderChanged = !!(existingGen?.agent && existingGen.execKey !== genExec.key);
         const agent = (existingGen?.agent && !genProviderChanged)
           ? existingGen.agent
@@ -432,10 +465,20 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
       if (url.pathname === "/agent-config" && req.method === "POST") {
         const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
         const exec = await prepareExec(body);
+        if (exec.blocked) {
+          send(res, 200, {
+            ok: false,
+            provider: null,
+            model: null,
+            config_source: "blocked",
+            blocked_reason: exec.blocked.message,
+          });
+          return;
+        }
         send(res, 200, {
           ok: true,
-          provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
-          model: exec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
+          provider: exec.providerId ?? null,
+          model: exec.modelId ?? null,
           config_source: exec.source,
           warning: exec.warning ?? null,
         });
@@ -470,6 +513,23 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         // modelo/chave validado), a sessão ANTIGA é descartada e uma nova é
         // criada com a IA correta — nunca continua no DeepSeek por inércia.
         const exec = await prepareExec(body);
+        // PRINCÍPIO ABSOLUTO: sem prova da IA validada → NÃO executa.
+        if (exec.blocked) {
+          send(res, 200, {
+            status: "error",
+            error: exec.blocked.message,
+            blocked_reason: exec.blocked.message,
+            blocked_code: exec.blocked.code,
+            runtime: "cline",
+            changed: false,
+            touched: [],
+            files,
+            provider: null,
+            model: null,
+            config_source: "blocked",
+          });
+          return;
+        }
         const providerChanged = !!(existing && existing.agent && existing.execKey !== exec.key);
         if (existing && existing.agent && !providerChanged) {
           agent = existing.agent;
