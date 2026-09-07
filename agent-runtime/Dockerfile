@@ -7,6 +7,8 @@ RUN npm ci --ignore-scripts
 
 COPY . .
 
+RUN npm run build
+
 EXPOSE 8787
 
 CMD ["node", "dist/server.js"]
