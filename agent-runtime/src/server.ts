@@ -25,6 +25,8 @@ interface AgentSession {
   projectId: string;
   lastActive: number;
   resetToken: string; // altera quando o usuário pede "começar do zero"/novo foco
+  /** chave da config de IA usada ao criar a sessão (mudou → recria a sessão) */
+  execKey?: string;
 }
 
 const sessions = new Map<string, AgentSession>();
@@ -128,31 +130,71 @@ async function fetchRuntimeAiConfig(userId: string, execution?: unknown): Promis
   }
 }
 
-async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>): Promise<ProspectorSiteAgent> {
-  const root = ensureWorkspaceDir(projectId, files);
-  const exec = executionConfig(body);
-  const userId = typeof body.user_id === "string" ? body.user_id : "";
-  let providerId = exec.provider ?? (typeof body.providerId === "string" ? body.providerId : undefined);
-  let modelId = exec.model ?? (typeof body.modelId === "string" ? body.modelId : undefined);
-  let apiKey = typeof body.apiKey === "string" ? body.apiKey : undefined;
-  let baseUrl = typeof body.baseUrl === "string" ? body.baseUrl : undefined;
+export interface ResolvedExec {
+  providerId?: string;
+  modelId?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  /** de onde veio a IA que SERÁ usada: "user_config" (conta) | "request" (pedido) | "env" (padrão) */
+  source: "user_config" | "request" | "env";
+  warning?: string;
+  /** identifica a config usada na sessão (troca de IA → recria a sessão) */
+  key: string;
+}
 
-  // IA selecionada pelo usuário assume o Cline (DeepSeek/OpenAI/NVIDIA).
+// Resolve QUAL provider/modelo/chave o runtime REALMENTE vai usar nesta request.
+// user_config (validada via TESTAR) tem precedência; se não alcançar
+// runtime-ai-config, retorna env + warning (NUNCA silencioso).
+async function prepareExec(body: Record<string, unknown>): Promise<ResolvedExec> {
+  const exec = executionConfig(body);
+  const userId = typeof body.user_id === "string" && body.user_id.trim() ? body.user_id : "";
+  const explicitProvider = exec?.provider ?? (typeof body.providerId === "string" && body.providerId.trim() ? body.providerId.toLowerCase() : undefined);
+  const explicitModel = exec?.model ?? (typeof body.modelId === "string" && body.modelId.trim() ? body.modelId.trim() : undefined);
+
   const runtimeCfg = userId ? await fetchRuntimeAiConfig(userId, body.execution) : null;
   if (runtimeCfg) {
-    providerId = runtimeCfg.provider;
-    modelId = runtimeCfg.model;
-    apiKey = runtimeCfg.apiKey;
-    baseUrl = runtimeCfg.baseUrl;
+    return {
+      providerId: runtimeCfg.provider,
+      modelId: runtimeCfg.model,
+      apiKey: runtimeCfg.apiKey,
+      baseUrl: runtimeCfg.baseUrl,
+      source: "user_config",
+      key: `user:${runtimeCfg.provider}|${runtimeCfg.model}|${runtimeCfg.apiKey.slice(-6)}`,
+    };
   }
+  if (explicitProvider) {
+    return {
+      providerId: explicitProvider,
+      modelId: explicitModel,
+      source: "request",
+      key: `request:${explicitProvider}|${explicitModel ?? "default"}`,
+    };
+  }
+  const warning = userId
+    ? "A IA configurada na sua conta NÃO foi aplicada: o Agent Runtime não conseguiu buscar runtime-ai-config. Confira no Railway: RUNTIME_GATEWAY_SECRET (igual à função) e SUPABASE_FUNCTIONS_URL/PROSPECTOR_BASE_URL apontando para /functions/v1. Usando o provider padrão do ambiente."
+    : undefined;
+  return {
+    providerId: undefined,
+    modelId: undefined,
+    source: "env",
+    warning,
+    key: "env:default",
+  };
+}
+
+async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>, exec?: ResolvedExec): Promise<ProspectorSiteAgent> {
+  const root = ensureWorkspaceDir(projectId, files);
+  const resolved = exec ?? await prepareExec(body);
+  const apiKey = resolved.apiKey ?? (typeof body.apiKey === "string" ? body.apiKey : undefined);
+  const baseUrl = resolved.baseUrl ?? (typeof body.baseUrl === "string" ? body.baseUrl : undefined);
 
   return new ProspectorSiteAgent({
     workspaceRoot: root,
     business,
     apiKey,
     baseUrl,
-    modelId,
-    providerId,
+    modelId: resolved.modelId,
+    providerId: resolved.providerId,
     maxIterations: typeof body.maxIterations === "number" ? body.maxIterations : Math.min(80, Math.max(8, Number(process.env.AGENT_MAX_ITERATIONS ?? 40))),
     initialFiles: files,
     mode: typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit",
@@ -237,8 +279,14 @@ export function startServer(port = PORT, host = HOST) {
         // preta, mapa, menu mobile). Para desligar: GENERATE_BROWSER=0 ou envie
         // enableBrowser:false.
         const genBrowser = process.env.GENERATE_BROWSER !== "0" && body.enableBrowser !== false;
-        const agent = existingGen?.agent ?? await makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser });
-        if (!existingGen) sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "" });
+        // Prova real: resolve a IA da conta; se a config mudou desde a última
+        // geração, recria a sessão do agente com provider/modelo/chave novos.
+        const genExec = await prepareExec({ ...body, mode: "generate" });
+        const genProviderChanged = !!(existingGen?.agent && existingGen.execKey !== genExec.key);
+        const agent = (existingGen?.agent && !genProviderChanged)
+          ? existingGen.agent
+          : await makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser }, genExec);
+        sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
 
         // ANEXOS (5.26) na geração: materializa no workspace (ex.: logo/foto real do cliente).
         const attachResult = materializeAttachments(resolveWorkspaceRoot(projectId), (body.attachments ?? []) as ChatAttachment[]);
@@ -357,8 +405,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           changed: true,
           touched: finalOutcome.touched,
           files: finalFiles,
-          model: process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
-          provider: process.env.PROSPECTOR_PROVIDER ?? "deepseek",
+          model: genExec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
+          provider: genExec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
+          config_source: genExec.source,
+          config_warning: genExec.warning ?? null,
+          provider_changed: genProviderChanged,
           runtime: "cline",
           mode: "generate",
           gate_ok: gateResult.ok,
@@ -372,7 +423,21 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         return;
       }
 
-        if (url.pathname === "/run" && req.method === "POST") {
+        // PROVA real: qual IA o runtime USARÁ para este usuário (sanitizado).
+      if (url.pathname === "/agent-config" && req.method === "POST") {
+        const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
+        const exec = await prepareExec(body);
+        send(res, 200, {
+          ok: true,
+          provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
+          model: exec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
+          config_source: exec.source,
+          warning: exec.warning ?? null,
+        });
+        return;
+      }
+
+      if (url.pathname === "/run" && req.method === "POST") {
           const body = await readJson(req);
           const instruction = String(body.instruction ?? "").trim();
           const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
@@ -395,7 +460,13 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         let agent: ProspectorSiteAgent;
         let resume = false;
 
-        if (existing && existing.agent) {
+        // PROVA REAL da IA que será usada nesta execução: resolve antes da
+        // sessão. Se a config mudou desde a última mensagem (outro provider/
+        // modelo/chave validado), a sessão ANTIGA é descartada e uma nova é
+        // criada com a IA correta — nunca continua no DeepSeek por inércia.
+        const exec = await prepareExec(body);
+        const providerChanged = !!(existing && existing.agent && existing.execKey !== exec.key);
+        if (existing && existing.agent && !providerChanged) {
           agent = existing.agent;
           resume = true;
           existing.lastActive = Date.now();
@@ -403,8 +474,9 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           // (arquivos podem ter mudado entre sessões por materialização de spec)
           ensureWorkspaceDir(projectId, files);
         } else {
-          agent = await makeAgent(projectId, projectId, files, business, body);
-          sessions.set(projectId, { agent, projectId, lastActive: Date.now(), resetToken: "" });
+          if (providerChanged) sessions.delete(projectId);
+          agent = await makeAgent(projectId, projectId, files, business, body, exec);
+          sessions.set(projectId, { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
         }
 
         const events: string[] = [];
@@ -488,8 +560,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           changed,
           touched,
           files: finalFiles,
-          model: process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
-          provider: process.env.PROSPECTOR_PROVIDER ?? "deepseek",
+          model: exec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
+          provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
+          config_source: exec.source,
+          config_warning: exec.warning ?? null,
+          provider_changed: providerChanged,
           runtime: "cline",
           attachments: attachResult.attachments,
           attach_errors: attachResult.errors,

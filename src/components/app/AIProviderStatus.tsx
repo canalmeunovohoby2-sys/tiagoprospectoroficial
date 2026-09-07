@@ -46,6 +46,40 @@ export function AIProviderStatus() {
   const [data, setData] = useState<HealthPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastChecked, setLastChecked] = useState<string | null>(null);
+  const [proofLoading, setProofLoading] = useState(false);
+  const [runtimeProof, setRuntimeProof] = useState<{ provider?: string; model?: string; source?: string; warning?: string } | null>(null);
+
+  // PROVA REAL: pergunta ao Agent Runtime qual IA ele vai USAR para este
+  // usuário (vem do runtime-ai-config → ai_provider_config validado).
+  const proveRuntime = async () => {
+    if (proofLoading) return;
+    setProofLoading(true);
+    setRuntimeProof(null);
+    try {
+      const { data: rc, error: rcErr } = await supabase.functions.invoke<{ runtimeUrl?: string }>("runtime-config", { body: {} });
+      if (rcErr || !rc?.runtimeUrl) {
+        setRuntimeProof({ warning: "Agent Runtime não está configurado (runtime-config sem URL)." });
+        return;
+      }
+      const { data: user } = await supabase.auth.getUser();
+      const res = await fetch(`${String(rc.runtimeUrl).replace(/\/+$/, "")}/agent-config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user?.user?.id }),
+      });
+      const cfg = (await res.json().catch(() => null)) as { provider?: string; model?: string; config_source?: string; warning?: string } | null;
+      setRuntimeProof({
+        provider: cfg?.provider,
+        model: cfg?.model,
+        source: cfg?.config_source,
+        warning: cfg?.warning ?? null,
+      });
+    } catch (e) {
+      setRuntimeProof({ warning: e instanceof Error ? e.message : "Falha ao consultar o Agent Runtime." });
+    } finally {
+      setProofLoading(false);
+    }
+  };
 
   const run = useCallback(async () => {
     if (loading) return;
@@ -89,6 +123,25 @@ export function AIProviderStatus() {
 
       {data && (
         <div className="space-y-4">
+          <button type="button" onClick={proveRuntime} disabled={proofLoading}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50">
+            {proofLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Activity className="h-3.5 w-3.5" />}
+            Provar IA usada no gerador de sites
+          </button>
+          {runtimeProof && (
+            <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs space-y-1">
+              <p className="font-semibold">Prova real (Agent Runtime)</p>
+              {runtimeProof.warning && <p className="text-amber-600">{runtimeProof.warning}</p>}
+              {runtimeProof.provider && (
+                <p>IA usada pelo gerador: <strong className="capitalize">{runtimeProof.provider}</strong> · modelo <span className="font-mono">{runtimeProof.model}</span></p>
+              )}
+              {runtimeProof.source && (
+                <p className="text-muted-foreground">
+                  Origem: {runtimeProof.source === "user_config" ? "config da sua conta (validada via TESTAR)" : runtimeProof.source === "request" ? "definida no pedido" : "padrão do ambiente"}
+                </p>
+              )}
+            </div>
+          )}
           <div className="grid gap-3 sm:grid-cols-3">
             <Card className="p-4">
               <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Provider ativo</p>
