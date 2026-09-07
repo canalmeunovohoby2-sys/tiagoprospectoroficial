@@ -7,7 +7,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { ProspectorSiteAgent } from "./prospector-site-agent.js";
+import { ProspectorSiteAgent, isSurgicalEditTask } from "./prospector-site-agent.js";
 import { BrowserSession } from "./browser-session.js";
 import { auditSiteInteractions } from "./interaction-audit.js";
 import { isBugReport } from "./completion-guard.js";
@@ -558,7 +558,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         pruneSessions();
 
         // Resolve a sessão existente OU cria uma nova (ISOLADA POR USUÁRIO+PROJETO).
-        const existing = fresh ? undefined : sessions.get(editKey(ticket.uid, projectId));
+        // EDIÇÕES CIRÚRGICAS começam sessão NOVA (contexto compacto): continuar a
+        // conversa da geração reenvia o histórico inteiro a cada turno — a causa
+        // medida da lentidão em edições simples.
+        const surgicalEdit = isSurgicalEditTask(instruction);
+        const existing = fresh || surgicalEdit ? undefined : sessions.get(editKey(ticket.uid, projectId));
         let agent: ProspectorSiteAgent;
         let resume = false;
 

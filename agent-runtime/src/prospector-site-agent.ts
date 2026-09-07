@@ -18,7 +18,7 @@ import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTra
 // Detector de tarefa CIRÚRGICA (uma alteração pontual — cor, texto, botão, logo,
 // imagem, título, seção pequena). Para essas tarefas NÃO se reexecuta análise
 // ampla nem o fluxo de geração — o agente faz o mínimo de passos (read→edit→verify).
-function isSurgicalEditTask(instruction: string): boolean {
+export function isSurgicalEditTask(instruction: string): boolean {
   const text = String(instruction ?? "").trim();
   if (!text) return false;
   if (/^(o\s+que|como|qual|quando|onde|por\s+que|pode|poderia|voc[eê]\s+acha|diga|explique|resuma|liste|analis|audit)/i.test(text)) return false;
