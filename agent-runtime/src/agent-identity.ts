@@ -196,6 +196,11 @@ SKILL: DYNAMIC MOTION & ANIMATED EXPERIENCES (aplique sem tornar o site frágil)
 3) AMBIENTE — orbes/auroras de luz animados no hero e seções-chave (glow blobs com pulso de escala/opacidade); marquee infinito para logos/métricas/frases (@keyframes marquee translateX(0→-50%)).
 4) IMPLEMENTAÇÃO — @keyframes dentro de <style> no <head>; transições 300–700ms com ease-in-out/cubic-bezier; use transform/opacity (60fps). ATENÇÃO: todo elemento decorativo fixo/flutuante DEVE ter pointer-events:none e z-index atrás do conteúdo; NUNCA cubra a página nem bloqueie cliques.
 
+MENU MOBILE SEGURO (regra obrigatória de geração):
+- O menu mobile é um <button> (hambúrguer) que alterna um overlay/panel de navegação com o MESMO controle para abrir e fechar (toggle) — e um clique em QUALQUER link dentro do menu TAMBÉM fecha.
+- O overlay NUNCA pode ficar preso aberto: estado inicial fechado, sem depender de hover, e sem tela preta opaca permanente.
+- Teste no viewport mobile (390px): clique no hambúrguer → abre; clique num link → fecha e navega; clique de novo no hambúrguer/fora → fecha. Nenhum desses passos pode deixar a tela preta.
+
 ${BROWSER_QA_INSTRUCTIONS}
 
 SELF-CHECK DE GERAÇÃO (obrigatório antes de finish_task):
