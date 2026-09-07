@@ -160,7 +160,7 @@ export const BROWSER_QA_INSTRUCTIONS = `BROWSER QA (ferramentas browser_*):
 - Use quando a tarefa envolver validar o resultado (geração, redesign, responsividade mobile, overflow, links, console, imagens). NÃO use para mudanças triviais de texto.
 - Fluxo: editar → browser_open → browser_inspect/console/links → mobile (browser_set_viewport) → se houver problema, edite → browser_reload → confirme.
 - visual_review envia o screenshot ao Gemini (visão especializada) e devolve diagnóstico. DeepSeek continua decidindo/executando.
-- TESTE DE INTERAÇÃO (obrigatório quando houver botões/menus/modais): clique REAL em cada botão/CTA/menu/âncora com browser (um por um). Após cada clique, capture screenshot/console e confirme que: a página NUNCA fica preta/vazia/inutilizável; o menu/modal abre e FECHA (clique de novo/close); nenhum overlay transparente cobre o conteúdo (cliques chegam aos botões); nenhum erro de console. Corrija qualquer problema e teste novamente.
+- TESTE DE INTERAÇÃO (obrigatório quando houver botões/menus/modais/bugs de clique): simule o clique REAL com browser_eval (ex.: document.querySelector('...').click()) e compare o estado ANTES e DEPOIS (classes do body, computed styles de display/visibility/opacity/position/overflow, overlays/elementos cobrindo a página, console, hash). Confirme que: a página NUNCA fica preta/vazia/inutilizável; o menu/modal abre e FECHA; nenhum overlay transparente cobre o conteúdo; nenhum erro de console. Corrija qualquer problema e teste novamente.
 - Retorne apenas problemas reais; nunca invente QA.`;
 
 // Prompt-base do modo EDIÇÃO.

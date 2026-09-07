@@ -9,7 +9,7 @@ import { buildBrowserTools } from "./browser-tools.js";
 import { BrowserSession } from "./browser-session.js";
 import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
-import { decideFinishBlock } from "./completion-guard.js";
+import { decideFinishBlock, isBugReport, replyAsksForCode } from "./completion-guard.js";
 import { hasImageReferenceChange, requestsImageSwap } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
 import { computeWorkEvidence, type WorkEventLike } from "./work-evidence.js";
@@ -34,6 +34,17 @@ Esta é uma alteração PONTUAL. Execute no MÍNIMO de passos possível:
 2) Aplique a mudança exata com UM edit_file (nunca reescreva o arquivo inteiro).
 3) Confira com um read_file do trecho alterado e finalize.
 NESTA TAREFA É PROIBIDO: list_files, get_site_context, browser_* , visual_review, reescrever arquivos completos, tocar em outras seções/arquivos, reanalisar o projeto ou refazer o que já está pronto.`;
+
+const BUG_HINT = `
+
+[INVESTIGAÇÃO DE DEFEITO/BUG — obrigatório]
+O projeto JÁ está no workspace: você tem acesso a TODOS os arquivos (HTML/CSS/JS/JSON/assets) e ao navegador. NUNCA peça o código ao usuário ("envie o código", "preciso do html/css/js", "não tenho acesso").
+Fluxo obrigatório para o bug reportado:
+1) Reproduza o problema de verdade no navegador ANTES de mexer: browser_open → inspecione o estado inicial (browser_inspect/browser_console) → use browser_eval para executar a MESMA ação do usuário (ex.: document.querySelector(...).click()) e compare o estado DEPOIS (classes no <body>, computed styles de display/visibility/opacity/position/z-index/overflow, overlays/elementos cobrindo a página, erros no console, mudanças de URL/hash).
+2) Leia os arquivos envolvidos (JS/event handlers, CSS, HTML) e IDENTIFIQUE a CAUSA RAIZ. Não adivinhe: não altere z-index/transform/opacity por tentativa sem evidência do que causou o sintoma (ex.: tela preta ao clicar costuma ser overlay/modal/menu com tela escura que não fecha, camada transparente cobrindo a página, erro JS que trava o handler, âncora/hash mal resolvida, classe aplicada no clique).
+3) Aplique a CORREÇÃO MÍNIMA que elimina a causa (prefira edit_file pontual).
+4) Reabra/recarregue (browser_reload) e REPRODUZA o mesmo passo de novo (browser_eval) para confirmar que o problema sumiu e nada mais quebrou (console limpo).
+5) Só finalize (finish_task) depois dessa confirmação real. Se o problema persistir, continue investigando — não pergunte ao usuário por código.`;
 
 export interface AgentRunTiming {
   totalMs: number;
@@ -332,11 +343,17 @@ export class ProspectorSiteAgent {
     // Snapshot do início desta execução (para detectar "disse que alterou mas nada mudou").
     this.runStartFiles = readWorkspace(this.options.workspaceRoot);
     this.currentInstruction = instruction;
-    // Tarefas cirúrgicas (edição pontual) ganham um modo rápido: nunca reexecutar
-    // o fluxo amplo de análise/geração para trocar cor/texto/logo/imagem/botão.
-    const prompt = this.options.mode === "edit" && isSurgicalEditTask(instruction)
-      ? `${instruction}\n${SURGICAL_HINT}`
-      : instruction;
+    // DEFEITO/BUG → investigação completa (nunca modo rápido, nunca pedir código).
+    // Tarefas cirúrgicas (edição pontual) ganham modo rápido: nunca reexecutar o
+    // fluxo amplo de análise/geração para trocar cor/texto/logo/imagem/botão.
+    let prompt: string;
+    if (this.options.mode === "edit" && isBugReport(instruction)) {
+      prompt = `${instruction}\n${BUG_HINT}`;
+    } else if (this.options.mode === "edit" && isSurgicalEditTask(instruction)) {
+      prompt = `${instruction}\n${SURGICAL_HINT}`;
+    } else {
+      prompt = instruction;
+    }
     try {
       // Estado "antes" real (para touched correto em continuações).
       const stateBefore = shouldContinue || this.conversationStarted ? readWorkspace(this.options.workspaceRoot) : this.beforeFiles;
@@ -395,6 +412,10 @@ export class ProspectorSiteAgent {
    */
   private honestReply(reply: string, files: FileMap, touched: string[]): string {
     if (this.options.mode === "edit") {
+      // NUNCA pedir o código/arquivos ao usuário: o projeto está no workspace.
+      if (replyAsksForCode(reply) && Object.keys(files ?? {}).length > 0) {
+        return "Os arquivos do projeto já estão disponíveis no workspace — vou investigá-los diretamente, sem precisar que você envie o código. Reproduzo o problema no navegador, identifico a causa e aplico a correção mínima.";
+      }
       const claimsChange = /(corrigi|consert[ei]|troquei|alterei|modifiquei|atualizei|adicionei|reconstru[ií]|removi|mudei|implementei|apliquei|arrumei|resolvi|coloquei)/i.test(reply);
       if (touched.length === 0 && claimsChange) {
         return "⚠ Não consegui aplicar essa alteração: nenhum arquivo do site foi modificado nesta tentativa. Descreva de outro jeito (ex.: nome exato da foto/seção) que eu tento de novo.";

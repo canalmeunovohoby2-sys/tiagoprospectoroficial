@@ -188,6 +188,23 @@ export class BrowserSession {
     await this.page.waitForTimeout(120);
   }
 
+  // Executa JavaScript no contexto da página (mesma origem do workspace).
+  // Permite reproduzir cliques/interações e inspecionar o estado ANTES/DEPOIS.
+  async evaluate(expression: string): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    if (!this.page) return { ok: false, error: "Página não aberta. Use browser_open primeiro." };
+    if (typeof expression !== "string" || !expression.trim()) return { ok: false, error: "Expressão vazia." };
+    try {
+      const value = await this.page.evaluate((expr) => {
+        // eslint-disable-next-line no-new-func
+        const fn = new Function(`"use strict"; return (${expr});`);
+        return fn();
+      }, expression);
+      return { ok: true, value };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   async reload(): Promise<BrowserInspection> {
     if (!this.page) throw new Error("Página não aberta.");
     this.consoleLogs = [];

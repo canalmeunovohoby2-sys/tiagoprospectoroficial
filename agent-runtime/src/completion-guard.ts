@@ -49,6 +49,25 @@ export function isBroadQualityRequest(instruction: string): boolean {
   return goal.test(text);
 }
 
+// Detecta PEDIDO DE CORREÇÃO DE DEFEITO/BUG em projeto existente. Exige o fluxo
+// completo: reproduzir → investigar → corrigir → testar de novo. Nunca "pedir o
+// código ao usuário" (o workspace já contém os arquivos do projeto).
+export function isBugReport(instruction: string): boolean {
+  const text = String(instruction ?? "").trim();
+  if (!text) return false;
+  const asks = /(bug|defeito|quebra|quebrad|tela preta|f[íi]ca preto|fica preta|escurece|desaparec|sumiu|some\b|n[aã]o funciona|n[aã]o est[áa] (abrindo|carregando|funcionando)|n[aã]o clica|clique n[aã]o|bot[aã]o n[aã]o|conserta|corrige|corrigir|arruma|arrumar|erro\b|erros?\s*de\s*console|erro de javascript|overlay|modal n[aã]o|menu n[aã]o|link n[aã]o|âncora? n[aã]o|n[aã]o aparece|n[aã]o renderiza|desalinh|some ao clicar|quando clico)/i;
+  const justAsks = /^(o\s+que|como|qual|quando|onde|por\s+que|pode|poderia|voc[eê]\s+acha|diga|explique|resuma|liste)/i;
+  if (justAsks.test(text)) return false;
+  return asks.test(text);
+}
+
+// Detecta resposta do agente que PEDE o código/arquivos ao usuário (proibido:
+// o workspace já tem o projeto).
+export function replyAsksForCode(reply: string): boolean {
+  const text = String(reply ?? "");
+  return /(envie|mande|coloque|compartilhe|preciso\s+(que\s+voc[eê]\s+envie|ver\s+o\s+c[óo]digo|dos?\s+arquivos|do\s+html|do\s+css|do\s+js)|me\s+envie\s+(o|os|a)\s+(c[óo]digo|arquivos|html|css|js)|n[aã]o\s+tenho\s+acesso\s+aos?\s+(arquivos|c[óo]digo|html|js|css)|sem\s+acesso\s+ao\s+projeto)/i.test(text);
+}
+
 // Decide se finish_task deve ser bloqueado agora.
 export function decideFinishBlock(opts: {
   mode: "edit" | "generate";
@@ -105,16 +124,17 @@ export function decideFinishBlock(opts: {
   if (opts.mode === "edit" && requestedChange && hasStart && changed && opts.work) {
     const broad = isBroadQualityRequest(opts.instruction ?? "");
     const imageSwap = requestsImageSwap(opts.instruction ?? "");
-    if ((broad || imageSwap) && opts.work.inspectedBeforeEdit === false) {
+    const bugFix = isBugReport(opts.instruction ?? "");
+    if ((broad || imageSwap || bugFix) && opts.work.inspectedBeforeEdit === false) {
       return {
         block: true,
-        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de que inspecionou o estado atual ANTES da primeira alteração. ENTENDA o projeto: leia os arquivos relevantes com read_file (e, se envolver aparência/UX/imagem, abra o site no navegador) para localizar o elemento/foto exato — só então continue e finalize.`,
+        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de que inspecionou o estado atual ANTES da primeira alteração. ${bugFix ? "Para um DEFEITO/BUG: reproduza o problema antes de mexer — abra o site no navegador (browser_open/browser_eval) e leia os arquivos envolvidos para confirmar a causa raiz. " : ""}ENTENDA o projeto: leia os arquivos relevantes com read_file (e, se envolver aparência/UX/imagem, abra o site no navegador) para localizar o elemento/foto exato — só então continue e finalize.`,
       };
     }
-    if ((broad || imageSwap) && opts.work.verifiedAfterLastEdit === false) {
+    if ((broad || imageSwap || bugFix) && opts.work.verifiedAfterLastEdit === false) {
       return {
         block: true,
-        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de verificação do resultado DEPOIS da última alteração. Releia o(s) arquivo(s) alterado(s) (read_file) e/ou execute browser_reload/browser_inspect/visual_review para confirmar que a mudança (inclusive imagem/foto) está realmente aplicada antes de chamar finish_task.`,
+        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de verificação do resultado DEPOIS da última alteração. ${bugFix ? "Para um DEFEITO/BUG: recarregue o site (browser_reload) e reproduza o mesmo passo (ex.: browser_eval no clique) para CONFIRMAR que o problema sumiu; leia também o trecho alterado. " : ""}Releia o(s) arquivo(s) alterado(s) (read_file) e/ou execute browser_reload/browser_inspect/visual_review para confirmar que a mudança (inclusive imagem/foto) está realmente aplicada antes de chamar finish_task.`,
       };
     }
   }

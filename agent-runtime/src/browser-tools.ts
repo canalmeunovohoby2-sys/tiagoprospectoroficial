@@ -161,7 +161,33 @@ export function buildBrowserTools(
     },
   });
 
-  return [open, inspect, consoleTool, links, screenshot, setViewport, reload, visualReview];
+  const evalTool = createTool({
+    name: "browser_eval",
+    description:
+      "Executa JavaScript no contexto da página ABERTA (mesma origem do site). Use para REPRODUZIR interações e investigar bugs de verdade: " +
+      "simular clique em um botão (document.querySelector('...').click()), abrir/fechar menu ou modal, ler/adicionar classes do body ou de elementos, " +
+      "ler computed styles (display/visibility/opacity/position/z-index/overflow), comparar o estado da página ANTES e DEPOIS de um clique " +
+      "(ex.: verificar se a tela ficou preta/apareceu um overlay) e navegar por hash/link. Retorna o resultado da expressão (ou erro).",
+    inputSchema: z.object({
+      expression: z.string().describe("expressão/trecho JavaScript a executar (ex.: document.querySelector('.menu-btn').click(); document.body.className)"),
+    }),
+    async execute(input) {
+      const s = session();
+      const r = await s.evaluate(input.expression);
+      if (!r.ok) return `browser_eval ERRO: ${r.error ?? "falha ao avaliar"}`;
+      const v = r.value;
+      if (v === undefined) return "browser_eval OK (undefined)";
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return `browser_eval OK: ${v}`;
+      try {
+        const txt = JSON.stringify(v, null, 2) ?? String(v);
+        return `browser_eval OK: ${txt.slice(0, 4000)}`;
+      } catch {
+        return `browser_eval OK: ${String(v)}`;
+      }
+    },
+  });
+
+  return [open, inspect, consoleTool, links, screenshot, setViewport, reload, evalTool, visualReview];
 }
 
 export type { BrowserInspection };

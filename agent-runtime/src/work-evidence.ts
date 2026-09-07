@@ -35,6 +35,7 @@ export const INSPECT_TOOLS = new Set([
   "browser_inspect",
   "browser_console",
   "browser_links",
+  "browser_eval",
 ]);
 export const VERIFY_TOOLS = new Set([
   "read_file",
@@ -43,6 +44,7 @@ export const VERIFY_TOOLS = new Set([
   "browser_links",
   "browser_reload",
   "browser_screenshot",
+  "browser_eval",
   "visual_review",
 ]);
 
