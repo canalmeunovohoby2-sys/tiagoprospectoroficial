@@ -7,6 +7,8 @@ RUN npm ci --ignore-scripts
 
 COPY . .
 
+RUN npx playwright install chromium
+
 RUN npm run build
 
 EXPOSE 8787
