@@ -138,11 +138,41 @@ Deno.serve(async (req) => {
       const provider = String(body.provider ?? "").toLowerCase();
       if (!isProvider(provider)) return json({ error: "provedor inválido" }, 400);
       const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : PROVIDERS.find((p) => p.id === provider)!.defaultModel;
+
+      // PROVIDER LOCAL (Ollama): a prova real de conexão é feita NO NAVEGADOR do
+      // usuário — o Supabase Cloud NÃO alcança http://localhost:11434. O client
+      // envia clientVerified=true SOMENTE após uma chamada real bem-sucedida ao
+      // Ollama local. Aqui apenas ativamos (is_default) SEM chave e SEM fallback.
+      if (provider === "ollama") {
+        if (body.clientVerified !== true) {
+          return json({ ok: false, kind: "provider_unavailable", message: "Ollama é local: o teste real é executado pelo navegador (única forma de alcançar http://localhost:11434). Recarregue a página e clique em TESTAR novamente." });
+        }
+        const { error: upsErr } = await table.upsert(
+          { user_id: userId, provider: "ollama", model, enabled: true, is_default: true, api_key: null, fallback_provider: null, updated_at: new Date().toISOString() },
+          { onConflict: "user_id,provider" },
+        );
+        if (upsErr) return json({ error: upsErr.message }, 500);
+        await table.update({ is_default: false }).eq("user_id", userId).neq("provider", "ollama");
+        const latencyMs = typeof body.latencyMs === "number" ? body.latencyMs : undefined;
+        const reply = typeof body.reply === "string" && body.reply.trim() ? body.reply.trim().slice(0, 120) : "";
+        return json({
+          ok: true,
+          provider: "ollama",
+          model,
+          latencyMs,
+          reply,
+          activated: true,
+          isDefault: true,
+          message: reply
+            ? `Conexão válida com o Ollama local — resposta: "${reply}"${latencyMs ? ` (${(latencyMs / 1000).toFixed(1)}s)` : ""}. Provedor local validado e ATIVO.`
+            : "Conexão válida com o Ollama local. Provedor ATIVO.",
+        });
+      }
+
       const { data: rows } = await table.select("api_key").eq("user_id", userId).eq("provider", provider);
       const storedKey = rows?.[0]?.api_key ?? undefined;
-      // Ollama é provider LOCAL e não usa API Key (nenhuma chave, real ou fictícia).
-      const apiKey = isKeylessProvider(provider) ? undefined : (storedKey ?? Deno.env.get(ENV_KEYS[provider]) ?? undefined);
-      if (!apiKey && !isKeylessProvider(provider)) {
+      const apiKey = storedKey ?? Deno.env.get(ENV_KEYS[provider]) ?? undefined;
+      if (!apiKey) {
         return json({ ok: false, kind: "missing_key", message: "Chave ausente. Adicione a API Key antes de testar." });
       }
       const started = Date.now();
@@ -162,11 +192,10 @@ Deno.serve(async (req) => {
         const reply = (res.text ?? "").trim().slice(0, 120);
         const latencyMs = Date.now() - started;
 
-        // Ativa se a chave salva respondeu (chamada real).
-        // Ollama local também ativa sem chave salva (a chave é irrelevante).
+        // Ativa se a chave salva respondeu (chamada real). Falha → nada muda.
         let activated = false;
         let isDefaultNow = false;
-        if (!!storedKey || provider === "ollama") {
+        if (!!storedKey) {
           const { error: actErr } = await table.update({ is_default: true }).eq("user_id", userId).eq("provider", provider);
           if (!actErr) {
             await table.update({ is_default: false }).eq("user_id", userId).neq("provider", provider);

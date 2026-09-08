@@ -15,6 +15,56 @@ const AI_PROVIDERS: Array<{ id: string; label: string; defaultModel: string; loc
 // Providers LOCAIS (ex.: Ollama) não usam API Key e não têm fallback.
 const isLocalProvider = (id: string) => AI_PROVIDERS.find((x) => x.id === id)?.local === true;
 
+// Ollama local — endpoint OpenAI-compatible e teste REAL a partir do NAVEGADOR.
+// O navegador roda na máquina do usuário, então consegue alcançar localhost:11434
+// (o Supabase Cloud NÃO alcança o localhost do usuário — por isso o teste de um
+// provider local precisa partir daqui).
+const OLLAMA_LOCAL_ENDPOINT = "http://localhost:11434/v1";
+
+interface OllamaProbe { ok: boolean; reply?: string; latencyMs?: number; error?: string; httpStatus?: number }
+
+function ollamaProbeError(raw: string): string {
+  const isNet = /failed to fetch|networkerror|load failed|network request failed|ERR_/i.test(raw);
+  if (isNet || !raw) {
+    return "Não foi possível conectar ao Ollama local (http://localhost:11434). Verifique se ele está rodando (ollama serve) e se o CORS permite esta origem — defina OLLAMA_ORIGINS=* ou inclua a origem deste app, e recarregue o Ollama.";
+  }
+  return raw;
+}
+
+async function pingOllamaLocal(model: string): Promise<OllamaProbe> {
+  const started = Date.now();
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), 20_000);
+  try {
+    const res = await fetch(`${OLLAMA_LOCAL_ENDPOINT}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "Responda exatamente com a palavra: OK" }],
+        temperature: 0,
+        max_tokens: 256,
+        stream: false,
+        think: false,
+      }),
+      signal: ctrl.signal,
+    });
+    const latencyMs = Date.now() - started;
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      return { ok: false, latencyMs, httpStatus: res.status, error: text.trim() ? `HTTP ${res.status} — ${text.slice(0, 200)}` : `HTTP ${res.status}` };
+    }
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const reply = (data.choices?.[0]?.message?.content ?? "").trim().slice(0, 120);
+    return { ok: true, reply, latencyMs };
+  } catch (e) {
+    const msg = e instanceof Error && e.name === "AbortError" ? "O Ollama local demorou demais para responder (timeout)." : ollamaProbeError(e instanceof Error ? e.message : String(e));
+    return { ok: false, latencyMs: Date.now() - started, error: msg };
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 interface ProviderState {
   provider: string;
   label: string;
@@ -149,34 +199,75 @@ export function AiProvidersSettings() {
          patch(p.provider, { testResult: { ok: false, message: "Sessão não disponível. Recarregue a página." } });
          return;
        }
+
+       // Provider LOCAL (Ollama): o teste REAL precisa partir do navegador — é a
+       // única forma de alcançar o localhost do usuário (o Supabase Cloud não
+       // alcança). Sem API Key, sem fallback.
+       if (isLocalProvider(p.provider)) {
+         const probe = await pingOllamaLocal(p.model);
+         if (!probe.ok) {
+           patch(p.provider, { testResult: { ok: false, message: probe.error ?? "Falha ao conectar com o Ollama local.", kind: "provider_unavailable", latencyMs: probe.latencyMs } });
+           return;
+         }
+         // Conexão real OK no navegador → ativa o provider local (via ai-config).
+         const data = await callAiConfig({
+           action: "test",
+           provider: p.provider,
+           model: p.model,
+           clientVerified: true,
+           reply: probe.reply,
+           latencyMs: probe.latencyMs,
+         });
+         const activated = Boolean(data.activated) || Boolean(data.isDefault);
+         if (activated) {
+           await load();
+           window.dispatchEvent(new Event("ai-config-validated"));
+         }
+         patch(p.provider, {
+           testResult: {
+             ok: Boolean(data.ok),
+             message: String(data.message ?? "Conexão válida com o Ollama local."),
+             kind: String(data.kind ?? ""),
+             reply: typeof data.reply === "string" && data.reply ? data.reply : probe.reply,
+             latencyMs: typeof data.latencyMs === "number" ? data.latencyMs : probe.latencyMs,
+             provider: p.provider,
+             model: p.model,
+             isDefault: Boolean(data.isDefault),
+           },
+         });
+         return;
+       }
+
+       // Providers externos (DeepSeek/NVIDIA/OpenAI/Gemini/OpenRouter): teste
+       // server-side como antes (o servidor alcança a API do provider).
        const data = await callAiConfig({ action: "test", provider: p.provider, model: p.model });
-      const activated = Boolean(data.activated) || Boolean(data.isDefault);
-      if (activated) {
-        // Teste real OK → provider vira o ATIVO (uso global). Recarrega estados.
-        await load();
-      }
-      patch(p.provider, {
-        testResult: {
-          ok: Boolean(data.ok),
-          message: String(data.message ?? ""),
-          kind: String(data.kind ?? ""),
-          reply: typeof data.reply === "string" ? data.reply : undefined,
-          latencyMs: typeof data.latencyMs === "number" ? data.latencyMs : undefined,
-          provider: typeof data.provider === "string" ? data.provider : undefined,
-          model: typeof data.model === "string" ? data.model : undefined,
-          enabled: typeof data.enabled === "boolean" ? data.enabled : undefined,
-          isDefault: Boolean(data.isDefault),
-        },
-      });
-      if (activated) {
-        window.dispatchEvent(new Event("ai-config-validated"));
-      }
-    } catch (e) {
-      patch(p.provider, { testResult: { ok: false, message: e instanceof Error ? e.message : "Falha no teste" } });
-    } finally {
-      patch(p.provider, { testing: false });
-    }
-  }
+       const activated = Boolean(data.activated) || Boolean(data.isDefault);
+       if (activated) {
+         // Teste real OK → provider vira o ATIVO (uso global). Recarrega estados.
+         await load();
+       }
+       patch(p.provider, {
+         testResult: {
+           ok: Boolean(data.ok),
+           message: String(data.message ?? ""),
+           kind: String(data.kind ?? ""),
+           reply: typeof data.reply === "string" ? data.reply : undefined,
+           latencyMs: typeof data.latencyMs === "number" ? data.latencyMs : undefined,
+           provider: typeof data.provider === "string" ? data.provider : undefined,
+           model: typeof data.model === "string" ? data.model : undefined,
+           enabled: typeof data.enabled === "boolean" ? data.enabled : undefined,
+           isDefault: Boolean(data.isDefault),
+         },
+       });
+       if (activated) {
+         window.dispatchEvent(new Event("ai-config-validated"));
+       }
+     } catch (e) {
+       patch(p.provider, { testResult: { ok: false, message: e instanceof Error ? e.message : "Falha no teste" } });
+     } finally {
+       patch(p.provider, { testing: false });
+     }
+   }
 
    async function removeKey(p: ProviderState) {
      patch(p.provider, { saving: true, error: null });
