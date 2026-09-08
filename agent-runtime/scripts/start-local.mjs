@@ -42,7 +42,11 @@ process.env.HOST = process.env.HOST ?? "127.0.0.1";
 delete process.env.RUNTIME_GATEWAY_SECRET; // NUNCA roda com o secret global.
 delete process.env.AGENT_TICKET_SECRET;     // LOCAL usa JWT do usuário.
 
-const bin = process.platform === "win32" ? join(root, "node_modules", ".bin", "tsx.cmd") : join(root, "node_modules", ".bin", "tsx");
+const isWin = process.platform === "win32";
+// No Windows/Node 22, spawn de um arquivo .cmd exige shell:true (correção do
+// CVE-2024-27980). Sem shell, o Node lança "spawn EINVAL". Nos demais SOs,
+// seguimos com shell:false (execução direta do binário tsx).
+const bin = isWin ? join(root, "node_modules", ".bin", "tsx.cmd") : join(root, "node_modules", ".bin", "tsx");
 console.log(`[agent-runtime-local] subindo em http://localhost:${process.env.PORT} (JWT auth; sem RUNTIME_GATEWAY_SECRET)`);
-const child = spawn(bin, ["src/server.ts"], { cwd: root, env: process.env, stdio: "inherit", shell: false });
+const child = spawn(bin, ["src/server.ts"], { cwd: root, env: process.env, stdio: "inherit", shell: isWin });
 child.on("exit", (code) => process.exit(code ?? 1));
