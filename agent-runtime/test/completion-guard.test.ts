@@ -113,7 +113,7 @@ describe("Depth Guard (5.28) — pedidos amplos não finalizam com mínimo esfor
     const d = decideFinishBlock({
       mode: "edit", files: CHANGED, startFiles: POOR, instruction: "melhore esse site",
       finishSkips: 0,
-      work: { inspectedBeforeEdit: true, verifiedAfterLastEdit: true, editActionCount: 3, editedPaths: ["index.html", "src/site.css"] },
+      work: { inspectedBeforeEdit: true, verifiedAfterLastEdit: true, renderVerifiedAfterLastEdit: true, editActionCount: 3, editedPaths: ["index.html", "src/site.css"] },
     });
     expect(d.block).toBe(false);
   });
@@ -132,7 +132,7 @@ describe("Depth Guard (5.28) — pedidos amplos não finalizam com mínimo esfor
     const d = decideFinishBlock({
       mode: "edit", files: CHANGED, startFiles: POOR, instruction: "troca a cor do botão para azul",
       finishSkips: 0,
-      work: { inspectedBeforeEdit: false, verifiedAfterLastEdit: true, editActionCount: 1, editedPaths: ["src/site.css"] },
+      work: { inspectedBeforeEdit: false, verifiedAfterLastEdit: true, renderVerifiedAfterLastEdit: true, editActionCount: 1, editedPaths: ["src/site.css"] },
     });
     expect(d.block).toBe(false);
   });

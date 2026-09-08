@@ -20,6 +20,9 @@ export interface WorkEvidence {
   inspectedBeforeEdit: boolean;
   /** Houve verificação (releitura/browser/visual_review) depois da última alteração? */
   verifiedAfterLastEdit: boolean;
+  /** Houve verificação por RENDERIZAÇÃO real (browser_* e screenshot/visual_review/browser_measure)
+   *  depois da última alteração? Usada p/ tarefas VISUAIS (não basta read-back). */
+  renderVerifiedAfterLastEdit?: boolean;
   /** Quantas ações de alteração (write/edit/delete) foram executadas nesta run. */
   editActionCount: number;
   /** Arquivos realmente alterados nesta run (paths distintos). */
@@ -46,6 +49,19 @@ export const VERIFY_TOOLS = new Set([
   "browser_screenshot",
   "browser_eval",
   "visual_review",
+  "browser_measure",
+]);
+// Verificação de RENDERIZAÇÃO real (browser/screenshot/measure) — o que conta
+// como evidência VISUAL para tarefas de layout (FASE 3). read_file NÃO conta aqui.
+export const RENDER_VERIFY_TOOLS = new Set([
+  "browser_inspect",
+  "browser_console",
+  "browser_links",
+  "browser_reload",
+  "browser_screenshot",
+  "browser_eval",
+  "visual_review",
+  "browser_measure",
 ]);
 
 export function workToolName(e: WorkEventLike): string {
@@ -74,15 +90,17 @@ export function computeWorkEvidence(events: WorkEventLike[]): WorkEvidence {
     }
   }
   if (editIdxs.length === 0) {
-    return { inspectedBeforeEdit: false, verifiedAfterLastEdit: false, editActionCount: 0, editedPaths: [] };
+    return { inspectedBeforeEdit: false, verifiedAfterLastEdit: false, renderVerifiedAfterLastEdit: false, editActionCount: 0, editedPaths: [] };
   }
   const firstEdit = editIdxs[0];
   const lastEdit = editIdxs[editIdxs.length - 1];
   const inspectedBeforeEdit = seq.slice(0, firstEdit).some((s) => INSPECT_TOOLS.has(s.name));
   const verifiedAfterLastEdit = seq.slice(lastEdit + 1).some((s) => VERIFY_TOOLS.has(s.name));
+  const renderVerifiedAfterLastEdit = seq.slice(lastEdit + 1).some((s) => RENDER_VERIFY_TOOLS.has(s.name));
   return {
     inspectedBeforeEdit,
     verifiedAfterLastEdit,
+    renderVerifiedAfterLastEdit,
     editActionCount: editIdxs.length,
     editedPaths: [...editedPaths].sort(),
   };

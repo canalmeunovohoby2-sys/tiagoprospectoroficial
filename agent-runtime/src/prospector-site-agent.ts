@@ -9,7 +9,7 @@ import { buildBrowserTools } from "./browser-tools.js";
 import { BrowserSession } from "./browser-session.js";
 import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
-import { decideFinishBlock, isBugReport, replyAsksForCode } from "./completion-guard.js";
+import { decideFinishBlock, isBugReport, replyAsksForCode, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
 import { hasImageReferenceChange, requestsImageSwap } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
 import { computeWorkEvidence, type WorkEventLike } from "./work-evidence.js";
@@ -110,6 +110,8 @@ export class ProspectorSiteAgent {
   private finishBlocked = false;
   /** Retentativas da barreira anti-reescrita destrutiva (write_file encolhedor). */
   private writeSkips = 0;
+  /** Ciclos visuais (correção por renderização/medição) já realizados — limite anti-loop. */
+  private visualCycles = 0;
   private runStartFiles: Record<string, string> | null = null;
   private currentInstruction = "";
   /** Sequência de tool-started da run atual — evidência real para o Depth Guard. */
@@ -223,9 +225,12 @@ export class ProspectorSiteAgent {
         name: options.business?.name ?? undefined,
         finishSkips: this.finishSkips,
         work: this.currentToolEvents.length ? computeWorkEvidence(this.currentToolEvents) : undefined,
+        visualIterations: this.visualCycles,
+        maxVisualIterations: MAX_VISUAL_ITERATIONS_DEFAULT,
       });
       if (decision.block) {
         this.finishSkips += 1;
+        if (decision.kind === "visual") this.visualCycles += 1;
         this.finishBlocked = true;
         return { skip: true, reason: decision.reason ?? "Revisão automática reprovou a finalização." };
       }

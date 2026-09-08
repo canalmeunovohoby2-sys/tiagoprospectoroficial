@@ -13,10 +13,15 @@ import { assertGenerationQuality } from "./generation-gate.js";
 import { readWorkspace } from "./workspace.js";
 import type { WorkEvidence } from "./work-evidence.js";
 import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap } from "./regression-guard.js";
+import { classifyTask } from "./visual-task.js";
+
+export type FinishBlockKind =
+  | "evidence" | "image" | "inspect" | "verify" | "visual" | "regression" | "quality";
 
 export interface FinishDecision {
   block: boolean;
   reason?: string;
+  kind?: FinishBlockKind;
 }
 
 export interface GuardCounters {
@@ -24,6 +29,7 @@ export interface GuardCounters {
 }
 
 export const MAX_FINISH_SKIPS_DEFAULT = 4;
+export const MAX_VISUAL_ITERATIONS_DEFAULT = 3;
 
 // Heurística: a instrução pede mudança real (não é pergunta/conversa)?
 // Usada para detectar "afirmou que alterou mas nada mudou".
@@ -82,6 +88,10 @@ export function decideFinishBlock(opts: {
   maxFinishSkips?: number;
   /** Evidência real de inspeção/verificação da run (Depth Guard 5.28). */
   work?: WorkEvidence;
+  /** Iterações do ciclo visual já realizadas (verificação por renderização). */
+  visualIterations?: number;
+  /** Máximo de iterações visuais consecutivas (evita loop). */
+  maxVisualIterations?: number;
 }): FinishDecision {
   const max = opts.maxFinishSkips ?? MAX_FINISH_SKIPS_DEFAULT;
   if (opts.finishSkips >= max) {
@@ -101,6 +111,7 @@ export function decideFinishBlock(opts: {
   if (requestedChange && hasStart && !changed && opts.finishSkips === 0) {
     return {
       block: true,
+      kind: "evidence",
       reason: `A instrução pedia uma alteração no site, mas NENHUM arquivo foi modificado nesta execução. Você NÃO pode afirmar que executou. Use as ferramentas (write_file/edit_file) para aplicar a alteração REAL e só então chame finish_task. Se o estado pedido JÁ estava correto ou não havia o que mudar, finalize dizendo isso claramente (sem afirmar que alterou).`,
     };
   }
@@ -112,6 +123,7 @@ export function decideFinishBlock(opts: {
     if (wantsSwap && !hasImageReferenceChange(opts.startFiles, files) && opts.finishSkips === 0) {
       return {
         block: true,
+        kind: "image",
         reason: `Você foi solicitado a TROCAR/SUBSTITUIR uma imagem, mas o CONJUNTO de imagens no código não mudou (nenhuma URL de imagem foi substituída). Localize o elemento solicitado, altere de verdade a URL/path da imagem com edit_file e verifique no navegador antes de chamar finish_task. Se a imagem já era a correta, finalize dizendo que ela já estava assim.`,
       };
     }
@@ -131,13 +143,32 @@ export function decideFinishBlock(opts: {
     if ((broad || imageSwap || bugFix) && opts.work.inspectedBeforeEdit === false) {
       return {
         block: true,
+        kind: "inspect",
         reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de que inspecionou o estado atual ANTES da primeira alteração. ${bugFix ? "Para um DEFEITO/BUG: reproduza o problema antes de mexer — abra o site no navegador (browser_open/browser_eval) e leia os arquivos envolvidos para confirmar a causa raiz. " : ""}ENTENDA o projeto: leia os arquivos relevantes com read_file (e, se envolver aparência/UX/imagem, abra o site no navegador) para localizar o elemento/foto exato — só então continue e finalize.`,
       };
     }
     if (opts.work.verifiedAfterLastEdit === false) {
       return {
         block: true,
+        kind: "verify",
         reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de VERIFICAÇÃO do resultado DEPOIS da última alteração. Texto do modelo NÃO é evidência: releia o(s) arquivo(s) alterado(s) (read_file) e/ou execute browser_reload/browser_inspect/visual_review para CONFIRMAR que a mudança está realmente aplicada e atende ao objetivo antes de chamar finish_task.${bugFix ? " Para um DEFEITO/BUG: recarregue o site (browser_reload) e reproduza o mesmo passo (ex.: browser_eval no clique) para confirmar que o problema sumiu." : ""}`,
+      };
+    }
+  }
+
+  // 3b) CICLO VISUAL AUTÔNOMO (6.0): tarefa VISUAL (layout/geometria) alterou
+  //    código mas NÃO há verificação por RENDERIZAÇÃO real (browser_*/screenshot/
+  //    browser_measure) DEPOIS da última alteração → não pode concluir apenas por
+  //    "o código parece certo". Limite de iterações evita loop; ao atingir, deixa
+  //    finalizar (a resposta honesta/parcial é garantida pelo honestReply).
+  const taskClass = classifyTask(opts.instruction ?? "");
+  if (opts.mode === "edit" && taskClass === "visual" && requestedChange && hasStart && changed && opts.work) {
+    const maxVis = opts.maxVisualIterations ?? MAX_VISUAL_ITERATIONS_DEFAULT;
+    if (!opts.work.renderVerifiedAfterLastEdit && (opts.visualIterations ?? 0) < maxVis) {
+      return {
+        block: true,
+        kind: "visual",
+        reason: `Tarefa VISUAL: você alterou o layout/posição/espaçamento, mas NÃO há evidência de MEDIÇÃO/RENDERIZAÇÃO real APÓS a última alteração. Não conclua apenas pelo código: abra/renderize o site (browser_open/browser_reload), use browser_measure (ou browser_inspect/browser_screenshot/visual_review) e confirme a geometria/posição real antes de chamar finish_task. Se a evidência mostrar que o problema não foi resolvido, faça uma nova correção e meça de novo.`,
       };
     }
   }
@@ -151,6 +182,7 @@ export function decideFinishBlock(opts: {
     if (regressions.length > 0) {
       return {
         block: true,
+        kind: "regression",
         reason: `REGRESSÃO detectada na edição — você NÃO pode finalizar assim. EDITAR ≠ RECONSTRUIR: preserve o trabalho existente e modifique só o necessário. Corrija/restaure antes de chamar finish_task novamente:\n${regressions.map((r) => `- ${r}`).join("\n")}`,
       };
     }
@@ -166,6 +198,7 @@ export function decideFinishBlock(opts: {
   if (gate.ok) return { block: false };
   return {
     block: true,
+    kind: "quality",
     reason: `A revisão automática ainda detecta problemas obrigatórios antes de finalizar. Corrija TODOS e só então chame finish_task novamente:\n${gate.issues.map((i) => `- ${i}`).join("\n")}`,
   };
 }
