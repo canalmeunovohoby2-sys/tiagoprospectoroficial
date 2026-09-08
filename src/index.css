@@ -243,6 +243,20 @@
   }
 
   .fade-in-up { animation: fade-in-up 0.5s ease-out both; }
+
+  /* Logo do menu: vai para um lado e o outro, pausa ~2s no centro, e continua. */
+  .brand-slide {
+    animation: brand-slide 9s ease-in-out infinite;
+  }
+}
+
+@keyframes brand-slide {
+  0%   { transform: translateX(-16px); }
+  22%  { transform: translateX(16px); }
+  40%  { transform: translateX(0); }
+  62%  { transform: translateX(0); }   /* pausa no centro (~2s) */
+  80%  { transform: translateX(-16px); }
+  100% { transform: translateX(0); }
 }
 
 a[href*="lovable.dev"], 

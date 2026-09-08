@@ -51,7 +51,7 @@ export function AppSidebar() {
           </div>
         ) : (
           <div className="flex items-center justify-center py-2">
-            <BrandLogo className="h-14 w-auto" />
+            <BrandLogo className="h-14 w-auto brand-slide" />
           </div>
         )}
       </SidebarHeader>
