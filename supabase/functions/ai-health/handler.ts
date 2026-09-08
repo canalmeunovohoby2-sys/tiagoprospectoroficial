@@ -3,7 +3,7 @@
 import { AIProviderConfigurationError, DEFAULT_PROVIDER } from "../_shared/ai.ts";
 
 export type ProviderName = "nvidia" | "deepseek" | "openai" | "gemini" | "ollama" | "openrouter";
-export type ProviderStatus = "online" | "rate_limited" | "unavailable" | "timeout" | "not_configured" | "configuration_error" | "error" | "configured";
+export type ProviderStatus = "online" | "rate_limited" | "unavailable" | "timeout" | "not_configured" | "configuration_error" | "error" | "configured" | "local";
 
 export const PROVIDER_NAMES: ProviderName[] = ["nvidia", "deepseek", "openai", "gemini", "ollama", "openrouter"];
 
@@ -107,11 +107,17 @@ export async function runHealthCheck(opts: {
   });
 
   // Teste de conectividade apenas no provider ativo (chamada mínima e barata).
+  // Providers LOCAIS (Ollama em localhost) NÃO podem ser testados do servidor
+  // (Supabase Cloud não alcança o localhost do usuário): o status reflete a
+  // validação REAL feita pelo navegador (TESTAR nas Configurações).
   let tested: ProviderName | null = null;
   if (active) {
     const entry = providers.find((p) => p.name === active);
     const started = Date.now();
-    if (entry && entry.configured) {
+    if (entry && active === "ollama") {
+      tested = active;
+      entry.status = entry.validated ? "local" : (entry.configured ? "configured" : "not_configured");
+    } else if (entry && entry.configured) {
       tested = active;
       try {
         const result = await runProvider(active, entry.model ?? resolveProviderModel(getEnv, active), cfg?.activeApiKey);

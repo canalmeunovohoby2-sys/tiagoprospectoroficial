@@ -30,6 +30,7 @@ const LABELS: Record<string, string> = {
   timeout: "Timeout",
   configuration_error: "Erro de configuração",
   error: "Erro",
+  local: "Local (validado no navegador)",
 };
 
 const DOTS: Record<string, string> = {
@@ -41,6 +42,7 @@ const DOTS: Record<string, string> = {
   timeout: "🔴",
   configuration_error: "🟠",
   error: "🔴",
+  local: "🟢",
 };
 
 export function AIProviderStatus() {
