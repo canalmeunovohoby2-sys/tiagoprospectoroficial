@@ -80,7 +80,7 @@ analisador visual de screenshots, via edge function `gemini-vision` (chave
 1. `Cline/DeepSeek` constrói/edita o código.
 2. `browser_screenshot` captura a página real.
 3. Tool `visual_review` envia o screenshot ao `gemini-vision` (modelo
-   `gemini-3.6-flash`; configurável via secret `GEMINI_VISION_MODEL`).
+   `gemini-2.5-flash`; configurável via secret `GEMINI_VISION_MODEL`).
 4. Gemini devolve diagnóstico estruturado JSON (issues: severidade/área/descrição/fix).
 5. O diagnóstico volta ao Agent Loop como tool result → DeepSeek decide e edita.
 6. Novo screenshot + `visual_review` revalidam a correção (máx. ~2 ciclos no prompt).

@@ -10,25 +10,92 @@
 
 @layer base {
   :root {
-    /* Dark-first by default */
-    --background: 222 30% 6%;
-    --foreground: 210 20% 96%;
+    /* Cor de marca (customizável nas Configurações). Padrão "vermelho" (#ED2C2C). */
+    --brand-h: 0;
+    --brand-s: 84%;
+    --brand-l: 55%;
 
-    --card: 222 28% 9%;
-    --card-foreground: 210 20% 96%;
+    color-scheme: light;
 
-    --popover: 222 28% 9%;
-    --popover-foreground: 210 20% 96%;
+    /* LIGHT-first */
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
 
-    /* Primary = Turquoise (reserved for main CTAs / important highlights) */
-    --primary: 0 84% 55%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Primary = cor de marca (controlável) */
+    --primary: var(--brand-h) var(--brand-s) var(--brand-l);
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 10 90% 62%;
+    --primary-glow: var(--brand-h) var(--brand-s) calc(var(--brand-l) + 8%);
 
     /* Secondary = Tech blue */
     --secondary: 217 91% 60%;
     --secondary-foreground: 210 20% 98%;
 
+    --muted: 210 20% 90%;
+    --muted-foreground: 215 16% 40%;
+
+    --accent: 217 91% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 75% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 70% 40%;
+    --warning: 38 92% 50%;
+
+    --border: 214 20% 84%;
+    --input: 214 20% 84%;
+    --ring: var(--brand-h) var(--brand-s) var(--brand-l);
+
+    --radius: 0.875rem;
+
+    --gradient-primary: linear-gradient(135deg, hsl(var(--brand-h) var(--brand-s) var(--brand-l)), hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 12%)));
+    --gradient-secondary: linear-gradient(135deg, hsl(217 91% 60%), hsl(199 89% 65%));
+    --gradient-surface: linear-gradient(160deg, hsl(210 20% 100% / 0.9), hsl(210 20% 96% / 0.9));
+    --gradient-glow: radial-gradient(circle at top right, hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.15), transparent 60%);
+    --gradient-bg: radial-gradient(1200px 600px at 15% -10%, hsl(217 91% 50% / 0.10), transparent 60%),
+                   radial-gradient(900px 500px at 95% 10%, hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.10), transparent 60%),
+                   radial-gradient(900px 700px at 50% 110%, hsl(199 89% 50% / 0.08), transparent 60%);
+
+    --shadow-elegant: 0 10px 30px -12px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.35);
+    --shadow-glow: 0 0 0 1px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.25), 0 8px 32px -8px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.45);
+    --shadow-glow-blue: 0 0 0 1px hsl(217 91% 60% / 0.25), 0 8px 32px -8px hsl(217 91% 60% / 0.45);
+    --shadow-card: 0 1px 0 hsl(0 0% 0% / 0.04) inset, 0 8px 24px hsl(0 0% 0% / 0.06);
+
+    --sidebar-background: 210 20% 97%;
+    --sidebar-foreground: 215 16% 38%;
+    --sidebar-primary: var(--brand-h) var(--brand-s) var(--brand-l);
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 20% 92%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 214 20% 88%;
+    --sidebar-ring: var(--brand-h) var(--brand-s) var(--brand-l);
+  }
+
+  .dark {
+    color-scheme: dark;
+
+    --background: 222 30% 6%;
+    --foreground: 210 20% 96%;
+
+    --card: 222 28% 9%;
+    --card-foreground: 210 20% 96%;
+
+    --popover: 222 28% 9%;
+    --popover-foreground: 210 20% 96%;
+
+    --primary: var(--brand-h) var(--brand-s) var(--brand-l);
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: var(--brand-h) var(--brand-s) calc(var(--brand-l) + 8%);
+
+    --secondary: 217 91% 60%;
+    --secondary-foreground: 210 20% 98%;
+
     --muted: 222 20% 14%;
     --muted-foreground: 215 16% 65%;
 
@@ -38,67 +105,34 @@
     --destructive: 0 75% 58%;
     --destructive-foreground: 0 0% 100%;
 
-    --success: 0 84% 55%;
+    --success: 152 70% 42%;
     --warning: 38 92% 55%;
 
     --border: 222 20% 16%;
     --input: 222 20% 16%;
-    --ring: 0 84% 55%;
+    --ring: var(--brand-h) var(--brand-s) var(--brand-l);
 
-    --radius: 0.875rem;
-
-    --gradient-primary: linear-gradient(135deg, hsl(0 84% 55%), hsl(10 90% 62%));
+    --gradient-primary: linear-gradient(135deg, hsl(var(--brand-h) var(--brand-s) var(--brand-l)), hsl(var(--brand-h) var(--brand-s) calc(var(--brand-l) + 12%)));
     --gradient-secondary: linear-gradient(135deg, hsl(217 91% 60%), hsl(199 89% 65%));
     --gradient-surface: linear-gradient(160deg, hsl(222 28% 11% / 0.85), hsl(222 28% 8% / 0.85));
-    --gradient-glow: radial-gradient(circle at top right, hsl(0 84% 55% / 0.18), transparent 60%);
+    --gradient-glow: radial-gradient(circle at top right, hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.18), transparent 60%);
     --gradient-bg: radial-gradient(1200px 600px at 15% -10%, hsl(217 91% 50% / 0.18), transparent 60%),
-                   radial-gradient(900px 500px at 95% 10%, hsl(0 84% 50% / 0.12), transparent 60%),
+                   radial-gradient(900px 500px at 95% 10%, hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.12), transparent 60%),
                    radial-gradient(900px 700px at 50% 110%, hsl(199 89% 50% / 0.10), transparent 60%);
 
-    --shadow-elegant: 0 10px 40px -10px hsl(0 84% 55% / 0.35);
-    --shadow-glow: 0 0 0 1px hsl(0 84% 55% / 0.25), 0 8px 32px -8px hsl(0 84% 55% / 0.45);
+    --shadow-elegant: 0 10px 40px -10px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.35);
+    --shadow-glow: 0 0 0 1px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.25), 0 8px 32px -8px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.45);
     --shadow-glow-blue: 0 0 0 1px hsl(217 91% 60% / 0.25), 0 8px 32px -8px hsl(217 91% 60% / 0.45);
     --shadow-card: 0 1px 0 hsl(0 0% 100% / 0.04) inset, 0 8px 24px hsl(0 0% 0% / 0.35);
 
     --sidebar-background: 222 32% 5%;
     --sidebar-foreground: 215 16% 75%;
-    --sidebar-primary: 0 84% 55%;
+    --sidebar-primary: var(--brand-h) var(--brand-s) var(--brand-l);
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 222 25% 11%;
     --sidebar-accent-foreground: 210 20% 96%;
     --sidebar-border: 222 25% 12%;
-    --sidebar-ring: 0 84% 55%;
-  }
-
-  .dark {
-    --background: 222 30% 6%;
-    --foreground: 210 20% 96%;
-    --card: 222 28% 9%;
-    --card-foreground: 210 20% 96%;
-    --popover: 222 28% 9%;
-    --popover-foreground: 210 20% 96%;
-    --primary: 0 84% 55%;
-    --primary-foreground: 0 0% 100%;
-    --primary-glow: 10 90% 62%;
-    --secondary: 217 91% 60%;
-    --secondary-foreground: 210 20% 98%;
-    --muted: 222 20% 14%;
-    --muted-foreground: 215 16% 65%;
-    --accent: 217 91% 60%;
-    --accent-foreground: 210 20% 98%;
-    --destructive: 0 75% 58%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 222 20% 16%;
-    --input: 222 20% 16%;
-    --ring: 0 84% 55%;
-    --sidebar-background: 222 32% 5%;
-    --sidebar-foreground: 215 16% 75%;
-    --sidebar-primary: 0 84% 55%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 222 25% 11%;
-    --sidebar-accent-foreground: 210 20% 96%;
-    --sidebar-border: 222 25% 12%;
-    --sidebar-ring: 0 84% 55%;
+    --sidebar-ring: var(--brand-h) var(--brand-s) var(--brand-l);
   }
 
   * {
@@ -139,11 +173,11 @@
 
   /* Glassmorphism card */
   .glass {
-    background: linear-gradient(160deg, hsl(222 28% 12% / 0.7), hsl(222 28% 8% / 0.55));
+    background: var(--gradient-surface);
     backdrop-filter: blur(14px) saturate(140%);
     -webkit-backdrop-filter: blur(14px) saturate(140%);
-    border: 1px solid hsl(0 84% 55% / 0.45);
-    box-shadow: var(--shadow-card), 0 0 0 1px hsl(0 84% 55% / 0.12), 0 0 18px -6px hsl(0 84% 55% / 0.35);
+    border: 1px solid hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.40);
+    box-shadow: var(--shadow-card), 0 0 0 1px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.12), 0 0 18px -6px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.32);
   }
 
   .glass-hover {
@@ -151,8 +185,8 @@
   }
   .glass-hover:hover {
     transform: translateY(-2px);
-    border-color: hsl(0 84% 55% / 0.85);
-    box-shadow: 0 12px 40px -12px hsl(0 84% 55% / 0.55), 0 0 0 1px hsl(0 84% 55% / 0.35), 0 1px 0 hsl(0 0% 100% / 0.06) inset;
+    border-color: hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.85);
+    box-shadow: 0 12px 40px -12px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.55), 0 0 0 1px hsl(var(--brand-h) var(--brand-s) var(--brand-l) / 0.35), 0 1px 0 hsl(0 0% 100% / 0.06) inset;
   }
 
   /* Hover glow for CTAs */

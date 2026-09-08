@@ -26,6 +26,33 @@
   <meta name="twitter:title" content="LeadHunter Brasil">
   <meta property="og:description" content="CRM inteligente para prospecção de leads reais no Google Places e gestão comercial.">
   <meta name="twitter:description" content="CRM inteligente para prospecção de leads reais no Google Places e gestão comercial.">
+
+  <!-- Aplica tema (dark por padrão) e cor de marca SALVA antes do primeiro paint -->
+  <script>
+    (function () {
+      try {
+        var root = document.documentElement;
+        var t = localStorage.getItem('lh-theme') || 'dark';
+        if (t === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
+
+        var hex = localStorage.getItem('lh-brand') || '#ED2C2C';
+        var m = String(hex).replace('#', '');
+        if (m.length === 3) m = m[0]+m[0]+m[1]+m[1]+m[2]+m[2];
+        var r = parseInt(m.slice(0,2),16)/255, g = parseInt(m.slice(2,4),16)/255, b = parseInt(m.slice(4,6),16)/255;
+        var max = Math.max(r,g,b), min = Math.min(r,g,b), l = (max+min)/2, h = 0, s = 0, d = max-min;
+        if (d) {
+          s = l > 0.5 ? d/(2-max-min) : d/(max+min);
+          if (max === r) h = (g-b)/d + (g < b ? 6 : 0);
+          else if (max === g) h = (b-r)/d + 2;
+          else h = (r-g)/d + 4;
+          h *= 60;
+        }
+        root.style.setProperty('--brand-h', String(Math.round(h)));
+        root.style.setProperty('--brand-s', Math.round(s*100)+'%');
+        root.style.setProperty('--brand-l', Math.round(l*100)+'%');
+      } catch (e) {}
+    })();
+  </script>
 </head>
 
   <body translate="no" class="notranslate">

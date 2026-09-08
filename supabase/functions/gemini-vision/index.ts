@@ -7,7 +7,10 @@
 // aceita apenas requests com imagem; limita tamanho (~2MB) e contexto.
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 
-const MODEL = Deno.env.get("GEMINI_VISION_MODEL") ?? "gemini-3.6-flash";
+// Modelo multimodal. O default DEVE ser um modelo válido do Gemini — "gemini-3.6-flash"
+// não existe (falha em generateContent → 404/503). O padrão do projeto é gemini-2.5-flash;
+// pode ser sobrescrito via secret GEMINI_VISION_MODEL.
+const MODEL = Deno.env.get("GEMINI_VISION_MODEL") ?? "gemini-2.5-flash";
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 const MAX_IMAGE_BYTES = 2_200_000; // ~2MB base64
 
@@ -74,16 +77,19 @@ Deno.serve(async (req) => {
       generationConfig: { temperature: 0.2, maxOutputTokens: 2500 },
     };
 
-    // 1 retry em 503 (overload transitório do Gemini).
+    // Reintenta em 503 (sobrecarga transitória do Gemini) E em 429 (rate-limit do
+    // tier grátis), com backoff crescente. Se persistir depois das tentativas,
+    // devolve o erro real (não mascara) — o agente cai no fallback honesto (DOM).
     let upstream: Response | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 4; attempt++) {
       upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEMINI_KEY}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (upstream.status !== 503) break;
-      await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+      if (upstream.status !== 503 && upstream.status !== 429) break;
+      // 503/429 são temporários (quota/overload): aguarda e tenta de novo.
+      await new Promise((r) => setTimeout(r, 900 * (attempt + 1)));
     }
     if (!upstream) throw new Error("sem resposta do Gemini");
 

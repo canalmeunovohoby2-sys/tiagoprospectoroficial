@@ -579,6 +579,21 @@ export function startServer(port = PORT, host = HOST) {
               ? briefing.user_prompt.trim()
               : ""
         );
+        // Diretriz de DIVERSIDADE VISUAL (comportamental): cada projeto é um novo
+        // desafio de direção criativa. O nicho é só uma variável — a identidade do
+        // NEGÓCIO guia a estética. Proibido operar com template/template implícito
+        // ou repetir paleta/imagens/layout/fontes de outro projeto.
+        const creativeDirective = `
+DIRETRIZ DE DIVERSIDADE CRIATIVA (obrigatória — leia e aplique):
+- Este NÃO é "o site de um nicho". É o site de ESTE negócio específico (nome, posicionamento, público, serviços, local, proposta de valor, tom). A identidade visual deve nascer dele.
+- Reconsidere a direção criativa DO ZERO para este projeto. Não assuma estética padrão, não aplique um "template mental" nem repita paleta/cores/fontes/layout/herobanner/composição de outros projetos que você já viu no nicho.
+- Varie de forma INTENCIONAL E COERENTE: conceito, atmosfera, paleta, tipografia, tratamento de imagens, composição, hierarquia, componentes (cards/botões/menus/badges/grids/divisores/sombras/tratamentos), ritmo entre seções, CTAs, elementos gráficos e comportamento responsivo.
+- Estrutura NÃO é fórmula: pode alterar ordem de seções, criar novas, remover as desnecessárias, combinar informação, usar grids assimétricos, seções em tela cheia, sobreposições, composição editorial, layout minimalista — desde que sirva ao projeto e à conversão.
+- Imagens têm FUNÇÃO na narrativa: escolha referências ADEQUADAS a este projeto e à sua direção (não banco fixo do nicho; não repita a mesma foto/pessoa/pose/equipamento de outro projeto). Se imagens externas forem necessárias, busque as que traduzem ESTA direção.
+- Tipografia acompanha a direção (família/peso/escala/contraste/largura/ritmo), sempre legível e profissional.
+- Diversidade ≠ caos: mantenha originalidade + usabilidade + hierarquia + conversão + identidade, respeitando acessibilidade, legibilidade, responsividade, performance e coerência de marca.
+- ENTREGUE EXECUTANDO: crie/edite/remova arquivos reais no workspace. Não explique como fazer nem responda no lugar da execução.`;
+
         const mission = userPrompt
           ? `${userPrompt}
 
@@ -589,6 +604,7 @@ ${extra}
 ${genAttachBlock}
 ${researchBlock}
 ${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
+${creativeDirective}
 
 IMPORTANTE: crie um site completo conforme o pedido, com identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS, responsivo. Use imagens contextuais reais quando fizer sentido. NUNCA deixe o site "de rascunho" — entregue código real dos arquivos necessários.`
           : `Crie do zero o site deste negócio, seguindo o fluxo da sua instrução de sistema (analisar → pesquisar quando necessário → direcionar → estruturar → criar código real → auto-revisar → corrigir → finalizar).
@@ -599,6 +615,7 @@ ${extra}
 ${genAttachBlock}
 ${researchBlock}
 ${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
+${creativeDirective}
 
 IMPORTANTE: a "Direção criativa sugerida" é apenas um PONTO DE PARTIDA entre muitas direções possíveis — combine-a com a pesquisa e com o que encontrar no negócio. Cada site deve ter identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS (nunca copie o mesmo layout de outros projetos). Você tem liberdade para escolher o layout e a direção visual. Use imagens contextuais reais.`;
 
