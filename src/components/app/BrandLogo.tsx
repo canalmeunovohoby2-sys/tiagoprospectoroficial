@@ -3,13 +3,13 @@ import { useTheme } from "@/hooks/useTheme";
 
 // Marca do app (no lugar do texto "LeadHunter Brasil").
 // Arquivos em /public:
-//   - branca.png → usada em fundo ESCURO (nome branco — aparece no dark)
-//   - preta.png  → usada em fundo CLARO (nome preto — aparece no light)
+//   - branca.png → usada em fundo CLARO (nome branco — aparece no light)
+//   - preta.png  → usada em fundo ESCURO (nome preto — aparece no dark)
 // A logo se adapta ao tema automaticamente.
 export function BrandLogo({ className = "h-12 w-auto", alt = "Logo" }: { className?: string; alt?: string }) {
   const { theme } = useTheme();
   const [err, setErr] = useState(false);
-  const src = theme === "dark" ? "/branca.png" : "/preta.png";
+  const src = theme === "dark" ? "/preta.png" : "/branca.png";
 
   if (err) {
     return (
