@@ -20,7 +20,7 @@ const DEFAULT_MODEL: Record<string, string> = {
   nvidia: "deepseek-ai/deepseek-v4-flash-0731",
   openrouter: "openrouter/auto",
   gemini: "gemini-2.5-flash",
-  ollama: "qwen2.5-coder:3b-instruct",
+  ollama: "llama3.2:3b",
 };
 
 function json(body: unknown, status = 200) {

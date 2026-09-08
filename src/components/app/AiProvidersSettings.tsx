@@ -9,7 +9,7 @@ const AI_PROVIDERS: Array<{ id: string; label: string; defaultModel: string; loc
   { id: "openai", label: "OpenAI", defaultModel: "gpt-4o-mini" },
   { id: "gemini", label: "Gemini", defaultModel: "gemini-2.5-flash" },
   { id: "openrouter", label: "OpenRouter", defaultModel: "openrouter/auto" },
-  { id: "ollama", label: "Ollama Local", defaultModel: "qwen2.5-coder:3b-instruct", local: true },
+  { id: "ollama", label: "Ollama Local", defaultModel: "llama3.2:3b", local: true },
 ];
 
 // Providers LOCAIS (ex.: Ollama) não usam API Key e não têm fallback.
