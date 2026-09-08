@@ -15,6 +15,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
+import { BrandLogo } from "./BrandLogo";
 
 export function AppShell({ children }: { children?: ReactNode }) {
   const { user, signOut, isAnonymous } = useAuth();
@@ -37,8 +38,9 @@ export function AppShell({ children }: { children?: ReactNode }) {
           <header className="h-14 border-b border-border/60 flex items-center justify-between px-4 sticky top-0 z-30 bg-background/60 backdrop-blur-xl supports-[backdrop-filter]:bg-background/40">
             <div className="flex items-center gap-2">
               <SidebarTrigger />
-              <div className="hidden md:block text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">LeadHunter</span> · Prospecção B2B
+              <div className="hidden md:flex items-center gap-2">
+                <BrandLogo className="h-7 w-auto" />
+                <span className="text-sm text-muted-foreground">· Prospecção B2B</span>
               </div>
             </div>
             <div className="flex items-center gap-2">

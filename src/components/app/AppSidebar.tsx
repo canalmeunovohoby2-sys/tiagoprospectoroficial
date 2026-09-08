@@ -10,6 +10,7 @@ import {
   Globe,
   Settings,
 } from "lucide-react";
+import { BrandLogo } from "./BrandLogo";
 import {
   Sidebar,
   SidebarContent,
@@ -44,13 +45,13 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r border-primary/20 bg-sidebar/60 backdrop-blur-xl">
       <SidebarHeader className="border-b border-primary/15 h-14 flex-row items-center px-3">
-        <div className="h-8 w-8 rounded-xl bg-gradient-primary flex items-center justify-center shadow-[0_0_20px_hsl(0_84%_55%/0.45)] shrink-0">
-          <Target className="h-4 w-4 text-primary-foreground" strokeWidth={2.8} />
-        </div>
-        {!collapsed && (
-          <div className="ml-2">
-            <div className="font-display font-bold text-sm leading-tight tracking-tight">LeadHunter</div>
-            <div className="text-[10px] text-primary/80 leading-tight uppercase tracking-[0.18em]">Brasil</div>
+        {collapsed ? (
+          <div className="mx-auto h-9 w-9 rounded-xl bg-gradient-primary flex items-center justify-center shadow-[0_0_20px_hsl(0_84%_55%/0.45)] shrink-0">
+            <Target className="h-4 w-4 text-primary-foreground" strokeWidth={2.8} />
+          </div>
+        ) : (
+          <div className="px-1 py-1">
+            <BrandLogo className="h-10 w-auto" />
           </div>
         )}
       </SidebarHeader>
