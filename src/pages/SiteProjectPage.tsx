@@ -395,11 +395,14 @@ export default function SiteProjectPage() {
 
       // TENTA A GERAÇÃO PELO CLINE (código real, self-review). Se indisponível,
       // cai no gerador clássico (spec) — fallback preservado.
+      // Criação sem Lead: o prompt original do usuário vira a missão principal.
+      const userPrompt = typeof briefing.user_prompt === "string" && briefing.user_prompt.trim() ? briefing.user_prompt.trim() : undefined;
       const genRes = await invokeProspectorGenerate({
         projectId: project.id,
         // IDENTIDADE: o runtime exige o usuário autenticado para resolver a IA
         // validada dele — sem user_id o runtime BLOQUEIA (regra absoluta).
         userId: user?.id ?? project.user_id ?? undefined,
+        prompt: userPrompt,
         context: {
           name: project.company_name || project.name,
           segment: project.segment,

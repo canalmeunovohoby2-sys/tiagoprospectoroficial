@@ -1,19 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  Globe, Plus, Loader2, Trash2, ArrowRight, Search as SearchIcon, Sparkles,
+  Globe, Plus, Loader2, Trash2, ArrowRight, Sparkles, Wand2,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { supabase } from "@/integrations/supabase/client";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
-import type { Lead } from "@/data/types";
 import type { SiteProjectRow } from "@/data/siteProjects";
 import { statusLabel } from "@/data/siteProjects";
-import { listSiteProjects, deleteSiteProject, openOrCreateSiteProject } from "@/lib/siteProjectsApi";
+import { listSiteProjects, deleteSiteProject, createSiteProjectFromPrompt } from "@/lib/siteProjectsApi";
+
+const CREATE_EXAMPLE = 'Crie um site profissional para uma clínica de fisioterapia chamada Movimento Saúde, com aparência moderna, premium e responsiva.';
 
 export default function Sites() {
   const { user } = useAuth();
@@ -21,9 +21,8 @@ export default function Sites() {
   const [projects, setProjects] = useState<SiteProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [openCreate, setOpenCreate] = useState(false);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [leadQuery, setLeadQuery] = useState("");
-  const [creating, setCreating] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("");
+  const [creating, setCreating] = useState(false);
 
   async function load() {
     if (!user) return;
@@ -38,29 +37,20 @@ export default function Sites() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [user]);
 
-  async function loadLeads() {
+  async function handleCreateSite() {
     if (!user) return;
-    const { data, error } = await supabase
-      .from("leads")
-      .select("id,name,segment,category,city,state,address,phone,whatsapp,website,instagram,facebook,rating,reviews_count,has_website,opening_hours,score_reasons")
-      .order("score", { ascending: false })
-      .limit(200);
-    if (error) { toast.error(error.message); return; }
-    if (Array.isArray(data)) setLeads(data as Lead[]);
-  }
-
-  async function handleCreate(lead: Lead) {
-    if (!user) return;
-    setCreating(lead.id);
+    const p = prompt.trim();
+    if (!p) { toast.error("Descreva o site que você quer criar."); return; }
+    setCreating(true);
     try {
-      const id = await openOrCreateSiteProject(user.id, lead);
+      const id = await createSiteProjectFromPrompt(user.id, p);
       setOpenCreate(false);
-      setLeadQuery("");
+      setPrompt("");
       navigate(`/sites/${id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao criar projeto");
     } finally {
-      setCreating(null);
+      setCreating(false);
     }
   }
 
@@ -75,16 +65,6 @@ export default function Sites() {
     }
   }
 
-  const filteredLeads = useMemo(() => {
-    const q = leadQuery.trim().toLowerCase();
-    if (!q) return leads;
-    return leads.filter((l) =>
-      (l.name ?? "").toLowerCase().includes(q) ||
-      (l.city ?? "").toLowerCase().includes(q) ||
-      (l.segment ?? l.category ?? "").toLowerCase().includes(q),
-    );
-  }, [leads, leadQuery]);
-
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -93,10 +73,10 @@ export default function Sites() {
             <Globe className="h-6 w-6 text-primary" /> Sites
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Projetos de site criados para os seus leads. Cada projeto guarda identidade, conteúdo e estrutura prontos para edição e publicação futura.
+            Projetos de site criados a partir de uma instrução sua (ou de um lead). Cada projeto guarda identidade, conteúdo e estrutura prontos para edição e publicação futura.
           </p>
         </div>
-        <Button onClick={() => { setLeadQuery(""); loadLeads(); setOpenCreate(true); }}>
+        <Button onClick={() => { setPrompt(""); setOpenCreate(true); }}>
           <Plus className="h-4 w-4 mr-1" /> Criar site
         </Button>
       </div>
@@ -112,14 +92,11 @@ export default function Sites() {
           </div>
           <h2 className="font-display font-semibold text-lg">Nenhum site criado ainda</h2>
           <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
-            Escolha um lead e gere o primeiro projeto de site: a IA analisa o negócio e cria a especificação visual e de conteúdo.
+            Descreva o site que deseja criar: o agente analisa a solicitação, trabalha no workspace do projeto e gera o site.
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            <Button onClick={() => { setLeadQuery(""); loadLeads(); setOpenCreate(true); }}>
+            <Button onClick={() => { setPrompt(""); setOpenCreate(true); }}>
               <Plus className="h-4 w-4 mr-1" /> Criar site
-            </Button>
-            <Button variant="outline" onClick={() => navigate("/leads")}>
-              Ver leads <ArrowRight className="h-4 w-4 ml-1" />
             </Button>
           </div>
         </Card>
@@ -159,45 +136,28 @@ export default function Sites() {
 
       {openCreate && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => !creating && setOpenCreate(false)}>
-          <div className="w-full max-w-lg rounded-2xl border bg-background shadow-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-2xl rounded-2xl border bg-background shadow-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div>
-              <h2 className="font-display font-semibold text-lg">Criar site para um lead</h2>
-              <p className="text-sm text-muted-foreground">Escolha o lead. O projeto é criado como rascunho e abre para gerar a especificação com IA.</p>
+              <h2 className="font-display font-semibold text-lg">Criar novo site</h2>
+              <p className="text-sm text-muted-foreground">Descreva o que você quer criar. O agente analisa a solicitação e constrói o projeto no workspace.</p>
             </div>
-            <div className="relative">
-              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
+            <div>
+              <Textarea
                 autoFocus
-                placeholder="Buscar por nome, cidade ou segmento…"
-                value={leadQuery}
-                onChange={(e) => setLeadQuery(e.target.value)}
-                className="pl-9"
+                rows={6}
+                placeholder={CREATE_EXAMPLE}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                className="min-h-[160px] resize-y text-sm"
               />
-            </div>
-            <div className="max-h-[320px] overflow-y-auto space-y-1.5 pr-1">
-              {filteredLeads.length === 0 && (
-                <p className="text-sm text-muted-foreground py-6 text-center">Nenhum lead encontrado. Crie leads na busca primeiro.</p>
-              )}
-              {filteredLeads.map((lead) => (
-                <button
-                  key={lead.id}
-                  type="button"
-                  disabled={creating === lead.id}
-                  onClick={() => handleCreate(lead)}
-                  className="w-full text-left rounded-xl border border-border/60 p-3 hover:border-primary/50 hover:bg-primary/5 transition-colors disabled:opacity-60"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-sm truncate">{lead.name}</span>
-                    {creating === lead.id && <Loader2 className="h-4 w-4 animate-spin shrink-0 text-primary" />}
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {[lead.segment || lead.category, lead.city && lead.state ? `${lead.city}/${lead.state}` : lead.city].filter(Boolean).join(" · ") || "Sem dados"}
-                  </span>
-                </button>
-              ))}
+              <p className="text-[11px] text-muted-foreground mt-1">Exemplo: “{CREATE_EXAMPLE}”</p>
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setOpenCreate(false)}>Cancelar</Button>
+              <Button variant="outline" size="sm" disabled={creating} onClick={() => setOpenCreate(false)}>Cancelar</Button>
+              <Button size="sm" disabled={creating || !prompt.trim()} onClick={() => void handleCreateSite()}>
+                {creating ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Wand2 className="h-4 w-4 mr-1" />}
+                Criar site
+              </Button>
             </div>
           </div>
         </div>

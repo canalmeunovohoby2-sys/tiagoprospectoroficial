@@ -118,6 +118,32 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
   return String(created.id);
 }
 
+// Cria um Site Project INDEPENDENTE de Lead, a partir do prompt do usuário.
+// lead_id fica NULL (o schema permite `on delete set null`); o prompt original
+// é guardado em briefing.user_prompt para alimentar a geração e as edições.
+export async function createSiteProjectFromPrompt(userId: string, prompt: string): Promise<string> {
+  const cleaned = (prompt ?? "").trim();
+  if (!cleaned) throw new Error("Descreva o site que você quer criar.");
+  const firstLine = cleaned.split(/\r?\n/)[0].slice(0, 80).trim() || "Novo site";
+  const name = String(firstLine).replace(/[<>]/g, "").trim() || "Novo site";
+  const slug = await uniqueSlug(name);
+  const briefing = { user_prompt: cleaned } as unknown as Json;
+  const { data: created, error } = await supabase
+    .from("site_projects")
+    .insert({
+      user_id: userId,
+      name,
+      slug,
+      company_name: name,
+      status: "draft",
+      briefing,
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  return String(created.id);
+}
+
 // Invoca a Edge Function generate-site e devolve a especificação normalizada.
 export async function generateSiteSpec(lead: LeadSource): Promise<{ spec: SiteSpec; model: string }> {
   const { data, error } = await supabase.functions.invoke<{ spec: SiteSpec; model: string }>(
@@ -527,6 +553,8 @@ export async function invokeProspectorGenerate(input: {
   projectId: string;
   context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null; about?: string | null; services?: string[] };
   briefing?: Record<string, unknown>;
+  /** Instrução livre do usuário (criação sem Lead) — vira a missão principal do agente. */
+  prompt?: string;
   userId?: string;
 }): Promise<AgentExecuteResult> {
   const runtimeSel = await resolveEditorRuntime();
@@ -541,7 +569,7 @@ export async function invokeProspectorGenerate(input: {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {}, user_id: input.userId ?? undefined }),
+      body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {}, prompt: input.prompt, user_id: input.userId ?? undefined }),
       signal: AbortSignal.timeout(600_000),
     });
     if (res.ok) {

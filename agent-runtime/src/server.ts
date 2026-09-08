@@ -572,7 +572,26 @@ export function startServer(port = PORT, host = HOST) {
           ? `\nPESQUISA WEB DE REFERÊNCIA (5.26) — use para decidir a direção (tendências, técnicas, o que líderes do nicho fazem). NÃO copie sites/layouts/textos encontrados; crie algo próprio:\n${formatResearch(research)}`
           : "";
 
-        const mission = `Crie do zero o site deste negócio, seguindo o fluxo da sua instrução de sistema (analisar → pesquisar quando necessário → direcionar → estruturar → criar código real → auto-revisar → corrigir → finalizar).
+        const userPrompt = (
+          typeof body.prompt === "string" && body.prompt.trim()
+            ? body.prompt.trim()
+            : typeof briefing.user_prompt === "string" && briefing.user_prompt.trim()
+              ? briefing.user_prompt.trim()
+              : ""
+        );
+        const mission = userPrompt
+          ? `${userPrompt}
+
+[INSTRUÇÃO DO USUÁRIO acima — é EXATAMENTE o que você deve CONSTRUIR. Siga o seu fluxo de sistema: analisar → pesquisar quando útil → direcionar → estruturar → criar código real → auto-revisar → corrigir → finalizar. EXECUTE criando, editando ou removendo os arquivos do workspace — NÃO responda apenas explicando. Inspecione o projeto, use as ferramentas de arquivo e entregue o resultado no código. Entrega finalista é o site real, não uma explicação.]
+
+${ctxLines ? `CONTEXTO REAL DO NEGÓCIO (se fornecido):\n${ctxLines}` : ""}
+${extra}
+${genAttachBlock}
+${researchBlock}
+${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
+
+IMPORTANTE: crie um site completo conforme o pedido, com identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS, responsivo. Use imagens contextuais reais quando fizer sentido. NUNCA deixe o site "de rascunho" — entregue código real dos arquivos necessários.`
+          : `Crie do zero o site deste negócio, seguindo o fluxo da sua instrução de sistema (analisar → pesquisar quando necessário → direcionar → estruturar → criar código real → auto-revisar → corrigir → finalizar).
 
 CONTEXTO REAL DO NEGÓCIO:
 ${ctxLines || "(apenas nome de arquivo/nenhum dado além do projeto)"}
