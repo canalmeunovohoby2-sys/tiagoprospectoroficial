@@ -31,17 +31,38 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const auth = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
-    if (!auth || auth !== Deno.env.get("RUNTIME_GATEWAY_SECRET")) {
-      return json({ error: "runtime não autorizado" }, 403);
-    }
-    const body = await req.json().catch(() => ({})) as { user_id?: string; execution?: unknown; projectId?: string; conversationId?: string };
-    const userId = String(body.user_id ?? "").trim();
-    if (!userId) return json({ error: "user_id obrigatório" }, 400);
+    if (!auth) return json({ error: "runtime não autorizado" }, 403);
 
     const url = Deno.env.get("SUPABASE_URL");
     const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!url || !key) return json({ error: "Supabase não configurado" }, 500);
     const admin = createClient(url, key);
+
+    const body = await req.json().catch(() => ({})) as { user_id?: string; execution?: unknown; projectId?: string; conversationId?: string };
+
+    let userId = "";
+    let isJwt = false;
+    if (auth === Deno.env.get("RUNTIME_GATEWAY_SECRET")) {
+      // Runtime remoto (Railway): autenticado por secret compartilhado; confia no
+      // user_id do body (comportamento atual).
+      userId = String(body.user_id ?? "").trim();
+    } else {
+      // Runtime LOCAL: autentica com o JWT do USUÁRIO. O user_id é SEMPRE o do
+      // token autenticado — NUNCA o do body (impede um runtime local de consultar
+      // a config/IA de outro usuário).
+      const { data: { user }, error } = await admin.auth.getUser(auth);
+      if (error || !user?.id) return json({ error: "runtime não autorizado" }, 403);
+      userId = user.id;
+      isJwt = true;
+    }
+    if (!userId) return json({ error: "user_id obrigatório" }, 400);
+
+    // Em modo JWT, valida (defesa em profundidade) que o usuário DONO do token
+    // também é dono do projeto informado.
+    if (isJwt && body.projectId) {
+      const { data: proj } = await admin.from("site_projects").select("id").eq("id", String(body.projectId)).eq("user_id", userId).maybeSingle();
+      if (!proj) return json({ error: "projeto não autorizado" }, 403);
+    }
 
     // Carrega histórico da conversa (se conversationId informado) para initialMessages.
     let initialMessages: unknown[] | null = null;

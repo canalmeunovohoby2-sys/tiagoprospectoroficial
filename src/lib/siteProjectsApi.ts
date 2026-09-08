@@ -284,12 +284,12 @@ export interface ChatAttachmentInput {
 // Captura screenshots REAIS do site (desktop + mobile) no Agent Runtime para o
 // PDF de proposta. Sem runtime configurado ou em falha → {} (o PDF usa o hero).
 export async function captureWorkspaceScreenshots(files: Record<string, string>): Promise<{ desktop?: string; mobile?: string }> {
-  const runtimeUrl = await editorRuntimeUrl();
-  if (!runtimeUrl || !files || !Object.keys(files).some((k) => k.endsWith("index.html"))) return {};
-  const token = await getAgentTicket();
+  const sel = await resolveEditorRuntime();
+  if (sel.state === "none" || sel.state === "ollama_local_missing" || !files || !Object.keys(files).some((k) => k.endsWith("index.html"))) return {};
+  const token = await editorRuntimeAuth(sel);
   if (!token) return {};
   try {
-    const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/capture`, {
+    const res = await fetch(`${sel.url.replace(/\/$/, "")}/capture`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ files }),
@@ -323,10 +323,14 @@ export async function invokeProspectorAgent(input: {
   /** ID da conversa atual — liga histórico persistido (runtime-ai-config ↔ conversation-save). */
   conversationId?: string;
 }, onLiveActivity?: (phase: string, detail: string) => void): Promise<AgentExecuteResult> {
-  const runtimeUrl = await editorRuntimeUrl();
-  if (!runtimeUrl) return editorUnavailableResult("not_configured");
-  const token = await getAgentTicket(input.projectId);
-  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não foi possível autenticar esta execução (ticket não emitido). Confirme que a Edge Function agent-ticket está publicada e configurada (AGENT_TICKET_SECRET) e recarregue a página."] };
+  const runtimeSel = await resolveEditorRuntime();
+  if (runtimeSel.state === "none") return editorUnavailableResult("not_configured");
+  if (runtimeSel.state === "ollama_local_missing") {
+    return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Agent Runtime Local não está em execução neste computador. Inicie-o (http://localhost:8787) e tente novamente — o Ollama local só executa pelo runtime local."] };
+  }
+  const runtimeUrl = runtimeSel.url;
+  const token = await editorRuntimeAuth(runtimeSel, input.projectId);
+  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não foi possível autenticar esta execução. Recarregue a página e tente novamente."] };
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/run`, {
       method: "POST",
@@ -421,14 +425,45 @@ REGRAS:
   return mission;
 }
 
-/** URL do Agent Runtime (editor completo/Cline). Uma única fonte do roteamento.
- * 1) VITE_AGENT_RUNTIME_URL (build); 2) AGENT_RUNTIME_URL via edge runtime-config
- * (servidor) — assim independe do prefixo VITE na Vercel. */
+// ===== Roteamento do Agent Runtime: LOCAL (Ollama) vs REMOTO (Railway) =====
+// Quando o provider ativo do usuário é o Ollama (local), o agente DEVE executar
+// no Agent Runtime Local (http://localhost:8787) — nunca no Railway (que não
+// alcança o localhost do usuário). Providers remotos continuam no Railway.
+export const LOCAL_AGENT_RUNTIME_URL = "http://localhost:8787";
+const LOCAL_RUNTIME_HEALTH = `${LOCAL_AGENT_RUNTIME_URL}/health`;
+
+let activeAiCache: { at: number; provider: string | null } = { at: 0, provider: null };
+
+/** Provider de IA ativo (is_default) da conta — decide Local vs Railway. */
+export async function activeAiProviderId(): Promise<string | null> {
+  const now = Date.now();
+  if (now - activeAiCache.at < 5_000) return activeAiCache.provider;
+  try {
+    const { data } = await supabase.functions.invoke<{ providers?: Array<{ provider: string; isDefault?: boolean }> }>("ai-config", { body: { action: "list" } });
+    const def = (data?.providers ?? []).find((p) => p.isDefault);
+    activeAiCache = { at: now, provider: def?.provider ?? null };
+  } catch {
+    activeAiCache = { at: now, provider: null };
+  }
+  return activeAiCache.provider;
+}
+
+async function localRuntimeAvailable(): Promise<boolean> {
+  try {
+    const res = await fetch(LOCAL_RUNTIME_HEALTH, { signal: AbortSignal.timeout(1_500) });
+    if (!res.ok) return false;
+    const j = (await res.json()) as { ok?: boolean };
+    return j.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 let runtimeUrlTried = false;
 let runtimeUrlCached: string | null = null;
 
-export async function editorRuntimeUrl(): Promise<string | undefined> {
-  if (runtimeUrlTried) return runtimeUrlCached ?? undefined;
+async function remoteRuntimeUrl(): Promise<string | null> {
+  if (runtimeUrlTried) return runtimeUrlCached;
   const envUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
   if (envUrl) { runtimeUrlTried = true; runtimeUrlCached = envUrl; return envUrl; }
   try {
@@ -442,7 +477,40 @@ export async function editorRuntimeUrl(): Promise<string | undefined> {
   } catch { /* segue sem URL */ }
   runtimeUrlTried = true;
   runtimeUrlCached = null;
-  return undefined;
+  return null;
+}
+
+export type RuntimeSelection =
+  | { state: "local"; url: string; provider: string }
+  | { state: "remote"; url: string; provider: string }
+  | { state: "ollama_local_missing"; provider: string }
+  | { state: "none"; provider: string | null };
+
+/** Decide qual runtime o agente DEVE usar nesta request. */
+export async function resolveEditorRuntime(): Promise<RuntimeSelection> {
+  const provider = await activeAiProviderId();
+  if (provider === "ollama") {
+    if (await localRuntimeAvailable()) return { state: "local", url: LOCAL_AGENT_RUNTIME_URL, provider };
+    return { state: "ollama_local_missing", provider };
+  }
+  const remote = await remoteRuntimeUrl();
+  return remote ? { state: "remote", url: remote, provider: provider ?? "remote" } : { state: "none", provider };
+}
+
+/** URL do Agent Runtime (editor completo/Cline). Roteia Local quando Ollama. */
+export async function editorRuntimeUrl(): Promise<string | undefined> {
+  const sel = await resolveEditorRuntime();
+  return sel.state === "local" || sel.state === "remote" ? sel.url : undefined;
+}
+
+/** Auth para o runtime escolhido: LOCAL → JWT do usuário (sem secrets globais);
+ * REMOTO → ticket HMAC (agent-ticket). */
+export async function editorRuntimeAuth(sel: RuntimeSelection, projectId?: string): Promise<string | null> {
+  if (sel.state === "local") {
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  }
+  return getAgentTicket(projectId);
 }
 
 /** Erro EXPLÍCITO quando o editor completo (runtime) não está disponível. */
@@ -461,10 +529,14 @@ export async function invokeProspectorGenerate(input: {
   briefing?: Record<string, unknown>;
   userId?: string;
 }): Promise<AgentExecuteResult> {
-  const runtimeUrl = await editorRuntimeUrl();
-  if (!runtimeUrl) return editorUnavailableResult("not_configured");
-  const token = await getAgentTicket(input.projectId);
-  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não foi possível autenticar a geração (ticket não emitido). Confirme que a Edge Function agent-ticket está publicada e configurada (AGENT_TICKET_SECRET) e recarregue a página."] };
+  const runtimeSel = await resolveEditorRuntime();
+  if (runtimeSel.state === "none") return editorUnavailableResult("not_configured");
+  if (runtimeSel.state === "ollama_local_missing") {
+    return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Agent Runtime Local não está em execução neste computador. Inicie-o (http://localhost:8787) e tente novamente — o Ollama local só executa pelo runtime local."] };
+  }
+  const runtimeUrl = runtimeSel.url;
+  const token = await editorRuntimeAuth(runtimeSel, input.projectId);
+  if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não foi possível autenticar a geração. Recarregue a página e tente novamente."] };
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/generate`, {
       method: "POST",

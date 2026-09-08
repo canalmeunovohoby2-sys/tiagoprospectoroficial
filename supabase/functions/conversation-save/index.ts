@@ -12,9 +12,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const auth = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
-    if (!auth || auth !== Deno.env.get("RUNTIME_GATEWAY_SECRET")) {
-      return json({ error: "runtime não autorizado" }, 403);
-    }
+    if (!auth) return json({ error: "runtime não autorizado" }, 403);
 
     const body = await req.json().catch(() => ({})) as {
       user_id?: string;
@@ -26,8 +24,8 @@ Deno.serve(async (req) => {
       provider?: string;
     };
 
-    if (!body.user_id || !body.project_id || !body.conversation_id) {
-      return json({ error: "user_id, project_id e conversation_id são obrigatórios" }, 400);
+    if (!body.project_id || !body.conversation_id) {
+      return json({ error: "project_id e conversation_id são obrigatórios" }, 400);
     }
 
     const url = Deno.env.get("SUPABASE_URL");
@@ -35,8 +33,20 @@ Deno.serve(async (req) => {
     if (!url || !key) return json({ error: "Supabase não configurado" }, 500);
     const admin = createClient(url, key);
 
+    // userId é SEMPRE derivado do token: secret do runtime (Railway) → user_id do
+    // body; JWT do usuário (runtime local) → id do usuário autenticado.
+    let userId = "";
+    if (auth === Deno.env.get("RUNTIME_GATEWAY_SECRET")) {
+      userId = String(body.user_id ?? "").trim();
+    } else {
+      const { data: { user }, error } = await admin.auth.getUser(auth);
+      if (error || !user?.id) return json({ error: "runtime não autorizado" }, 403);
+      userId = user.id;
+    }
+    if (!userId) return json({ error: "user_id obrigatório" }, 400);
+
     const { error } = await admin.from("agent_conversation_memory").upsert({
-      user_id: body.user_id,
+      user_id: userId,
       project_id: body.project_id,
       conversation_id: body.conversation_id,
       messages: body.messages ?? [],
