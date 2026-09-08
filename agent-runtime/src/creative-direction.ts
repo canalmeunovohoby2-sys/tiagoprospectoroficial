@@ -1,48 +1,90 @@
-// Creative Direction (5.25) — direção criativa POR NEGÓCIO, computada de forma
-// determinística e orientada ao CONTEXTO do projeto.
+// Creative Direction (5.25 → 6.0) — direção criativa POR NEGÓCIO, determinística
+// e agora com DESIGN TOKENS EXECUTÁVEIS (não apenas prosa inspiracional).
 //
-// Cada nicho possui VÁRIAS linguagens visuais coesas (direction set). A escolha
-// de qual linguagem usar DERIVA da identidade do negócio (nome + segmento), não
-// do nicho sozinho — assim dois negócios do MESMO nicho (ex.: duas academias)
-// recebem direções diferentes, mas cada uma coerente e profissional. A troca é
-// estável por projeto (mesmo negócio → mesma direção, sem randomização por run).
+// Cada nicho possui várias linguagens visuais COESAS (direction set). A escolha
+// DERIVA da identidade do negócio (nome + segmento), não do nicho sozinho — assim
+// dois negócios do MESMO nicho recebem direções diferentes, mas cada uma coerente.
+// A troca é ESTÁVEL por projeto (sem random por run).
 //
-// O brief é SEMPRE um PONTO DE PARTIDA: a direção final é do agente, baseada na
-// pesquisa, no briefing e na identidade real do negócio. Não é template.
+// O brief entrega tokens concretos (hex de paleta, tipografia, composição,
+// arquitetura ESCOLHIDA, direção de imagens) para o agente MATERIALIZAR, em vez de
+// recorrer aos seus defaults pessoais. Libert (identidade), não template: o agente
+// continua livre para seções, componentes, microinterações e decisões de UX — a
+// direção define a LINGUAGEM VISUAL, não o site inteiro.
 // Puro e testável.
+
+export interface PaletteTokens {
+  primary: string;      // cor de marca / destaque principal
+  secondary: string;    // apoio de cor
+  accent: string;       // acento energético (CTA/highlights)
+  background: string;   // fundo da página
+  foreground: string;   // texto principal
+  muted: string;        // texto secundário
+  cta: string;          // cor do botão de conversão
+  ctaContrast: string;  // cor do texto/ícone do CTA (contraste)
+}
+
+export interface TypographyTokens {
+  heading: string;      // família dos títulos
+  body: string;         // família do corpo
+  headingWeights: string;
+  bodyWeights: string;
+  style: string;        // estilo tipográfico (ex.: "serif editorial + sans humanista")
+  importUrl?: string;   // Google Fonts URL com as famílias+pesos usados
+}
+
+export interface CompositionTokens {
+  hero: string;
+  container: string;    // largura máx / wrapping
+  alignment: string;    // tendência de alinhamento
+  density: string;      // densidade visual
+  sectionRhythm: string;// ritmo entre seções
+  cards: string;        // linguagem de cards
+  cta: string;          // tratamento do CTA
+  images: string;       // tratamento de imagens
+  border: string;       // raio/bordas
+  shadow: string;       // linguagem de sombras
+  decoration: string;   // linguagem decorativa
+}
+
+export interface DirectionTokens {
+  palette: PaletteTokens;
+  typography: TypographyTokens;
+  composition: CompositionTokens;
+}
 
 export interface CreativeBrief {
   businessName: string;
   segment: string;
-  position: string;             // percepção desejada
-  sensation: string;            // sensação/emoção
-  archetype: string;            // direção visual escolhida
+  position: string;
+  sensation: string;
+  archetype: string;
   paletteHint: string;
   typeHint: string;
   heroStrategy: string;
-  architecture: string[];       // arquiteturas possíveis (variadas)
-  imageQueries: Record<string, string>; // papel -> query contextual
+  architecture: string[];       // opções (referência interna)
+  architectureChoice: string;   // arquitetura ESCOLHIDA para ESTE projeto
+  imageQueries: Record<string, string>;
   copyDirection: string;
-  antiTemplate: string;         // o que evitar neste segmento
+  antiTemplate: string;
+  // Design tokens executáveis
+  tokens: DirectionTokens;
 }
 
-// Parcela INVARIANTE por nicho (position/sensation/copyDirection/antiTemplate).
-// Mantém coerência semântica do nicho; a DIVERSIDADE de linguagem vem em `loose`.
 interface NicheBase {
   position: string; sensation: string; copyDirection: string; antiTemplate: string;
 }
 
-// Variante de linguagem visual: a parcela que MUDA entre negócios do mesmo nicho.
 interface DirectionVariant {
   archetype: string;
   paletteHint: string;
   typeHint: string;
   heroStrategy: string;
   architecture: string[];
-  imageSuffix: Record<string, string>; // termo diferenciador p/ cada papel de imagem
+  imageSuffix: Record<string, string>;
 }
 
-function dset(loose: NicheBase, variants: DirectionVariant[]): { loose: NicheBase; variants: DirectionVariant[] } {
+function dset(loose: NicheBase, variants: DirectionVariant[]) {
   return { loose, variants };
 }
 
@@ -374,6 +416,144 @@ const NICHES: Array<{ match: RegExp; set: ReturnType<typeof dset>; heroQueryBase
 ];
 
 const FALLBACK_ARCHETYPE = "Modern Premium";
+
+// Tokens executáveis por arquétipo (paleta coerente + tipografia + composição).
+// Escolhidos para respeitar contraste entre CTA e CTA-contrast, e coesão com a
+// linguagem do arquétipo. Nada de cores aleatórias.
+const T = (
+  palette: PaletteTokens, heading: string, body: string, headingWeights: string, bodyWeights: string,
+  style: string, importUrl: string, composition: CompositionTokens,
+): DirectionTokens => ({ palette, typography: { heading, body, headingWeights, bodyWeights, style, importUrl }, composition });
+
+const TOKENS: Record<string, DirectionTokens> = {
+  "Bold / Performance premium": T(
+    { primary: "#1B1E24", secondary: "#F97316", accent: "#A3E635", background: "#0B0E13", foreground: "#F5F7FA", muted: "#9AA3AE", cta: "#F97316", ctaContrast: "#FFFFFF" },
+    "Space Grotesk", "Inter", "700 800", "400 500", "sans geométrica forte + brilho neon/destacadamente escuro",
+    "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700;800&family=Inter:wght@400;500;600&display=swap",
+    { hero: "imagem de treino de alto impacto + headline de resultado e CTA em destaque", container: "máx 1200px, com larga respiração lateral", alignment: "centrado no hero, alinhado à esquerda no corpo", density: "alta (muita presença, contraste forte)", sectionRhythm: "alternância de faixas escuras com acento", cards: "cards de borda sutil, ângulo leve e hover 3D", cta: "botão com brilho/beam contínuo e hover scale", images: "recorte de ação, alto contraste, levemente granulado", border: "raios pequenos/médios (8–16px)", shadow: "sombras profundas + glow do accent", decoration: "orbes/auroras de energia + grid técnico" },
+  ),
+  "Editorial de força (monocromático sofisticado)": T(
+    { primary: "#1A1A1A", secondary: "#E5E1DA", accent: "#C0C0C0", background: "#F4F2EE", foreground: "#161616", muted: "#6B6B6B", cta: "#161616", ctaContrast: "#FFFFFF" },
+    "Fraunces", "Inter", "500 700 900", "400 500", "editorial em P&B com serif display expressiva e respiro",
+    "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=Inter:wght@400;500&display=swap",
+    { hero: "editorial em preto e branco com headline tipográfica enorme", container: "máx 1140px, coluna editorial estreita", alignment: "esquerda (forte hierarquia de leitura)", density: "média-alta, muito contraste tipográfico", sectionRhythm: "seções espaçadas como páginas de revista", cards: "listas editoriais + números grandes + imagem", cta: "CTA sóbrio de alto contraste (preto sobre branco)", images: "P&B cinematográfico com luz dura", border: "raios mínimos (0–8px)", shadow: "sombras secas e discretas", decoration: "linhas finas, marcações geométricas" },
+  ),
+  "Tech / Neon clean": T(
+    { primary: "#0EA5E9", secondary: "#8B5CF6", accent: "#22D3EE", background: "#0A0E17", foreground: "#E8F1FF", muted: "#93A0B4", cta: "#22D3EE", ctaContrast: "#04131A" },
+    "Space Grotesk", "Inter", "500 700", "400 500", "tech com neon controlado e display técnica",
+    "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500&display=swap",
+    { hero: "imersivo com gradiente neon/ambiente e detalhe de energia", container: "máx 1240px", alignment: "centrado no hero, esquerda no corpo", density: "alta, com véu de luz técnica", sectionRhythm: "faixas escuras com detalhes de linha/grade", cards: "cards com borda neon sutil e vidro (glassmorphism)", cta: "CTA com glow neon e hover de brilho", images: "ambiente tecnológico, alta iluminação, cores frias", border: "raios médios (12–20px)", shadow: "glow azul/violeta + sombra profunda", decoration: "orbes de luz, grade de fundo, linhas de conexão" },
+  ),
+  "Wellness clean": T(
+    { primary: "#3E7C6B", secondary: "#E4D8C5", accent: "#D9A441", background: "#FBF9F4", foreground: "#23302B", muted: "#6E7B74", cta: "#3E7C6B", ctaContrast: "#FFFFFF" },
+    "Lora", "Inter", "500 600", "400 500", "serif leve + sans humanista, arejado e calmo",
+    "https://fonts.googleapis.com/css2?family=Lora:wght@500;600&family=Inter:wght@400;500&display=swap",
+    { hero: "luminoso com luz natural e headline de bem-estar", container: "máx 1120px, muito espaço", alignment: "centrado, simétrico e sereno", density: "baixa-média (muito respiro)", sectionRhythm: "seções abertas e alternadas", cards: "cards limpos com imagem e muito espaço", cta: "CTA suave e arredondado com hover suave", images: "luz natural, tons claros e orgânicos", border: "raios generosos (16–24px)", shadow: "sombras leves e difusas", decoration: "formas orgânicas suaves, tons pastel" },
+  ),
+  "Editorial gastronômico / sensorial": T(
+    { primary: "#7B2D26", secondary: "#C89B3C", accent: "#E0773B", background: "#FBF3E8", foreground: "#2C1A15", muted: "#8C6F5F", cta: "#E0773B", ctaContrast: "#FFFFFF" },
+    "Fraunces", "Inter", "500 700 900", "400 500", "gastronômico sensorial com fotografia dominante e serif expressiva",
+    "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=Inter:wght@400;500&display=swap",
+    { hero: "cinematográfico com prato/ambiente em destaque", container: "máx 1220px, imagem full em algumas seções", alignment: "mistura: hero centrado, corpo com quebra em colunas", density: "média alta (fotografia como protagonista)", sectionRhythm: "alterna imagem grande com texto editorial", cards: "menos cards; uso de imagens + texto", cta: "CTA quente (reserva) com hover caloroso", images: "fotografia gastronômica apetitosa, luz quente", border: "raios suaves (12–20px)", shadow: "sombras quentes e suaves", decoration: "texturas de papel/ares de marca + moldura natural" },
+  ),
+  "Bistro intimista": T(
+    { primary: "#4A2C2A", secondary: "#C08A5A", accent: "#8C5B3F", background: "#1A1210", foreground: "#F3E9E0", muted: "#C2B2A6", cta: "#C08A5A", ctaContrast: "#241512" },
+    "Libre Baskerville", "Inter", "400 700", "400 500", "bistro clássico e aconchegante com luz de vela",
+    "https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Inter:wght@400;500&display=swap",
+    { hero: "íntimo com ambiente aconchegante e headline afetiva", container: "máx 1100px", alignment: "centrado, quente e acolhedor", density: "baixa-média", sectionRhythm: "seções envolventes com luz baixa", cards: "cards discretos com foco no ambiente", cta: "CTA terroso com hover discreto", images: "luz baixa, aconchego, tons de carvão", border: "raios médios (12–18px)", shadow: "sombras profundas e calorosas", decoration: "elementos de luz difusa, madeira, detalhes dourados" },
+  ),
+  "Street-food pop": T(
+    { primary: "#F43F5E", secondary: "#FB923C", accent: "#EAB308", background: "#FFF7ED", foreground: "#271309", muted: "#8A5A3F", cta: "#F43F5E", ctaContrast: "#FFFFFF" },
+    "Poppins", "Inter", "700 800", "400 500", "street vibe, display grossa arredondada e muita energia",
+    "https://fonts.googleapis.com/css2?family=Poppins:wght@700;800&family=Inter:wght@400;500&display=swap",
+    { hero: "pop vibrante com comida em close e tipografia grande", container: "máx 1200px", alignment: "centrado e ousado", density: "alta (cor e energia)", sectionRhythm: "blocos ousados e coloridos", cards: "cards grossos com cores vivas", cta: "CTA de destaque vibrante com hover forte", images: "close vibrante e apetitoso", border: "raios grandes (18–28px)", shadow: "sombras coloridas/duras", decoration: "formas geométricas vivas, marquise, chips" },
+  ),
+  "Minimal premium": T(
+    { primary: "#2B2B2B", secondary: "#8C8C8C", accent: "#C9A961", background: "#FCFCFA", foreground: "#141414", muted: "#7A7A7A", cta: "#141414", ctaContrast: "#FFFFFF" },
+    "Inter", "Inter", "500 600", "300 400 500", "minimalista premium de alto contraste, muito respiro",
+    "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap",
+    { hero: "minimalista com uma única imagem de assinatura e respiro", container: "máx 1080px", alignment: "esquerda com grid fino", density: "baixa (muito espaço em branco)", sectionRhythm: "ritmo espaçado e preciso", cards: "cards enxutos com tipografia grande", cta: "CTA discreto de alto contraste", images: "fotografia premium clean, pouca cor", border: "raios mínimos (0–8px)", shadow: "sombras muito leves", decoration: "linhas finas, hierarquia tipográfica" },
+  ),
+  "Editorial de autoridade": T(
+    { primary: "#1F3A5F", secondary: "#C0A44A", accent: "#9C7C2E", background: "#FCFAF6", foreground: "#1A1A1A", muted: "#6B6B6B", cta: "#1F3A5F", ctaContrast: "#FFFFFF" },
+    "Playfair Display", "Inter", "500 700", "400 500", "autoridade com serif clássica e sans sóbria",
+    "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=Inter:wght@400;500&display=swap",
+    { hero: "editorial sóbrio com tipografia forte e pouca decoração", container: "máx 1120px, coluna editorial", alignment: "esquerda, hierarquia formal", density: "média", sectionRhythm: "listas editoriais espaçadas", cards: "listas com número/índice", cta: "CTA formal de alto contraste", images: "arquitetura e ambiente sóbrios", border: "raios pequenos (4–10px)", shadow: "sombras discretas", decoration: "linhas finas, detalhes dourados" },
+  ),
+  "Modern financeiro": T(
+    { primary: "#121212", secondary: "#C9A961", accent: "#E0C883", background: "#FFFFFF", foreground: "#171717", muted: "#7A7A7A", cta: "#121212", ctaContrast: "#FFFFFF" },
+    "Cormorant Garamond", "Inter", "500 700", "400 500", "private banking com serif refinada e precisão",
+    "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;700&family=Inter:wght@400;500&display=swap",
+    { hero: "direto com número/posicionamento como herói", container: "máx 1160px", alignment: "esquerda e precisa", density: "média com muito branco", sectionRhythm: "seções cortadas com precisão", cards: "cards enxutos com números", cta: "CTA escuro premium", images: "arquitetura corporativa clean", border: "raios pequenos (4–10px)", shadow: "sombras leves e precisas", decoration: "linhas douradas finas" },
+  ),
+  "Clássico jurídico": T(
+    { primary: "#1E3A34", secondary: "#B9A77A", accent: "#8E7C4B", background: "#F7F4EC", foreground: "#1B1B1B", muted: "#6E6E6E", cta: "#1E3A34", ctaContrast: "#FFFFFF" },
+    "EB Garamond", "Inter", "500 700", "400 500", "jurídico tradicional com serif de credibilidade",
+    "https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;700&family=Inter:wght@400;500&display=swap",
+    { hero: "clássico e sóbrio com imagem de sala e tipografia de credibilidade", container: "máx 1120px", alignment: "esquerda, formal", density: "média", sectionRhythm: "seções formais espaçadas", cards: "listas institucionais", cta: "CTA sóbrio", images: "arquitetura jurídica clássica", border: "raios pequenos (4–8px)", shadow: "sombras discretas", decoration: "molduras finas, tipografia tradicional" },
+  ),
+  "Minimal consultivo": T(
+    { primary: "#111111", secondary: "#6B7280", accent: "#4F46E5", background: "#FAFAFA", foreground: "#111111", muted: "#6B6B6B", cta: "#111111", ctaContrast: "#FFFFFF" },
+    "Inter", "Inter", "500 600", "300 400 500", "consultivo minimalista, tipografia-disciplina",
+    "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap",
+    { hero: "minimalista com o problema/posicionamento e chamada direta", container: "máx 1040px", alignment: "esquerda, clean", density: "baixa", sectionRhythm: "seções enxutas", cards: "poucos cards, muito espaço", cta: "CTA escuro com um acento", images: "ambiente clean e sóbrio", border: "raios mínimos (0–8px)", shadow: "sombras muito leves", decoration: "linhas finas, acento único" },
+  ),
+  "Clinical Premium (calmo e sofisticado)": T(
+    { primary: "#0E7490", secondary: "#67E8F9", accent: "#22B8CF", background: "#F5FBFC", foreground: "#0F262B", muted: "#5C7A80", cta: "#0E7490", ctaContrast: "#FFFFFF" },
+    "Lora", "Inter", "500 600", "400 500", "clínico premium, calmo e sofisticado com serif elegante",
+    "https://fonts.googleapis.com/css2?family=Lora:wght@500;600&family=Inter:wght@400;500&display=swap",
+    { hero: "acolhedor com ambiente/profissional e headline de cuidado", container: "máx 1160px", alignment: "centrado, sereno", density: "média, sem excesso", sectionRhythm: "seções de cuidado alternadas", cards: "cards limpos com imagem de cuidado", cta: "CTA teal suave com hover de calma", images: "ambiente acolhedor e profissional", border: "raios médios (14–20px)", shadow: "sombras suaves e difusas", decoration: "curvas suaves, tons claros" },
+  ),
+  "Wellness sereno (claro e orgânico)": T(
+    { primary: "#4E7A5A", secondary: "#D8CBB4", accent: "#9CC177", background: "#FAF8F2", foreground: "#213026", muted: "#6E7B6F", cta: "#4E7A5A", ctaContrast: "#FFFFFF" },
+    "Lora", "Inter", "500 600", "400 500", "bem-estar sereno, claro e orgânico",
+    "https://fonts.googleapis.com/css2?family=Lora:wght@500;600&family=Inter:wght@400;500&display=swap",
+    { hero: "luminoso com bem-estar em luz natural e headline serena", container: "máx 1120px", alignment: "centrado, calmante", density: "baixa", sectionRhythm: "seções orgânicas espaçadas", cards: "cards suaves e claros", cta: "CTA verde suave", images: "luz natural, spa, tons de verde", border: "raios generosos (16–24px)", shadow: "sombras leves", decoration: "formas orgânicas, folhas" },
+  ),
+  "Tech health (preciso e moderno)": T(
+    { primary: "#2563EB", secondary: "#93C5FD", accent: "#2DD4BF", background: "#F6F9FF", foreground: "#101828", muted: "#66748C", cta: "#2563EB", ctaContrast: "#FFFFFF" },
+    "Inter", "Inter", "500 700", "400 500", "health-tech preciso e moderno, azul + teal",
+    "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap",
+    { hero: "moderno com profissional/tecnologia e headline objetiva", container: "máx 1180px", alignment: "esquerda, precisa", density: "média", sectionRhythm: "seções com números/dados", cards: "cards com hierarquia técnica", cta: "CTA azul com hover", images: "profissional de saúde/equipamento limpo", border: "raios médios (10–16px)", shadow: "sombras clean", decoration: "grid fino, ícones, dados" },
+  ),
+  "Automotive (robusto, técnico, direto)": T(
+    { primary: "#E8590C", secondary: "#495057", accent: "#FF7A29", background: "#14171A", foreground: "#F1F3F5", muted: "#A6AEB6", cta: "#E8590C", ctaContrast: "#FFFFFF" },
+    "Space Grotesk", "Inter", "500 700", "400 500", "automotivo robusto, técnico e direto",
+    "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500&display=swap",
+    { hero: "direto com imagem de oficina/veículo e CTA de orçamento", container: "máx 1220px", alignment: "esquerda, técnica", density: "alta, industrial", sectionRhythm: "blocos funcionais", cards: "cards de serviço com ícone", cta: "CTA laranja de orçamento forte", images: "oficina, veículo, ferramentas, processo", border: "raios pequenos (6–12px)", shadow: "sombras duras", decoration: "detalhes metálicos, linhas técnicas" },
+  ),
+  "Performance garage (limpo e forte)": T(
+    { primary: "#0F766E", secondary: "#94A3B8", accent: "#2DD4BF", background: "#0F172A", foreground: "#F1F5F9", muted: "#94A3B8", cta: "#2DD4BF", ctaContrast: "#06201C" },
+    "Space Grotesk", "Inter", "500 700", "400 500", "garagem performance, limpo e forte",
+    "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500&display=swap",
+    { hero: "de performance com veículo em destaque e headline de resultado", container: "máx 1200px", alignment: "esquerda, forte", density: "média-alta", sectionRhythm: "seções técnicas", cards: "cards com destaque de performance", cta: "CTA teal elétrico", images: "carro, oficina, diagnóstico", border: "raios médios (10–16px)", shadow: "sombras profundas + glow teal", decoration: "detalhes automotivos, gradiente escuro" },
+  ),
+  "Organic Premium (acolhedor, não infantil)": T(
+    { primary: "#065F55", secondary: "#D9A441", accent: "#F2C14E", background: "#F7F5EF", foreground: "#16211E", muted: "#6E7B72", cta: "#065F55", ctaContrast: "#FFFFFF" },
+    "Nunito", "Inter", "700 800", "400 500", "orgânico premium acolhedor, amigável sem infantil",
+    "https://fonts.googleapis.com/css2?family=Nunito:wght@700;800&family=Inter:wght@400;500&display=swap",
+    { hero: "com animal em contexto de cuidado (grooming/banho)", container: "máx 1160px", alignment: "centrado, acolhedor", density: "média", sectionRhythm: "seções de cuidado", cards: "cards amigáveis com imagem de serviço", cta: "CTA verde com hover", images: "cuidado, grooming, ambiente", border: "raios generosos (16–24px)", shadow: "sombras suaves", decoration: "formas arredondadas, tons orgânicos" },
+  ),
+  "Spa Pet sofisticado": T(
+    { primary: "#6B7A5A", secondary: "#C9A961", accent: "#E3D3B4", background: "#F8F6F0", foreground: "#2B2B23", muted: "#7A7A6A", cta: "#6B7A5A", ctaContrast: "#FFFFFF" },
+    "Lora", "Inter", "500 600", "400 500", "spa pet sofisticado, sereno e elegante",
+    "https://fonts.googleapis.com/css2?family=Lora:wght@500;600&family=Inter:wght@400;500&display=swap",
+    { hero: "de spa animal com ambiente sereno e headline de bem-estar", container: "máx 1120px", alignment: "centrado, calmo", density: "baixa-média", sectionRhythm: "seções de spa espaçadas", cards: "cards serenos com imagem", cta: "CTA verde-sálvia", images: "spa pet, ambiente sereno", border: "raios generosos (16–24px)", shadow: "sombras leves", decoration: "formas orgânicas, texturas suaves" },
+  ),
+  "Playful-edit (energético, não infantil)": T(
+    { primary: "#F97316", secondary: "#22B8CF", accent: "#FACC15", background: "#FFF8EF", foreground: "#2B1B0E", muted: "#8A6A4A", cta: "#F97316", ctaContrast: "#FFFFFF" },
+    "Poppins", "Inter", "700 800", "400 500", "energético e amigável, sem infantil",
+    "https://fonts.googleapis.com/css2?family=Poppins:wght@700;800&family=Inter:wght@400;500&display=swap",
+    { hero: "alegre com animal e ação", container: "máx 1200px", alignment: "centrado, vibrante", density: "alta", sectionRhythm: "blocos vivos", cards: "cards coloridos com imagem", cta: "CTA laranja vibrante", images: "animal em ação, alegre", border: "raios grandes (18–28px)", shadow: "sombras coloridas", decoration: "formas geométricas, cores vivas" },
+  ),
+  "Modern Premium": T(
+    { primary: "#7C3AED", secondary: "#22D3EE", accent: "#F59E0B", background: "#0B0E14", foreground: "#F5F7FA", muted: "#9AA3AE", cta: "#7C3AED", ctaContrast: "#FFFFFF" },
+    "Space Grotesk", "Inter", "500 700", "400 500", "moderno premium com acento de marca e gradiente",
+    "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500&display=swap",
+    { hero: "claro que mostra o que o negócio faz e por que importa", container: "máx 1200px", alignment: "centrado no hero, esquerda no corpo", density: "média", sectionRhythm: "seções alternadas", cards: "cards glass com hover", cta: "CTA com gradiente de marca", images: "contextuais ao negócio", border: "raios médios (12–20px)", shadow: "sombras + glow do accent", decoration: "glow/aura + grid sutil" },
+  ),
+};
+
 const FALLBACK: { position: string; sensation: string; copyDirection: string; antiTemplate: string; imageQueries: Record<string, string> } = {
   position: "confiança + proximidade + competência",
   sensation: "confiança e acolhimento",
@@ -385,8 +565,6 @@ const FALLBACK: { position: string; sensation: string; copyDirection: string; an
   },
 };
 
-// Identidade determinística do negócio — a base para escolher a linguagem visual.
-// Estável por projeto (mesmo negócio sempre a mesma direção; sem random por run).
 function seedOf(businessName: string, segment: string): number {
   const s = `${String(businessName ?? "").trim()}::${String(segment ?? "").trim()}`;
   let h = 0;
@@ -402,8 +580,13 @@ export function buildCreativeBrief(businessName: string, segment: string): Creat
   const niche = NICHES.find((n) => n.match.test(segment ?? ""));
 
   if (!niche) {
-    // Segmento desconhecido: fallback único (mantém "Modern Premium") — a direção
-    // final ainda é do agente (pesquisa + negócio).
+    const tokens = TOKENS[FALLBACK_ARCHETYPE] ?? Object.values(TOKENS)[0];
+    const arch = [
+      "hero → proposta de valor → serviços → diferenciais → contato/CTA",
+      "hero → sobre (o que torna único) → serviços/experiência → por que escolher → contato",
+      "hero → o problema que resolve → como resolve → prova (sem inventar) → ação",
+    ];
+    const ai = seedOf(businessName, segment);
     return {
       businessName,
       segment: segment || "negócio",
@@ -412,23 +595,19 @@ export function buildCreativeBrief(businessName: string, segment: string): Creat
       archetype: FALLBACK_ARCHETYPE,
       paletteHint: "neutros sofisticados com um acento de marca (evite o azul 'template')",
       typeHint: "sans moderna + display para destaques (escolha com personalidade)",
-      heroStrategy: "hero claro que mostra o que o negócio faz e por que importa, com imagem contextual ou composição limpa",
-      architecture: [
-        "hero → proposta de valor → serviços → diferenciais → contato/CTA",
-        "hero → sobre (o que torna único) → serviços/experiência → por que escolher → contato",
-        "hero → o problema que resolve → como resolve → prova (sem inventar) → ação",
-      ],
+      heroStrategy: "hero claro que mostra o que o negócio faz e por que importa",
+      architecture: arch,
+      architectureChoice: arch[ai % arch.length],
       imageQueries: FALLBACK.imageQueries,
       copyDirection: FALLBACK.copyDirection,
       antiTemplate: FALLBACK.antiTemplate,
+      tokens,
     };
   }
 
-  // Direção específica do negócio: invariantes do nicho + linguagem da variante
-  // escolhida pela identidade do negócio. A query de hero mantém a base do nicho
-  // (para coerência semântica) com um termo diferenciador por projeto.
   const { loose, variants } = niche.set;
   const v = pick(variants, businessName, segment);
+  const tokens = TOKENS[v.archetype];
   const imageQueries: Record<string, string> = {};
   for (const [role, base] of Object.entries({
     hero: niche.heroQueryBase,
@@ -439,7 +618,7 @@ export function buildCreativeBrief(businessName: string, segment: string): Creat
     const suffix = v.imageSuffix[role] ?? "";
     imageQueries[role] = [base, suffix].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
   }
-
+  const ai = seedOf(businessName, segment);
   return {
     businessName,
     segment: segment || "negócio",
@@ -450,29 +629,62 @@ export function buildCreativeBrief(businessName: string, segment: string): Creat
     typeHint: v.typeHint,
     heroStrategy: v.heroStrategy,
     architecture: v.architecture,
+    architectureChoice: v.architecture[ai % v.architecture.length],
     imageQueries,
     copyDirection: loose.copyDirection,
     antiTemplate: loose.antiTemplate,
+    tokens,
   };
 }
 
-// Texto enxuto do brief para injetar na missão (sem expor raciocínio excessivo).
-// Aviso (5.26): é PONTO DE PARTIDA — nunca um template; a direção final vem da
-// decisão contextual do agente (pesquisa + negócio).
+// Bloco ESTRUTURADO e EXECUTÁVEL para injetar na missão. Os tokens são decisões de
+// design; o agente deve implementá-los — NÃO são sugestões genéricas. Ainda assim
+// há liberdade de seções/componentes/UX (a direção define a LINGUAGEM, não um template).
 export function formatCreativeBrief(brief: CreativeBrief): string {
-  const arch = brief.architecture.map((a, i) => `${i + 1}. ${a}`).join("\n   ");
+  const t = brief.tokens;
+  const pal = t.palette;
+  const ty = t.typography;
+  const c = t.composition;
   const queries = Object.entries(brief.imageQueries).map(([role, q]) => `   - ${role}: "${q}"`).join("\n");
-  return `DIREÇÃO CRIATIVA SUGERIDA (ponto de partida, NÃO um template — a direção final é SUA, baseada na pesquisa e no negócio):
-- Posicionamento: ${brief.position}
-- Sensação: ${brief.sensation}
-- Arquétipo visual (referência de linguagem): ${brief.archetype}
-- Paleta possível (várias direções servem — escolha a que melhor traduz ESTE negócio): ${brief.paletteHint}
-- Tipografia possível (idem): ${brief.typeHint}
-- Hero (direção de impacto, adaptável): ${brief.heroStrategy}
-- Arquiteturas possíveis (escolha 1 e refine para ESTE negócio — não copie literalmente):
-   ${arch}
-- Imagens contextuais (busque/us referências nesta direção; nunca use imagens de outro segmento):
+  return `DESIGN TOKENS EXECUTÁVEIS (decisões de design para ESTE projeto — implemente como base real):
+
+PALETA
+- primary: ${pal.primary}
+- secondary: ${pal.secondary}
+- accent: ${pal.accent}
+- background: ${pal.background}
+- foreground: ${pal.foreground}
+- muted: ${pal.muted}
+- cta: ${pal.cta}
+- ctaContrast: ${pal.ctaContrast}
+
+TIPOGRAFIA
+- heading: ${ty.heading} (weights ${ty.headingWeights}, style: ${ty.style})
+- body: ${ty.body} (weights ${ty.bodyWeights})
+- Google Fonts: ${ty.importUrl}
+
+COMPOSIÇÃO
+- hero: ${c.hero}
+- container: ${c.container}
+- alignment: ${c.alignment}
+- density: ${c.density}
+- sectionRhythm: ${c.sectionRhythm}
+- cards: ${c.cards}
+- cta: ${c.cta}
+- images: ${c.images}
+- border/radius: ${c.border}
+- shadow: ${c.shadow}
+- decoration: ${c.decoration}
+
+ARQUITETURA ESCOLHIDA (execute esta, não escolha outra agora):
+${brief.architectureChoice}
+
+DIREÇÃO DE IMAGENS (referências de busca — NÃO é URL garantida; busque imagens que
+correspondam a esta direção; use as queries abaixo como guia, nunca um banco fixo):
 ${queries}
-- Copy: ${brief.copyDirection}
-- Evite: ${brief.antiTemplate}`;
+
+POSICIONAMENTO: ${brief.position}
+SENSAÇÃO: ${brief.sensation}
+COPY: ${brief.copyDirection}
+EVITE: ${brief.antiTemplate}`;
 }

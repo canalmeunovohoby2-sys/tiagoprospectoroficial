@@ -161,7 +161,8 @@ export const BROWSER_QA_INSTRUCTIONS = `BROWSER QA (ferramentas browser_*):
 - Fluxo: editar → browser_open → browser_inspect/console/links → mobile (browser_set_viewport) → se houver problema, edite → browser_reload → confirme.
 - visual_review envia o screenshot ao Gemini (visão especializada) e devolve diagnóstico. DeepSeek continua decidindo/executando.
 - TESTE DE INTERAÇÃO (obrigatório quando houver botões/menus/modais/bugs de clique): simule o clique REAL com browser_eval (ex.: document.querySelector('...').click()) e compare o estado ANTES e DEPOIS (classes do body, computed styles de display/visibility/opacity/position/overflow, overlays/elementos cobrindo a página, console, hash). Confirme que: a página NUNCA fica preta/vazia/inutilizável; o menu/modal abre e FECHA; nenhum overlay transparente cobre o conteúdo; nenhum erro de console. Corrija qualquer problema e teste novamente.
-- Retorne apenas problemas reais; nunca invente QA.`;
+- Retorne apenas problemas reais; nunca invente QA.
+- browser_measure devolve a GEOMETRIA REAL do renderizado para os seletores pedidos (bounding box, posição no viewport, dimensões, espaçamento, alinhamento, sobreposição, contenção, proporção, viewport). Use quando uma tarefa envolver posicionamento, espaçamento, tamanho, alinhamento, responsividade ou composição visual e a precisão ajudar na decisão. NÃO invente coordenadas nem deduza dimensões precisas apenas olhando o código — meça o renderizado. Depois de alterar o layout, meça novamente para confirmar que a mudança teve o efeito esperado. Ela só recebe SELETORES (não aceita JS livre).`;
 
 // Prompt-base do modo EDIÇÃO.
 export function buildEditSystemPrompt(): string {

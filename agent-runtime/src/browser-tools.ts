@@ -4,6 +4,10 @@ import { z } from "zod";
 import { createTool } from "@cline/sdk";
 import { BrowserSession, type BrowserInspection } from "./browser-session.js";
 import { visualReviewWithGemini, formatVisualReview, type VisualReviewResult } from "./vision-gemini.js";
+import {
+  type Box, type MeasuredElement, type ViewportInfo, distanceBelow, distanceRight,
+  overlapsX, overlapsY, overlapArea, contains, horizontalAlignment, proportionWidth, proportionHeight,
+} from "./geometry.js";
 
 export const DESKTOP_VIEWPORT = { width: 1366, height: 768 };
 export const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -30,6 +34,12 @@ export function buildBrowserTools(
     const file = await s.screenshot(name);
     if (onScreenshot) { try { onScreenshot(file); } catch { /* noop */ } }
     return file;
+  };
+
+  // Rotula um elemento medido (identificação compacta).
+  const labelOf = (el: MeasuredElement, i: number) => {
+    const name = el.id || el.classes || el.tag;
+    return `#${i + 1} [${el.selector}] (${el.tag}${name ? " · " + name : ""})`;
   };
 
   const open = createTool({
@@ -150,6 +160,79 @@ export function buildBrowserTools(
     },
   });
 
+  // MEDIÇÃO GEOMÉTRICA ESTRUTURADA do renderizado (6.0).
+  // Retorna bounding boxes, posição (relativa ao viewport), estilos computados
+  // úteis, viewport e RELAÇÕES entre elementos (distância, alinhamento, overlap,
+  // contenção, proporção). Só aceita SELECTORES (nunca JS livre do modelo).
+  const measure = createTool({
+    name: "browser_measure",
+    description:
+      "Mede a GEOMETRIA REAL do site renderizado (bounding box, posição, dimensões, espaçamento, alinhamento, sobreposição, proporção, viewport). " +
+      "Recebe um ou mais seletores CSS (ex.: '.hero h1' ou ['.hero', '.hero .cta']). Retorna dados estruturados por elemento + relações entre eles. " +
+      "Use quando a tarefa envolver posicionamento, espaçamento, tamanho, alinhamento, responsividade ou composição visual. Depois de editar, meça de novo para confirmar o efeito.",
+    inputSchema: z.object({
+      selectors: z.union([z.string(), z.array(z.string())]).optional().describe("um seletor CSS ou lista de seletores para medir"),
+    }),
+    async execute(input) {
+      const s = session();
+      const raw = Array.isArray(input.selectors) ? input.selectors : (input.selectors ? [input.selectors] : ["body", "header", "main", "footer"]);
+      if (!raw.length) return "browser_measure: informe ao menos um seletor.";
+      const data = await s.measure(raw);
+      const vp = data.viewport;
+      const els = data.elements;
+      const found = els.filter((e) => !e.notFound && !e.error);
+      const lines: string[] = [];
+      lines.push(`GEOMETRIA DO RENDERIZADO`);
+      lines.push(`Viewport: ${vp.width} × ${vp.height}${vp.deviceScaleFactor ? ` (deviceScaleFactor ${vp.deviceScaleFactor})` : ""}`);
+      if (els.length === 0) {
+        lines.push("(nenhum elemento encontrado)");
+        return lines.join("\n");
+      }
+      for (let i = 0; i < els.length; i++) {
+        const el = els[i];
+        if (el.notFound) { lines.push(`\nELEMENTO ${i + 1} [${el.selector}]: NÃO ENCONTRADO`); continue; }
+        if (el.error) { lines.push(`\nELEMENTO ${i + 1} [${el.selector}]: ERRO ${el.error}`); continue; }
+        const b: Box = el.box;
+        lines.push(`\nELEMENTO ${labelOf(el, i)}`);
+        lines.push(`  box: x=${b.x} y=${b.y} width=${b.width} height=${b.height} right=${b.right} bottom=${b.bottom}`);
+        for (const p of ["fontSize", "fontWeight", "lineHeight", "textAlign", "display", "position", "margin", "padding", "gap", "width", "maxWidth", "height", "minHeight"] as const) {
+          if (el.style?.[p]) lines.push(`  ${p}: ${el.style[p]}`);
+        }
+        if (el.text) lines.push(`  text: "${el.text}"`);
+      }
+      // Relações entre os elementos encontrados (consecutivos), na ordem pedida.
+      const ids: Array<{ idx: number; label: string; box: Box }> = [];
+      let foundCounter = 0;
+      els.forEach((el, i) => {
+        if (!el.notFound && !el.error) { ids.push({ idx: i, label: labelOf(el, foundCounter++), box: el.box as Box }); }
+      });
+      const rels: string[] = [];
+      for (let i = 0; i + 1 < ids.length; i++) {
+        const a = ids[i], b = ids[i + 1];
+        const below = distanceBelow(a.box, b.box);
+        const right = distanceRight(a.box, b.box);
+        if (Math.abs(below) < 100000) rels.push(`${b.label} está ${below < 0 ? `sobreposto/abaixo de ${a.label} por ${Math.abs(below)}px` : `${below}px abaixo de ${a.label}`}`);
+        if (Math.abs(right) < 100000) rels.push(`${b.label} está ${right < 0 ? `sobreposto/à esquerda de ${a.label} por ${Math.abs(right)}px` : `${right}px à direita de ${a.label}`}`);
+        const align = horizontalAlignment(a.box, b.box);
+        if (align) rels.push(`${b.label} e ${a.label}: alinhamento ${align}`);
+        const ovX = overlapsX(a.box, b.box), ovY = overlapsY(a.box, b.box);
+        if (ovX && ovY) rels.push(`${b.label} e ${a.label}: sobreposição de ${overlapArea(a.box, b.box)}px²`);
+        else if (ovX) rels.push(`${b.label} e ${a.label}: mesma faixa horizontal`);
+        else if (ovY) rels.push(`${b.label} e ${a.label}: mesma faixa vertical`);
+        if (contains(a.box, b.box)) rels.push(`${b.label} está CONTIDO em ${a.label}`);
+        else if (contains(b.box, a.box)) rels.push(`${a.label} está CONTIDO em ${b.label}`);
+      }
+      if (rels.length) lines.push("\nRELAÇÕES", ...rels.map((r) => "- " + r));
+      const props: string[] = [];
+      for (const id of ids) {
+        const pw = proportionWidth(id.box, vp), ph = proportionHeight(id.box, vp);
+        props.push(`${id.label} ocupa ${(pw * 100).toFixed(1)}% da largura do viewport${ph ? `, ${(ph * 100).toFixed(1)}% da altura` : ""}`);
+      }
+      if (props.length) lines.push("\nPROPORÇÃO", ...props.map((p) => "- " + p));
+      return lines.join("\n");
+    },
+  });
+
   const reload = createTool({
     name: "browser_reload",
     description: "Recarrega a página após edições de código e retorna a inspeção atualizada (revalidação).",
@@ -187,7 +270,7 @@ export function buildBrowserTools(
     },
   });
 
-  return [open, inspect, consoleTool, links, screenshot, setViewport, reload, evalTool, visualReview];
+  return [open, inspect, consoleTool, links, screenshot, setViewport, measure, reload, evalTool, visualReview];
 }
 
 export type { BrowserInspection };

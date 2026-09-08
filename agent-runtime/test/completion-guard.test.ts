@@ -118,11 +118,21 @@ describe("Depth Guard (5.28) — pedidos amplos não finalizam com mínimo esfor
     expect(d.block).toBe(false);
   });
 
-  it("pedido cirúrgico NÃO passa pelo Depth Guard (sem evidência de trabalho)", () => {
+  it("pedido cirúrgico que alterou mas NÃO verificou → BLOQUEIA (veracidade absoluta)", () => {
     const d = decideFinishBlock({
       mode: "edit", files: CHANGED, startFiles: POOR, instruction: "troca a cor do botão para azul",
       finishSkips: 0,
       work: { inspectedBeforeEdit: false, verifiedAfterLastEdit: false, editActionCount: 1, editedPaths: ["src/site.css"] },
+    });
+    expect(d.block).toBe(true);
+    expect(d.reason ?? "").toMatch(/verifica|read_file|browser/i);
+  });
+
+  it("pedido cirúrgico que alterou E verificou → conclui (não bloqueia)", () => {
+    const d = decideFinishBlock({
+      mode: "edit", files: CHANGED, startFiles: POOR, instruction: "troca a cor do botão para azul",
+      finishSkips: 0,
+      work: { inspectedBeforeEdit: false, verifiedAfterLastEdit: true, editActionCount: 1, editedPaths: ["src/site.css"] },
     });
     expect(d.block).toBe(false);
   });
@@ -216,5 +226,53 @@ describe("Image Swap Guard (5.35) — troca de imagem exige evidência real", ()
     // sem alteração → regra de EVIDÊNCIA continua bloqueando (nenhum arquivo mudou)
     expect(d.block).toBe(true);
     expect(d.reason ?? "").toContain("NENHUM arquivo foi modificado");
+  });
+});
+
+describe("Veracidade absoluta (6.0) — criação/exclusão/falha/parcial", () => {
+  const BASE: Record<string, string> = {
+    "index.html": `<!doctype html><html><body><nav><a>x</a></nav><section class="hero"><h1>Loja</h1><img src="https://img.com/a.jpg"/></section><footer>f</footer></body></html>`,
+    "src/unused.txt": "x",
+  };
+  const withVerify = (editActionCount: number, paths: string[]): { inspectedBeforeEdit: boolean; verifiedAfterLastEdit: boolean; editActionCount: number; editedPaths: string[] } => ({
+    inspectedBeforeEdit: true, verifiedAfterLastEdit: true, editActionCount, editedPaths: paths,
+  });
+
+  it("criação de arquivo CONFIRMADA (arquivo existe) → pode concluir", () => {
+    const withNew = { ...BASE, "src/novo.ts": "export const x = 1;" };
+    const d = decideFinishBlock({ mode: "edit", files: withNew, startFiles: BASE, instruction: "crie um arquivo novo.ts com uma constante", finishSkips: 0, work: withVerify(1, ["src/novo.ts"]) });
+    expect(d.block).toBe(false);
+  });
+
+  it("criação de arquivo NÃO realizada → não pode afirmar sucesso", () => {
+    const d = decideFinishBlock({ mode: "edit", files: BASE, startFiles: BASE, instruction: "crie um arquivo novo.ts com uma constante", finishSkips: 0, work: withVerify(0, []) });
+    expect(d.block).toBe(true);
+    expect(d.reason ?? "").toMatch(/NENHUM arquivo foi modificado/i);
+  });
+
+  it("exclusão CONFIRMADA (arquivo não existe mais) → pode concluir", () => {
+    const after: Record<string, string> = { ...BASE };
+    delete after["src/unused.txt"];
+    const d = decideFinishBlock({ mode: "edit", files: after, startFiles: BASE, instruction: "remova o arquivo src/unused.txt", finishSkips: 0, work: withVerify(1, ["src/unused.txt"]) });
+    expect(d.block).toBe(false);
+  });
+
+  it("exclusão NÃO realizada (nada mudou) → não pode afirmar sucesso", () => {
+    const d = decideFinishBlock({ mode: "edit", files: BASE, startFiles: BASE, instruction: "remova o arquivo index.html", finishSkips: 0, work: withVerify(0, []) });
+    expect(d.block).toBe(true);
+  });
+
+  it("falha de ferramenta (nenhuma mudança apesar do pedido) → bloqueia (não mascara)", () => {
+    const d = decideFinishBlock({ mode: "edit", files: BASE, startFiles: BASE, instruction: "deixa o CTA azul", finishSkips: 0 });
+    expect(d.block).toBe(true);
+    expect(d.reason ?? "").toMatch(/NENHUM arquivo foi modificado/i);
+  });
+
+  it("tarefa parcialmente executada (alguns arquivos mudaram) → guard não bloqueia por evidência, mas exige verificação", () => {
+    const partial = { ...BASE, "src/site.css": ".cta{background:#2563eb}" };
+    const d = decideFinishBlock({ mode: "edit", files: partial, startFiles: BASE, instruction: "deixa o CTA azul e adiciona um rodapé", finishSkips: 0, work: { inspectedBeforeEdit: true, verifiedAfterLastEdit: false, editActionCount: 1, editedPaths: ["src/site.css"] } });
+    // alterou (evidência passa) mas não verificou → bloqueia por VERIFICAÇÃO (não mascara parcial como pronto)
+    expect(d.block).toBe(true);
+    expect(d.reason ?? "").toMatch(/verifica/i);
   });
 });

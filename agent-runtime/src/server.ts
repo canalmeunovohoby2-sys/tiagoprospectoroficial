@@ -572,6 +572,14 @@ export function startServer(port = PORT, host = HOST) {
           ? `\nPESQUISA WEB DE REFERÊNCIA (5.26) — use para decidir a direção (tendências, técnicas, o que líderes do nicho fazem). NÃO copie sites/layouts/textos encontrados; crie algo próprio:\n${formatResearch(research)}`
           : "";
 
+        // Diretiva de EXECUÇÃO dos tokens: não são sugestões, são decisões.
+        const tokenDirective = `
+REGRA DE EXECUÇÃO DOS DESIGN TOKENS:
+- Os tokens acima (paleta, tipografia, composição, arquitetura ESCOLHIDA) são DECISÕES DE DESIGN para este projeto. NÃO substitua pelos seus defaults pessoais.
+- NÃO invente outra paleta sem motivo; NÃO troque as fontes definidas sem necessidade; NÃO trate os tokens como sugestões genéricas. Use-os como BASE REAL para implementar.
+- Se uma decisão técnica exigir pequena adaptação (ex.: contraste, responsividade), PRESERVE a intenção visual.
+- Isso NÃO é um template: você mantém liberdade de seções, componentes, arquivos, microinterações e decisões de UX. A direção define a LINGUAGEM VISUAL, não o site inteiro.`;
+
         const userPrompt = (
           typeof body.prompt === "string" && body.prompt.trim()
             ? body.prompt.trim()
@@ -604,6 +612,7 @@ ${extra}
 ${genAttachBlock}
 ${researchBlock}
 ${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
+${tokenDirective}
 ${creativeDirective}
 
 IMPORTANTE: crie um site completo conforme o pedido, com identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS, responsivo. Use imagens contextuais reais quando fizer sentido. NUNCA deixe o site "de rascunho" — entregue código real dos arquivos necessários.`
@@ -615,6 +624,7 @@ ${extra}
 ${genAttachBlock}
 ${researchBlock}
 ${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
+${tokenDirective}
 ${creativeDirective}
 
 IMPORTANTE: a "Direção criativa sugerida" é apenas um PONTO DE PARTIDA entre muitas direções possíveis — combine-a com a pesquisa e com o que encontrar no negócio. Cada site deve ter identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS (nunca copie o mesmo layout de outros projetos). Você tem liberdade para escolher o layout e a direção visual. Use imagens contextuais reais.`;

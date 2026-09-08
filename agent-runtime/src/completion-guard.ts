@@ -30,7 +30,7 @@ export const MAX_FINISH_SKIPS_DEFAULT = 4;
 export function instructionRequestsChange(instruction: string): boolean {
   const text = String(instruction ?? "").trim();
   if (!text) return false;
-  const asks = /adiciona|adicionar|inclui|incluir|cria|criar|coloca|muda|mudar|troca|trocar|troque|remove|remover|deixa|deixar|faz|fazer|fazer\s+um|transforma|reconstruir|refina|refinar|refine|melhora|melhore|melhorar|aprimor|otimiz|reescreve|substitui|apaga|apague|insere|edita|implementa|aplica|aplicar|corrige|corrigir|arruma|arrumar|monta|montar|premium|profissional|sofisticad|primeiro\s+mundo|site\s+completo|site\s+novo/i;
+  const asks = /adiciona|adicionar|adicione|inclui|incluir|inclua|cria|criar|crie|coloca|colocar|coloque|muda|mudar|mude|troca|trocar|troque|remove|remover|remova|apaga|apagar|apague|deixa|deixar|deixe|faz|fazer|fa[cç]a|transforma|transformar|reconstruir|refina|refinar|refine|melhora|melhore|melhorar|aprimor|otimiz|reescreve|reescrever|substitui|substituir|insere|inserir|edita|editar|edite|implementa|implementar|aplica|aplicar|corrige|corrigir|arruma|arrumar|monta|montar|monte|premium|profissional|sofisticad|primeiro\s+mundo|site\s+completo|site\s+novo/i;
   const justAsks = /^(o\s+que|como|qual|quando|onde|por\s+que|pode|poderia|voc[eê]\s+acha|diga|explique|resuma|liste)/i;
   if (justAsks.test(text)) return false;
   return asks.test(text);
@@ -119,8 +119,11 @@ export function decideFinishBlock(opts: {
 
   // 3) DEPTH GUARD (5.28, modo edit): tarefas amplas — e pedidos de TROCA DE
   //    IMAGEM/FOTO — não finalizam sem evidência de que o agente ENTENDEU o
-  //    estado atual (inspeção antes da 1ª alteração) e VERIFICOU o resultado
-  //    (após a última alteração, com releitura ou browser/visual_review).
+  //    estado atual (inspeção antes da 1ª alteração).
+  //    VERACIDADE ABSOLUTA (6.0): QUALQUER edição que alterou arquivos exige
+  //    verificação do resultado DEPOIS da última alteração (read-back ou
+  //    browser/visual_review) — aplica-se a TODA tarefa de mudança, não só às
+  //    amplas/imagem/bug. Texto do modelo NÃO é evidência.
   if (opts.mode === "edit" && requestedChange && hasStart && changed && opts.work) {
     const broad = isBroadQualityRequest(opts.instruction ?? "");
     const imageSwap = requestsImageSwap(opts.instruction ?? "");
@@ -131,10 +134,10 @@ export function decideFinishBlock(opts: {
         reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de que inspecionou o estado atual ANTES da primeira alteração. ${bugFix ? "Para um DEFEITO/BUG: reproduza o problema antes de mexer — abra o site no navegador (browser_open/browser_eval) e leia os arquivos envolvidos para confirmar a causa raiz. " : ""}ENTENDA o projeto: leia os arquivos relevantes com read_file (e, se envolver aparência/UX/imagem, abra o site no navegador) para localizar o elemento/foto exato — só então continue e finalize.`,
       };
     }
-    if ((broad || imageSwap || bugFix) && opts.work.verifiedAfterLastEdit === false) {
+    if (opts.work.verifiedAfterLastEdit === false) {
       return {
         block: true,
-        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de verificação do resultado DEPOIS da última alteração. ${bugFix ? "Para um DEFEITO/BUG: recarregue o site (browser_reload) e reproduza o mesmo passo (ex.: browser_eval no clique) para CONFIRMAR que o problema sumiu; leia também o trecho alterado. " : ""}Releia o(s) arquivo(s) alterado(s) (read_file) e/ou execute browser_reload/browser_inspect/visual_review para confirmar que a mudança (inclusive imagem/foto) está realmente aplicada antes de chamar finish_task.`,
+        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de VERIFICAÇÃO do resultado DEPOIS da última alteração. Texto do modelo NÃO é evidência: releia o(s) arquivo(s) alterado(s) (read_file) e/ou execute browser_reload/browser_inspect/visual_review para CONFIRMAR que a mudança está realmente aplicada e atende ao objetivo antes de chamar finish_task.${bugFix ? " Para um DEFEITO/BUG: recarregue o site (browser_reload) e reproduza o mesmo passo (ex.: browser_eval no clique) para confirmar que o problema sumiu." : ""}`,
       };
     }
   }

@@ -8,6 +8,7 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { chromium, type Browser, type Page } from "playwright";
+import { MEASURE_STYLE_PROPS, type MeasuredElement, type ViewportInfo } from "./geometry.js";
 
 export interface BrowserInspection {
   url: string;
@@ -267,6 +268,48 @@ export class BrowserSession {
     } catch {
       return { black: false, ratio: 0 };
     }
+  }
+
+  async measure(selectors: string[], maxPerSelector = 6): Promise<{ viewport: ViewportInfo; elements: MeasuredElement[] }> {
+    if (!this.page) throw new Error("Página não aberta. Use browser_open primeiro.");
+    // Somente os seletores (via JSON) entram no JS — NUNCA JS livre do modelo.
+    const sels = selectors.slice(0, 8).map((s) => String(s).slice(0, 200));
+    const MAX = Math.max(1, maxPerSelector);
+    const code = `(() => {
+      const sels = ${JSON.stringify(sels)};
+      const MAX = ${MAX};
+      const props = ${JSON.stringify(MEASURE_STYLE_PROPS)};
+      const r1 = (v) => Math.round((v || 0) * 10) / 10;
+      const out = [];
+      for (const sel of sels) {
+        let els;
+        try { els = document.querySelectorAll(sel); } catch (e) { out.push({ selector: sel, error: 'seletor inválido: ' + e.message }); continue; }
+        if (!els || els.length === 0) { out.push({ selector: sel, notFound: true }); continue; }
+        const list = Array.prototype.slice.call(els, 0, MAX);
+        for (const el of list) {
+          const r = el.getBoundingClientRect();
+          const cs = window.getComputedStyle(el);
+          const st = {};
+          for (const p of props) st[p] = cs[p];
+          out.push({
+            selector: sel,
+            tag: el.tagName.toLowerCase(),
+            id: el.id || '',
+            classes: Array.prototype.slice.call(el.classList, 0, 4).join(' '),
+            text: (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 40),
+            box: { x: r1(r.x), y: r1(r.y), width: r1(r.width), height: r1(r.height), right: r1(r.right), bottom: r1(r.bottom) },
+            style: st
+          });
+        }
+      }
+      return { viewport: { width: window.innerWidth, height: window.innerHeight, deviceScaleFactor: window.devicePixelRatio }, elements: out };
+    })()`;
+    const value = await this.page.evaluate((c) => {
+      // eslint-disable-next-line no-new-func
+      const fn = new Function(`return (${c});`);
+      return fn();
+    }, code);
+    return value as { viewport: ViewportInfo; elements: MeasuredElement[] };
   }
 
   // Lista elementos clicáveis (para auditoria de interação).

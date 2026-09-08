@@ -44,13 +44,67 @@ describe("Creative Direction (5.25)", () => {
     expect(acad.copyDirection).not.toBe(rest.copyDirection);
   });
 
-  it("formatCreativeBrief gera bloco enxuto para a missão", () => {
+  it("formatCreativeBrief gera bloco EXECUTÁVEL com tokens para a missão", () => {
     const b = buildCreativeBrief("Clínica Aurora", "Clínicas");
     const out = formatCreativeBrief(b);
-    expect(out.toLowerCase()).toContain("direção criativa sugerida");
-    expect(out).toContain("Posicionamento:");
-    expect(out).toContain("Arquiteturas possíveis");
-    expect(out).toContain("Imagens contextuais");
+    expect(out).toContain("DESIGN TOKENS EXECUTÁVEIS");
+    expect(out).toContain("PALETA");
+    expect(out).toContain("TIPOGRAFIA");
+    expect(out).toContain("COMPOSIÇÃO");
+    expect(out).toContain("ARQUITETURA ESCOLHIDA");
+    expect(out).toContain("DIREÇÃO DE IMAGENS");
+    expect(out).toContain("cta:");
+    expect(out).toContain("heading:");
+  });
+});
+
+describe("Design tokens executáveis (6.0)", () => {
+  const HEX = /^#[0-9A-Fa-f]{6}$/;
+
+  function expectValidTokens(b: ReturnType<typeof buildCreativeBrief>) {
+    const pal = b.tokens.palette;
+    for (const k of ["primary", "secondary", "accent", "background", "foreground", "muted", "cta", "ctaContrast"] as const) {
+      expect(pal[k], k).toMatch(HEX);
+    }
+    expect(b.tokens.typography.heading).toBeTruthy();
+    expect(b.tokens.typography.body).toBeTruthy();
+    expect(b.tokens.typography.headingWeights).toBeTruthy();
+    expect(b.tokens.composition.hero).toBeTruthy();
+    expect(b.architectureChoice).toBeTruthy();
+    expect(b.architecture).toContain(b.architectureChoice);
+    expect(b.tokens.palette.cta !== b.tokens.palette.ctaContrast).toBe(true);
+  }
+
+  it("tokens têm formato válido e CTA com contraste (diferente do fundo do CTA)", () => {
+    for (const [name, seg] of [["Iron Lab", "Academias"], ["Cantina", "Restaurantes"], ["Xavier & Advogados", "Advocacia"], ["Clínica Aurora", "Clínicas"], ["Pet Care", "Pet Shop"]]) {
+      expectValidTokens(buildCreativeBrief(name, seg));
+    }
+  });
+
+  it("dois negócios diferentes recebem tokens (paleta/tipografia/arquitetura) DIFERENTES quando apropriado", () => {
+    const a = buildCreativeBrief("Iron Lab Academia", "Academia");
+    const b = buildCreativeBrief("VivaFit Studio", "Academia");
+    expect(JSON.stringify(a.tokens.palette)).not.toBe(JSON.stringify(b.tokens.palette));
+  });
+
+  it("mesmo negócio mantém tokens determinísticos", () => {
+    const a1 = buildCreativeBrief("Iron Lab Academia", "Academia");
+    const a2 = buildCreativeBrief("Iron Lab Academia", "Academia");
+    expect(JSON.stringify(a1.tokens)).toBe(JSON.stringify(a2.tokens));
+    expect(a1.architectureChoice).toBe(a2.architectureChoice);
+  });
+
+  it("tipografia é explicitamente representada (família + pesos + import)", () => {
+    const b = buildCreativeBrief("Academia Corpo Forte", "Academias");
+    expect(b.tokens.typography.heading).toMatch(/./);
+    expect(b.tokens.typography.headingWeights).toMatch(/\d/);
+    expect(b.tokens.typography.importUrl).toMatch(/fonts\.googleapis\.com/);
+  });
+
+  it("arquitetura é explicitamente escolhida (uma, não três)", () => {
+    const b = buildCreativeBrief("Iron Lab Academia", "Academia");
+    expect(b.architectureChoice.length).toBeGreaterThan(0);
+    expect(b.architecture).toContain(b.architectureChoice);
   });
 });
 
