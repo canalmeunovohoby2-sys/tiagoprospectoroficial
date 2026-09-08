@@ -44,14 +44,14 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon" className="border-r border-primary/20 bg-sidebar/60 backdrop-blur-xl">
-      <SidebarHeader className="border-b border-primary/15 h-14 flex-row items-center px-3">
+      <SidebarHeader className="border-b border-primary/15 h-16 flex-row items-center justify-center px-3">
         {collapsed ? (
           <div className="mx-auto h-9 w-9 rounded-xl bg-gradient-primary flex items-center justify-center shadow-[0_0_20px_hsl(0_84%_55%/0.45)] shrink-0">
             <Target className="h-4 w-4 text-primary-foreground" strokeWidth={2.8} />
           </div>
         ) : (
-          <div className="px-1 py-1">
-            <BrandLogo className="h-10 w-auto" />
+          <div className="flex items-center justify-center py-2">
+            <BrandLogo className="h-14 w-auto" />
           </div>
         )}
       </SidebarHeader>

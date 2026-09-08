@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Target, Loader2 } from "lucide-react";
-import { BrandLogo } from "@/components/app/BrandLogo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -54,7 +53,6 @@ export default function ResetPassword() {
     <div className="min-h-screen flex items-center justify-center bg-background bg-gradient-glow p-4">
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center gap-2 mb-8">
-          <BrandLogo className="h-16 w-auto" />
           <h1 className="font-display text-2xl font-bold">Redefinir senha</h1>
         </div>
 

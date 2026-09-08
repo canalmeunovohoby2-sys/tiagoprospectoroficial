@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import { Target, Loader2, ArrowLeft } from "lucide-react";
-import { BrandLogo } from "@/components/app/BrandLogo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -111,7 +110,7 @@ export default function Auth() {
 
       <div className="relative w-full max-w-md animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="relative flex flex-col items-center justify-center gap-2 mb-8">
-          <BrandLogo className="h-16 w-auto" />
+          <h1 className="font-display text-2xl font-bold">Bem-vindo de volta</h1>
           <p className="text-xs text-muted-foreground">Brasil · Prospecção inteligente</p>
         </div>
 
