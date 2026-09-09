@@ -3,6 +3,7 @@ import type { Json } from "@/integrations/supabase/types";
 import type { LeadSource, SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { pickLeadForSpec } from "@/data/siteProjects";
 import { getAgentTicket } from "./agentTicket";
+import { parseGenerateResponse } from "./generateStream";
 
 function rowToProject(row: unknown): SiteProjectRow | null {
   if (!row || typeof row !== "object") return null;
@@ -572,31 +573,13 @@ export async function invokeProspectorGenerate(input: {
       body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {}, prompt: input.prompt, user_id: input.userId ?? undefined }),
       signal: AbortSignal.timeout(600_000),
     });
-    if (res.ok && res.body) {
-      // A geração transmite NDJSON (start/ping/result) com HEARTBEAT para manter a
-      // conexão viva além de ~300s (evita "Agent Runtime não respondeu"). Lemos o
-      // stream e devolvemos o evento `result` (mesmo payload de antes).
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let payload: (AgentExecuteResult & { error?: string }) | null = null;
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, nl).trim(); buffer = buffer.slice(nl + 1);
-          if (!line) continue;
-          let ev: any; try { ev = JSON.parse(line); } catch { continue; }
-          if (ev?.type === "result") { payload = ev; break; }
-        }
-        if (payload) break;
-      }
-      if (payload) {
-        if (payload.error) return { status: "error", runtime: "cline", executor: "cline-editor", errors: [payload.error] };
-        return { ...payload, executor: "cline-editor" };
-      }
+    // A geração transmite NDJSON (start/ping/result) com HEARTBEAT (mantém viva
+    // além de ~300s). O leitor aceita NDJSON E JSON simples 200 (resposta
+    // bloqueada/antiga) para nunca mascarar o erro real como "indisponível".
+    const payload = res.ok && res.body ? await parseGenerateResponse(res) : null;
+    if (payload) {
+      if (payload.error) return { status: "error", runtime: "cline", executor: "cline-editor", errors: [String(payload.error)] };
+      return { ...(payload as unknown as AgentExecuteResult), executor: "cline-editor" };
     }
     return { status: "error", runtime: "cline", executor: "cline-editor", errors: [`Editor completo indisponível (HTTP ${res.status}).`] };
   } catch {
