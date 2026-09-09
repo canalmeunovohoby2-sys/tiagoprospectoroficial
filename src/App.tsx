@@ -23,6 +23,7 @@ const Queue = lazyWithRetry(() => import("./pages/Queue"), "Queue");
 const Services = lazyWithRetry(() => import("./pages/Services"), "Services");
 const Sites = lazyWithRetry(() => import("./pages/Sites"), "Sites");
 const SiteProjectPage = lazyWithRetry(() => import("./pages/SiteProjectPage"), "SiteProjectPage");
+const BrandingStudioPage = lazyWithRetry(() => import("./pages/BrandingStudioPage"), "BrandingStudioPage");
 const Placeholder = lazyWithRetry(() => import("./pages/Placeholder"), "Placeholder");
 const Settings = lazyWithRetry(() => import("./pages/Settings"), "Settings");
 const PublicSitePage = lazyWithRetry(() => import("./pages/PublicSitePage"), "PublicSitePage");
@@ -75,6 +76,7 @@ const App = () => (
                   <Route path="/services" element={<Services />} />
                   <Route path="/sites" element={<Sites />} />
                   <Route path="/sites/:id" element={<SiteProjectPage />} />
+                  <Route path="/branding/:id" element={<BrandingStudioPage />} />
                   <Route path="/settings" element={<Settings />} />
                 </Route>
                 <Route path="/public/:slug" element={<PublicSitePage />} />

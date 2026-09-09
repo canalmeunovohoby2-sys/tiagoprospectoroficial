@@ -8,6 +8,8 @@ import {
   type Box, type MeasuredElement, type ViewportInfo, distanceBelow, distanceRight,
   overlapsX, overlapsY, overlapArea, contains, horizontalAlignment, proportionWidth, proportionHeight,
 } from "./geometry.js";
+import { buildVisualEvidence, summarizeStructuredEvidence, type VisualEvidence } from "./visual-evidence.js";
+import type { VisualAnalysisResult } from "./visual-analysis.js";
 
 export const DESKTOP_VIEWPORT = { width: 1366, height: 768 };
 export const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -15,6 +17,8 @@ export const MOBILE_VIEWPORT = { width: 390, height: 844 };
 export interface BrowserToolOptions {
   context?: string;
   projectId?: string;
+  /** Analisador provider-agnostic injetado (usa o provider/modelo do usuário). */
+  visualAnalyze?: (ev: VisualEvidence, prompt: string) => Promise<VisualAnalysisResult>;
 }
 
 export function buildBrowserTools(
@@ -244,6 +248,51 @@ export function buildBrowserTools(
     },
   });
 
+  // ANÁLISE VISUAL PROVIDER-AGNOSTIC (6.0): captura evidência real (screenshot +
+  // geometria browser_measure + viewport + console) e a envia ao provider/modelo
+  // CONFIGURADO pelo usuário quando houver suporte multimodal; senão devolve
+  // evidência estruturada. Nunca usa Gemini como fallback e nunca afirma análise
+  // por imagem que não tenha ocorrido.
+  const analyze = createTool({
+    name: "visual_analyze",
+    description:
+      "Captura EVIDÊNCIA VISUAL real da página (screenshot + geometria via browser_measure + viewport + console errors) e analisa com o PROVIDER/MODELO configurado pelo usuário quando houver suporte multimodal; senão devolve evidência estruturada (geometria/DOM/viewport). " +
+      "Use para avaliar composição, tipografia, layout, CTA, imagens ou responsividade com evidência do renderizado. NUNCA afirma análise visual por imagem quando ela não ocorreu, e NUNCA usa Gemini como fallback.",
+    inputSchema: z.object({
+      prompt: z.string().describe("o que a análise deve avaliar para ESTE projeto (ex.: composição, tipografia, CTA, imagens, responsividade)"),
+      selectors: z.union([z.string(), z.array(z.string())]).optional().describe("seletores para medir geometria (default: body/header/main/footer)"),
+    }),
+    async execute(input) {
+      const s = session();
+      const sels = Array.isArray(input.selectors) ? input.selectors : (input.selectors ? [input.selectors] : ["body", "header", "main", "footer"]);
+      const shotPath = await capture(`vis-${Date.now()}`);
+      let dataUrl = "";
+      try {
+        const fs = await import("node:fs");
+        const buf = fs.readFileSync(shotPath);
+        dataUrl = buf.toString("base64");
+      } catch { /* sem screenshot real → não inventa */ }
+      const insp = await s.inspectCurrent();
+      const gem = await s.measure(sels);
+      const evidence = buildVisualEvidence({
+        screenshot: dataUrl ? { data: dataUrl, mimeType: "image/png" } : undefined,
+        viewport: { width: insp.viewport.width, height: insp.viewport.height, deviceScaleFactor: gem.viewport.deviceScaleFactor ?? 1 },
+        geometry: gem,
+        dom: { title: insp.title, headings: insp.headings.length, links: insp.links, documentWidth: insp.documentWidth, overflow: insp.horizontalOverflow, overflowPixels: insp.overflowPixels },
+        consoleErrors: insp.consoleErrors,
+      });
+      const analyzer = options?.visualAnalyze;
+      if (!analyzer) {
+        return `MODO structured (sem analisador configurado)\n` + summarizeStructuredEvidence(evidence);
+      }
+      const r = await analyzer(evidence, String(input.prompt ?? ""));
+      const head = r.mode === "multimodal"
+        ? `ANÁLISE VISUAL (multimodal) — ${r.performed ? "REALIZADA" : "NÃO CONCLUÍDA"}${r.error ? "\nobs: " + r.error : ""}`
+        : `ANÁLISE (structured) — SEM análise visual por imagem${r.error ? "\nobs: " + r.error : ""}`;
+      return head + "\n" + r.analysis;
+    },
+  });
+
   const evalTool = createTool({
     name: "browser_eval",
     description:
@@ -270,7 +319,7 @@ export function buildBrowserTools(
     },
   });
 
-  return [open, inspect, consoleTool, links, screenshot, setViewport, measure, reload, evalTool, visualReview];
+  return [open, inspect, consoleTool, links, screenshot, setViewport, measure, reload, evalTool, visualReview, analyze];
 }
 
 export type { BrowserInspection };

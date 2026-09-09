@@ -3,9 +3,16 @@
 // (zod + lifecycle). Nada acessa fora do root do projeto.
 import { z } from "zod";
 import { createTool } from "@cline/sdk";
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, relative, sep } from "node:path";
 import { resolve } from "node:path";
+import { classifyTask } from "./visual-task.js";
+import { applyBrandCmd, loadBrandStateFromFiles, createBrandStudio, brandSnapshot, type BrandCmd, type BrandStudioSnapshot } from "./branding-state.js";
+import { resolveBrandIdentity, runBrandMockup, mockupContext, readMockupResult, readMockupHistory } from "./mockup-integration.js";
+import { createArtifactStore } from "./artifact-store.js";
+import { generateAndPersistBrandPdf, writeBrandPdfManifest, loadBrandMockups, loadBrandPdf, PDF_RESULT_REL, PDF_HISTORY_REL } from "./brand-pdf.js";
+import { generateAndPersistBrandPackage, writeBrandPackageManifest, PACKAGE_RESULT_REL, PACKAGE_HISTORY_REL } from "./brand-package.js";
+import { generateAndPersistSiteVideo, writeSiteVideoManifest, VIDEO_RESULT_REL, VIDEO_HISTORY_REL } from "./site-video.js";
 
 export interface BusinessContext {
   name?: string | null;
@@ -22,6 +29,7 @@ export interface BusinessContext {
 export interface ToolEnv {
   workspaceRoot: string;
   business: BusinessContext;
+  projectId?: string;
 }
 
 const MAX_FILE = 2_000_000;
@@ -140,7 +148,307 @@ export function buildSiteTools(env: ToolEnv) {
     },
   });
 
-  return [list, read, write, edit, remove, context];
+  // IMAGE PIPELINE (FASE 6): gera ImageIntent a partir da direção/negócio, executa a
+  // pesquisa existente, extrai e seleciona candidatos (rejeitando repetidos) sem
+  // fabricar URL. Retorna sugestão para o agente aplicar; verificação fica no browser.
+  const imagePlan = createTool({
+    name: "image_plan",
+    description:
+      "Planeja uma IMAGEM contextual para o projeto (ImageIntent → pesquisa → candidatos → seleção), evitando repetir imagens já usadas. " +
+      "Informe o papel/composição (hero/service/product/editorial/background/detail/testimonial/location). Retorna a intenção, a(s) query(ies), os candidatos de imagem e a seleção. " +
+      "Use para escolher uma imagem com direção criativa (não 'nicho genérico'). NÃO fabrica URL; se não houver candidato verificável, informe honestamente.",
+    inputSchema: z.object({
+      role: z.enum(["hero", "service", "product", "editorial", "background", "detail", "testimonial", "location"]),
+    }),
+    async execute(input) {
+      const { planImage, defaultImageSearch } = await import("./image-pipeline.js");
+      const { collectImageInventory } = await import("./image-inventory.js");
+      const files = readFilesRec(root);
+      const used = new Set(collectImageInventory(files).map((r) => r.url));
+      const ctx = {
+        businessName: env.business?.name ?? "",
+        segment: env.business?.segment ?? "",
+        city: env.business?.city ?? "",
+        positioning: env.business?.about ?? "",
+      };
+      const plan = await planImage(ctx, input.role, defaultImageSearch, used);
+      const lines: string[] = [];
+      lines.push(`IMAGE INTENT (${input.role})`);
+      lines.push(`sujeito: ${plan.intent.subject}`);
+      lines.push(`mood: ${plan.intent.mood} | tratamento: ${plan.intent.treatment} | aspect: ${plan.intent.aspectRatio ?? "auto"}`);
+      lines.push(`evitar: ${plan.intent.avoid.join("; ")}`);
+      lines.push(`query: ${plan.query}`);
+      lines.push(`candidatos encontrados: ${plan.candidates.length}`);
+      for (const c of plan.candidates) {
+        lines.push(`- [${c.rejected ? "rejeitado" : "candidato"}] relevance ${c.relevance.toFixed(2)} · URL: ${c.url.slice(0, 90)}${c.rejectionReason ? " · " + c.rejectionReason : ""}`);
+      }
+      if (plan.selection.candidate) {
+        lines.push(`\nSELECIONADO: ${plan.selection.candidate.url}`);
+        lines.push(`motivo: ${plan.selection.reason}`);
+      } else {
+        lines.push(`\nNenhum candidato verificável (rejeitados: ${plan.selection.rejectedCount}). ${plan.selection.reason}`);
+      }
+      return lines.join("\n");
+    },
+  });
+
+  // BRANDING STUDIO (FASE 9): estado persistente + SVGs reais no workspace.
+  // Aplica um comando (create/select/reject/revert/edit*) e devolve o snapshot
+  // (conceitos, seleção, versões, variações, identidade) para preview/render.
+  const branding = createTool({
+    name: "branding",
+    description:
+      "Executa o Branding Studio: cria projeto de identidade (briefing livre), seleciona/rejeita conceito, edita tipografia/paleta/espessura (não-destrutivo) ou reverte versão. " +
+      "Persiste brand-state.json + assets/brand/*.svg no workspace (fonte de verdade, recupera ao reabrir). Retorna o snapshot completo (conceitos, seleção, versões, variações SVG, identidade) para o preview real.",
+    inputSchema: z.object({
+      command: z.enum(["create", "select", "reject", "revert", "editTypography", "editPalette", "editThickness"]),
+      briefing: z.string().optional().describe("para command=create (briefing/pedido do usuário)"),
+      conceptId: z.string().optional(),
+      palette: z.object({ primary: z.string(), secondary: z.string(), accent: z.string(), background: z.string(), foreground: z.string() }).optional(),
+      typography: z.object({ heading: z.string().optional(), body: z.string().optional(), weights: z.string().optional() }).optional(),
+      thickness: z.number().optional(),
+    }),
+    async execute(input) {
+      const files = readFilesRec(root);
+      let state = loadBrandStateFromFiles(files);
+      const name = files["brand-state.json"] ? "" : (input.briefing ?? "").split(/\r?\n/)[0]?.slice(0, 40) || "Marca";
+      const cmd: BrandCmd =
+        input.command === "create" ? { op: "create", briefing: input.briefing ?? "" }
+          : input.command === "select" ? { op: "select", conceptId: input.conceptId ?? "1" }
+            : input.command === "reject" ? { op: "reject", conceptId: input.conceptId ?? "3" }
+              : input.command === "revert" ? { op: "revert" }
+                : input.command === "editTypography" ? { op: "editTypography", heading: input.typography?.heading, body: input.typography?.body, weights: input.typography?.weights }
+                  : input.command === "editPalette" ? { op: "editPalette", palette: input.palette ?? { primary: "#111", secondary: "#666", accent: "#f90", background: "#fff", foreground: "#111" } }
+                    : { op: "editThickness", factor: input.thickness ?? 1 };
+
+      let snapshot: BrandStudioSnapshot;
+      if (input.command === "create" && !state) {
+        state = createBrandStudio(input.briefing ?? "", name);
+        const res = applyBrandCmd(state, { op: "create", briefing: input.briefing ?? "", name }, name);
+        snapshot = res.snapshot;
+        for (const f of res.files) writeFileSync(join(root, f.path), f.content);
+      } else {
+        if (!state) return "branding: projeto ainda não criado — use command=create com (briefing).";
+        const base = state;
+        const res = applyBrandCmd(base, cmd, name);
+        snapshot = res.snapshot;
+        for (const f of res.files) writeFileSync(join(root, f.path), f.content);
+      }
+
+      const lines: string[] = [];
+      lines.push(`BRANDING STUDIO — ${snapshot.name}`);
+      lines.push(`Conceitos: ${snapshot.concepts.map((c) => `${c.id}:${c.name}${snapshot.selectedConceptId === c.id ? " ✓" : snapshot.rejected.includes(c.id) ? " ✗" : ""}`).join(" | ")}`);
+      lines.push(`Selecionado: ${snapshot.selectedConceptId ?? "—"} | Versão atual: ${snapshot.currentVersionId ?? "—"} | Anterior: ${snapshot.previousVersionId ?? "—"}`);
+      lines.push(`Paleta: ${snapshot.palette.primary} | Tipografia: ${snapshot.typography.heading} ${snapshot.typography.weights}`);
+      lines.push(`Construção: ${snapshot.construction.constructionLogic}`);
+      return lines.join("\n");
+    },
+  });
+
+  // MOCKUP MASTER (FASE 10.10): liga a identidade já criada no Branding Studio ao
+  // PSD Master real (mesmo agente, mesmo cérebro). Consome brand-state.json +
+  // assets/brand/*.svg do workspace (NÃO gera outra logo / não inventa cores),
+  // aplica identidade nas aplicações selecionadas, exporta os rasters reais das
+  // camadas modificadas e persiste resultado + histórico no workspace. Nunca
+  // sobrescreve o Master; não cria mockup falso (sem compositor do PDF).
+  const mockup = createTool({
+    name: "mockup",
+    description:
+      "Gera os MOCKUPS da identidade já aprovada no Branding Studio, aplicando-a no PSD Master real (fonte imutável). " +
+      "Se `applications` não vier, usa `selectBrandApplications` com o contexto real (papelaria/restaurante/tecnologia/escritório). " +
+      "Rasteriza a logo (primary.svg) com encaixe contain/cover, aplica cores primária/secundária/apontamento nas camadas de cor, exporta os PNGs reais das camadas modificadas e persiste o resultado + histórico no workspace. " +
+      "Retorna o estado (aplicadas/não suportadas, PSD derivado, previews, camadas alteradas, persisted). Pode trocar a variação da logo (logoSvg) ou as cores (colors) sem destruir versões anteriores (nenhum PSD gerado é silenciosamente sobrescrito).",
+    inputSchema: z.object({
+      action: z.enum(["generate", "status", "history"]).default("generate"),
+      applications: z.array(z.string()).optional().describe("aplicações a aplicar (ex.: BC, A4, Mug). Se ausente → seleção contextual"),
+      logoSvg: z.string().optional().describe("SVG da logo (outra variação) — default: primary.svg do workspace"),
+      colors: z.object({ primary: z.string().optional(), secondary: z.string().optional(), accent: z.string().optional() }).optional().describe("override de cores (default: paleta do brand-state)"),
+      context: z.string().optional().describe("contexto para seleção (papelaria/restaurante/tecnologia/escritório) — default derivado do segmento"),
+      fit: z.enum(["contain", "cover"]).optional().describe("encaixe da logo na superfície (default contain)"),
+      applyColors: z.boolean().optional().describe("aplicar cores nas camadas de cor (default true)"),
+    }),
+    async execute(input) {
+      const files = readFilesRec(root);
+      const identity = resolveBrandIdentity(files);
+      if (!identity && input.action !== "history" && input.action !== "status") {
+        return "mockup: nenhuma identidade persistida no workspace (brand-state.json ausente). Crie/complete a identidade no Branding Studio antes de gerar mockups.";
+      }
+      if (input.action === "history" || input.action === "status") {
+        const current = readMockupResult(root);
+        const history = readMockupHistory(root);
+        const lines: string[] = [];
+        lines.push(`MOCKUP — ${current ? `última execução ${current.status}` : "nenhuma execução ainda"}`);
+        if (current) lines.push(`aplicadas: ${current.applicationsApplied.join(", ") || "—"} | não suportadas: ${current.applicationsUnsupported.map((u) => `${u.applicationId}(${u.reason})`).join(", ") || "—"} | persisted: ${current.persisted}`);
+        lines.push(`histórico: ${history.length} execução/ões`);
+        for (const h of history.slice(-5)) lines.push(`- [${h.createdAt}] ${h.status} · ${h.applicationsApplied.join(", ") || "—"} (${h.versionId})`);
+        return lines.join("\n");
+      }
+      const res = await runBrandMockup({
+        workspaceRoot: root,
+        identity,
+        applications: input.applications,
+        context: input.context ?? mockupContext(env.business?.segment, identity?.name),
+        logoSvgOverride: input.logoSvg,
+        colorsOverride: input.colors,
+        projectId: env.projectId || undefined,
+        store: createArtifactStore(),
+        options: { fit: input.fit, applyColors: input.applyColors, availableApplications: undefined },
+      });
+      const lines: string[] = [];
+      lines.push(`MOCKUP — ${res.status} · persisted=${res.persisted}`);
+      lines.push(`identidade: ${res.identityUsed.name} (${res.identityUsed.primary}/${res.identityUsed.secondary}) · versão ${res.identityUsed.versionId ?? "—"}`);
+      lines.push(`aplicações aplicadas: ${res.applicationsApplied.join(", ") || "—"}`);
+      lines.push(`não suportadas: ${res.applicationsUnsupported.map((u) => `${u.applicationId}(${u.reason})`).join(", ") || "—"}`);
+      lines.push(`PSD gerado: ${res.outputPsd} (${res.outputPsdBytes ? `${res.outputPsdBytes} bytes` : "ausente"})`);
+      lines.push(`previews (rasters reais): ${res.previews.map((p) => `${p.applicationId} (${p.width}x${p.height})`).join(", ") || "—"}`);
+      lines.push(`camadas alteradas: ${res.modifiedLayers.join(", ") || "—"} | cores: ${res.modifiedColors.join(", ") || "—"}`);
+      if (res.reason) lines.push(`motivo: ${res.reason}`);
+      return lines.join("\n");
+    },
+  });
+
+  // MANUAL DA IDENTIDADE (FASE 11): gera um PDF profissional e EXCLUSIVO por
+  // projeto a partir da identidade real (brand-state.json + assets/brand/*.svg) e
+  // dos mockups reais do PSD Master persistidos no Artifact Store. Mesmo agente.
+  const brand_pdf = createTool({
+    name: "brand_pdf",
+    description:
+      "Gera o Manual/PDF da identidade visual a partir dos dados REAIS do Branding Studio e dos mockups reais do PSD Master. " +
+      "Composição, cores, tipografia, hierarquia, elementos gráficos, construção e ritmo derivam da própria identidade (exclusivo por projeto); o PDF usa os SVGs reais e os PNGs de mockups persistidos, sem inventar dados. " +
+      "Ações: `generate` (gera nova versão, persiste no Artifact Store, preserva versões anteriores) e `status` (estado atual do manifesto). " +
+      "Pode regenerar com a identidade atual a qualquer momento ('Refaça o PDF com essa identidade atual') sem usar dados antigos silenciosamente.",
+    inputSchema: z.object({
+      action: z.enum(["generate", "status"]).default("generate"),
+    }),
+    async execute(input) {
+      const files = readFilesRec(root);
+      if (input.action === "status") {
+        const manifest = existsSync(join(root, PDF_RESULT_REL)) ? readFileSync(join(root, PDF_RESULT_REL), "utf8") : "{}";
+        const hist = existsSync(join(root, PDF_HISTORY_REL)) ? readFileSync(join(root, PDF_HISTORY_REL), "utf8") : "[]";
+        let history: unknown[] = []; try { history = JSON.parse(hist); } catch { history = []; }
+        return `MANUAL — ${manifest !== "{}" ? "gerado" : "não gerado"} · execuções: ${history.length}`;
+      }
+      // generate
+      const identity = resolveBrandIdentity(files);
+      if (!identity) return "brand_pdf: nenhuma identidade persistida (brand-state.json ausente). Crie a identidade no Branding Studio antes.";
+      const store = createArtifactStore();
+      const projectId = env.projectId || "default";
+      const mockups = await loadBrandMockups(store, projectId);
+      try {
+        const out = await generateAndPersistBrandPdf({ store, projectId, stateFiles: files, mockups });
+        const manifestFiles = writeBrandPdfManifest(root, out.metadata, { persisted: out.persisted, status: out.persisted ? "ready" : "error", reason: out.persisted ? undefined : "validação falhou" });
+        const lines: string[] = [];
+        lines.push(`MANUAL DA IDENTIDADE — ${out.persisted ? "pronto" : "erro"} · versão ${out.metadata.versionId}`);
+        lines.push(`identidade: ${out.metadata.identityName} · mockups: ${mockups.length} aplicações reais`);
+        lines.push(`páginas: ${out.metadata.pageCount} (${out.pageNames.join(", ")})`);
+        lines.push(`validação: ${out.validation.ok ? "ok" : "PROBLEMAS - " + out.validation.issues.join("; ")}`);
+        lines.push(`PDF persistido: pdf/current.pdf (${out.contentBytes} bytes)`);
+        lines.push(`arquivos de manifesto no workspace: ${Object.keys(manifestFiles).join(", ")}`);
+        return lines.join("\n");
+      } catch (e) {
+        return `brand_pdf: falha ao gerar. ${e instanceof Error ? e.message : String(e)}`;
+      }
+    },
+  });
+
+  // IDENTIDADE COMPLETA (FASE 12): reúne todos os artefatos reais (SVGs,
+  // brand-state, mockups reais do PSD Master, manual PDF real, PSD final real)
+  // em um ZIP profissional, validado e persistido no Artifact Store. Sempre com
+  // allowlist (nunca o Master original, nem .env/secrets/traversal). Mesmo agente.
+  const brand_package = createTool({
+    name: "brand_package",
+    description:
+      "Gera o pacote 'Identidade completa' — ZIP profissional contendo os arquivos REAIS do projeto (SVGs da logo + PNG transparente, brand-state.json, identidade.json, paleta.txt, tipografia.txt, mockups reais do PSD Master, manual-identidade.pdf, master-output.psd final e README). " +
+      "Só entra o que existe/persistido; o Master original nunca é distribuído; sem arquivos inventados, sem .env/secrets, sem path traversal. " +
+      "Ações: `generate` (gera nova versão, persiste em package/current.zip + package/versions/<id>.zip, preserva anteriores) e `status` (estado atual). " +
+      "Regenera com a identidade/mockups/PDF atuais quando solicitado ('Prepare a identidade completa para download' / 'Gere novamente o pacote atualizado').",
+    inputSchema: z.object({ action: z.enum(["generate", "status"]).default("generate") }),
+    async execute(input) {
+      const files = readFilesRec(root);
+      if (input.action === "status") {
+        const manifest = existsSync(join(root, PACKAGE_RESULT_REL)) ? readFileSync(join(root, PACKAGE_RESULT_REL), "utf8") : "{}";
+        const hist = existsSync(join(root, PACKAGE_HISTORY_REL)) ? readFileSync(join(root, PACKAGE_HISTORY_REL), "utf8") : "[]";
+        let history: unknown[] = []; try { history = JSON.parse(hist); } catch { history = []; }
+        return `PACOTE — ${manifest !== "{}" ? "pronto" : "não gerado"} · versões: ${history.length}`;
+      }
+      const identity = resolveBrandIdentity(files);
+      if (!identity) return "brand_package: nenhuma identidade persistida (brand-state.json ausente). Crie a identidade antes.";
+      const store = createArtifactStore();
+      const projectId = env.projectId || "default";
+      try {
+        const r = await generateAndPersistBrandPackage({ stateFiles: files, projectId, store });
+        const manifestFiles = writeBrandPackageManifest(root, r.manifest, { persisted: r.persisted, zipSizeBytes: r.zipSizeBytes, status: r.persisted ? "ready" : "error", reason: r.persisted ? undefined : r.validation.issues.join("; ") });
+        const lines: string[] = [];
+        lines.push(`IDENTIDADE COMPLETA — ${r.persisted ? "pronto" : "erro"} · versão ${r.manifest.versionId}`);
+        lines.push(`arquivos: ${r.manifest.fileCount} · ZIP: ${Math.round(r.zipSizeBytes / 1024)} KB`);
+        lines.push(`validação: ${r.validation.ok ? "ok" : "PROBLEMAS - " + r.validation.issues.join("; ")}`);
+        lines.push(`inclui: ${r.manifest.files.slice(0, 6).map((f) => f.path.split("/").pop()).join(", ")}…`);
+        lines.push(`persistido: package/current.zip` + (Object.keys(manifestFiles).length ? ` · manifesto: ${Object.keys(manifestFiles).join(", ")}` : ""));
+        return lines.join("\n");
+      } catch (e) {
+        return `brand_package: falha ao gerar. ${e instanceof Error ? e.message : String(e)}`;
+      }
+    },
+  });
+
+  // VÍDEO PROFISSIONAL DO SITE (FASE 13): analisa o site real (DOM), cria um
+  // roteiro visual, captura cenas reais via Playwright, renderiza um vídeo real
+  // (MP4 quando FFmpeg disponível; WebM nativo caso contrário), valida, PERSISTE
+  // no ArtifactStore e escreve manifesto para a UI. Mesmo agente (sem outro agente).
+  const site_video = createTool({
+    name: "site_video",
+    description:
+      "Gera um vídeo profissional (~40-50s, 16:9) do site REAL do projeto. Analisa o site (DOM/Playwright), monta um roteiro visual com distribuição variável (impacto inicial → proposta → serviços/diferenciais → seções → CTA), captura cenas reais com movimento suave, renderiza e PERSISTE no Artifact Store. " +
+      "Ações: `generate` (gera nova versão, preserva anteriores), `status` e `history`. " +
+      "Vídeo real do site público, sem conteúdo inventado, sem secrets. 'Crie um vídeo profissional desse site' / 'Gere novamente o vídeo'.",
+    inputSchema: z.object({ action: z.enum(["generate", "status", "history"]).default("generate") }),
+    async execute(input) {
+      const files = readFilesRec(root);
+      if (input.action === "status" || input.action === "history") {
+        const manifest = existsSync(join(root, VIDEO_RESULT_REL)) ? readFileSync(join(root, VIDEO_RESULT_REL), "utf8") : "{}";
+        const hist = existsSync(join(root, VIDEO_HISTORY_REL)) ? readFileSync(join(root, VIDEO_HISTORY_REL), "utf8") : "[]";
+        let history: unknown[] = []; try { history = JSON.parse(hist); } catch { history = []; }
+        return `VÍDEO — ${manifest !== "{}" ? "pronto" : "não gerado"} · execuções: ${history.length}`;
+      }
+      if (!existsSync(join(root, "index.html"))) return "site_video: nenhum site (index.html) no workspace. Gere/edite o site antes de criar o vídeo.";
+      const store = createArtifactStore();
+      const projectId = env.projectId || "default";
+      try {
+        const res = await generateAndPersistSiteVideo({ workspaceRoot: root, projectId, store, target: 45 });
+        if (!res.ok || !res.manifest) {
+          return `site_video: falha na geração. ${res.reason ?? "sem motivo"}`;
+        }
+        const manifestFiles = writeSiteVideoManifest(root, res.manifest);
+        const lines: string[] = [];
+        lines.push(`VÍDEO PROFISSIONAL — ${res.manifest.validationOk ? "pronto" : "erro"} · versão ${res.manifest.versionId}`);
+        lines.push(`container: ${res.manifest.container} · ${res.manifest.width}×${res.manifest.height} (16:9) · ${res.manifest.duration}s · ${Math.round(res.manifest.fileSize / 1024)} KB`);
+        lines.push(`cenas: ${res.manifest.scenes.length} · seções de origem: ${res.manifest.sourceSections.join(", ") || "—"}`);
+        lines.push(`validação: ${res.manifest.validationOk ? "ok" : "PROBLEMAS"}`);
+        lines.push(`persistido: ${res.manifest.videoRelPath}` + (Object.keys(manifestFiles).length ? ` · manifesto: ${Object.keys(manifestFiles).join(", ")}` : ""));
+        return lines.join("\n");
+      } catch (e) {
+        return `site_video: falha ao gerar. ${e instanceof Error ? e.message : String(e)}`;
+      }
+    },
+  });
+
+  return [list, read, write, edit, remove, context, imagePlan, branding, mockup, brand_pdf, brand_package, site_video];
+}
+
+function readFilesRec(root: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name === ".git") continue;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.isFile() && /\.(html|css|js|json)$/i.test(e.name)) {
+        try { out[relative(root, full).split(sep).join("/")] = readFileSync(full, "utf8"); } catch { /* noop */ }
+      }
+    }
+  };
+  if (existsSync(root)) walk(root);
+  return out;
 }
 
 export type SiteToolSet = ReturnType<typeof buildSiteTools>;

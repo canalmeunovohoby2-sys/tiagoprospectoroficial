@@ -18,6 +18,8 @@ import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js
 import { materializeAttachments, type ChatAttachment } from "./attachments.js";
 import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
 import { trimConversationWindow } from "./conversation-window.js";
+import { createArtifactStore } from "./artifact-store.js";
+import { serveProjectArtifact } from "./artifacts-api.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -151,6 +153,11 @@ function sendDenied(res: ServerResponse, message: string, code = 403): void {
 function send(res: ServerResponse, code: number, body: unknown): void {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(body));
+}
+
+function sendBinary(res: ServerResponse, code: number, contentType: string, bytes: Buffer): void {
+  res.writeHead(code, { "Content-Type": contentType, "Content-Length": bytes.length });
+  res.end(bytes);
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -378,6 +385,7 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
   return new ProspectorSiteAgent({
     workspaceRoot: root,
     business,
+    projectId: projectId || undefined,
     apiKey,
     baseUrl,
     modelId: resolved.modelId,
@@ -722,6 +730,21 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           warning: exec.warning ?? null,
         });
         return;
+      }
+
+      if (url.pathname.startsWith("/artifacts/branding/") && req.method === "GET") {
+          const rest = url.pathname.slice("/artifacts/branding/".length);
+          const slash = rest.indexOf("/");
+          const projectId = slash === -1 ? rest : rest.slice(0, slash);
+          const rel = slash === -1 ? "" : rest.slice(slash + 1);
+          const identity = await resolveIdentity(req.headers.authorization, projectId || undefined);
+          if (!identity) { sendDenied(res, "Autenticação necessária para acessar artefatos.", 401); return; }
+          if (!projectId || identity.pid && identity.pid !== projectId) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
+          const store = createArtifactStore();
+          const out = await serveProjectArtifact(store, projectId, rel);
+          if (!out.ok) { send(res, out.status, { error: out.content }); return; }
+          sendBinary(res, out.status, out.contentType ?? "application/octet-stream", out.bytes!);
+          return;
       }
 
       if (url.pathname === "/run" && req.method === "POST") {

@@ -1,0 +1,304 @@
+{
+  "source": "assets/mockups/master/mockup-master.psd.psd",
+  "masterSha": "ae6516c23059cddccc81090cb7d330da61f88990ab02d803e2e1443cf47d58c2",
+  "surfaces": {
+    "A4": {
+      "id": "A4",
+      "path": "Mockup/Designs/A4",
+      "kind": "plain",
+      "bounds": {
+        "left": 1680,
+        "top": 1203,
+        "width": 768,
+        "height": 1081
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    },
+    "A5": {
+      "id": "A5",
+      "path": "Mockup/Designs/A5",
+      "kind": "plain",
+      "bounds": {
+        "left": 1248,
+        "top": 2796,
+        "width": 766,
+        "height": 544
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    },
+    "DL": {
+      "id": "DL",
+      "path": "Mockup/Designs/DL",
+      "kind": "plain",
+      "bounds": {
+        "left": 2828,
+        "top": 1839,
+        "width": 368,
+        "height": 763
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    },
+    "BC": {
+      "id": "BC",
+      "path": "Mockup/Designs/BC",
+      "kind": "plain",
+      "bounds": {
+        "left": 1275,
+        "top": 1207,
+        "width": 311,
+        "height": 204
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    },
+    "Keychain": {
+      "id": "Keychain",
+      "path": "Mockup/Designs/Keychain",
+      "kind": "plain",
+      "bounds": {
+        "left": 2535,
+        "top": 1936,
+        "width": 192,
+        "height": 341
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    },
+    "Brochure": {
+      "id": "Brochure",
+      "path": "Mockup/Designs/Brochure",
+      "kind": "plain",
+      "bounds": {
+        "left": 1206,
+        "top": 1938,
+        "width": 369,
+        "height": 765
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    },
+    "Badge": {
+      "id": "Badge",
+      "path": "Mockup/Designs/Badge",
+      "kind": "plain",
+      "bounds": {
+        "left": 1714,
+        "top": 631,
+        "width": 289,
+        "height": 452
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    },
+    "Notepad": {
+      "id": "Notepad",
+      "path": null,
+      "kind": "unresolved",
+      "bounds": null,
+      "state": "unresolved",
+      "source": "none",
+      "raster": false,
+      "placed": false
+    },
+    "Box top": {
+      "id": "Box top",
+      "path": "Mockup/Box/Box top",
+      "kind": "plain",
+      "bounds": {
+        "left": 1694,
+        "top": 2358,
+        "width": 335,
+        "height": 347
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    },
+    "Mug": {
+      "id": "Mug",
+      "path": null,
+      "kind": "unresolved",
+      "bounds": null,
+      "state": "unresolved",
+      "source": "none",
+      "raster": false,
+      "placed": false
+    },
+    "iPhone": {
+      "id": "iPhone",
+      "path": "Mockup/Screens/iPhone",
+      "kind": "plain",
+      "bounds": {
+        "left": 2166,
+        "top": 537,
+        "width": 265,
+        "height": 567
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    },
+    "Tablet": {
+      "id": "Tablet",
+      "path": "Mockup/Screens/Tablet",
+      "kind": "plain",
+      "bounds": {
+        "left": 3344,
+        "top": 1976,
+        "width": 799,
+        "height": 603
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": true,
+      "vectorFill": null
+    }
+  },
+  "colors": {
+    "Color 1": {
+      "id": "Color 1",
+      "path": "Color/Color 1",
+      "kind": "plain",
+      "bounds": {
+        "left": 820,
+        "top": 519,
+        "width": 1073,
+        "height": 1768
+      },
+      "state": "resolved_vector_color",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": false,
+      "vectorFill": {
+        "r": 47.0000009983778,
+        "g": 47.0000009983778,
+        "b": 47.0000009983778
+      }
+    },
+    "Color 2": {
+      "id": "Color 2",
+      "path": "Color/Color 2",
+      "kind": "plain",
+      "bounds": {
+        "left": 1695,
+        "top": 293,
+        "width": 953,
+        "height": 3130
+      },
+      "state": "resolved_vector_color",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": false,
+      "vectorFill": {
+        "r": 186.0000041127205,
+        "g": 11.673152223229408,
+        "b": 18.789883442223072
+      }
+    },
+    "Colors": {
+      "id": "Colors",
+      "path": "Mockup/Color /Colors",
+      "kind": "plain",
+      "bounds": {
+        "left": 820,
+        "top": 293,
+        "width": 2126,
+        "height": 3130
+      },
+      "state": "resolved_raster",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": false,
+      "vectorFill": null
+    },
+    "Box": {
+      "id": "Box",
+      "path": "Color/Box",
+      "kind": "plain",
+      "bounds": {
+        "left": 1696,
+        "top": 2358,
+        "width": 330,
+        "height": 346
+      },
+      "state": "resolved_vector_color",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": false,
+      "vectorFill": {
+        "r": 255,
+        "g": 255,
+        "b": 255
+      }
+    },
+    "Mug": {
+      "id": "Mug",
+      "path": "Color/Mug",
+      "kind": "plain",
+      "bounds": {
+        "left": 2532,
+        "top": 1198,
+        "width": 414,
+        "height": 358
+      },
+      "state": "resolved_vector_color",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": false,
+      "vectorFill": {
+        "r": 242.00000077486038,
+        "g": 15.186770483851433,
+        "b": 23.92996072769165
+      }
+    },
+    "Metal": {
+      "id": "Metal",
+      "path": "Color/Metal",
+      "kind": "plain",
+      "bounds": {
+        "left": 860,
+        "top": 491,
+        "width": 1812,
+        "height": 1783
+      },
+      "state": "resolved_vector_color",
+      "source": "ag-psd:layer.top/left/right/bottom",
+      "raster": false,
+      "placed": false,
+      "vectorFill": {
+        "r": 216.00000232458115,
+        "g": 216.00000232458115,
+        "b": 216.00000232458115
+      }
+    }
+  }
+}

@@ -53,6 +53,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 
 COPY package*.json ./
 RUN npm ci --ignore-scripts
+# ffmpeg-static baixa o binário no install script, que o --ignore-scripts acima pula:
+# garante o binário compilado para gerar o MP4 (FASE 14) em produção.
+RUN node node_modules/ffmpeg-static/install.js
 
 COPY . .
 

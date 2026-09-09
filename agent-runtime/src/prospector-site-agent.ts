@@ -10,6 +10,7 @@ import { BrowserSession } from "./browser-session.js";
 import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
 import { decideFinishBlock, isBugReport, replyAsksForCode, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
+import { analyzeVisualEvidence } from "./visual-analysis.js";
 import { hasImageReferenceChange, requestsImageSwap } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
 import { computeWorkEvidence, type WorkEventLike } from "./work-evidence.js";
@@ -78,6 +79,7 @@ export interface AgentRunOutcome {
 export interface ProspectorAgentOptions {
   workspaceRoot: string;
   business: BusinessContext;
+  projectId?: string;
   apiKey?: string;
   baseUrl?: string;
   modelId?: string;
@@ -121,7 +123,7 @@ export class ProspectorSiteAgent {
 
   constructor(options: ProspectorAgentOptions) {
     this.options = options;
-    const tools = buildSiteTools({ workspaceRoot: options.workspaceRoot, business: options.business });
+    const tools = buildSiteTools({ workspaceRoot: options.workspaceRoot, business: options.business, projectId: options.projectId });
 
     const complete = createTool({
       name: "finish_task",
@@ -152,6 +154,16 @@ export class ProspectorSiteAgent {
           options.business?.segment && `Segmento: ${options.business.segment}`,
           options.business?.city && `Cidade: ${options.business.city}/${options.business.state}`,
         ].filter(Boolean).join(" · "),
+        // Analisador PROVIDER-AGNOSTIC (FASE 4): usa o provider/modelo do USUÁRIO.
+        // NUNCA usa Gemini como fallback; nunca afirma análise visual que não ocorreu.
+        visualAnalyze: (ev, prompt) => analyzeVisualEvidence({
+          prompt,
+          evidence: ev,
+          provider: options.providerId,
+          model: options.modelId,
+          apiKey: options.apiKey,
+          baseUrl: options.baseUrl,
+        }),
       });
     }
 

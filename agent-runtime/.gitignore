@@ -5,3 +5,15 @@ dist/
 
 *.png
 prospector-shots/
+
+# PSDs — nunca commitar no Git (o master tem 142MB e excede o limite de 100MB do GitHub).
+# O master deve ser provisionado em produção via env PROSPECTOR_MOCKUP_MASTER (ex.: baixado
+# de object storage) ou copiado no build; o adapter resolve por esse env quando presente.
+assets/mockups/**/*.psd
+
+# Armazenamento persistente de artefatos (branding/mockup) — fora do git
+data/
+
+# Artefatos temporários/scratch de desenvolvimento
+.tmp-*/
+tmp-*.mjs
