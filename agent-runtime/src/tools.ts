@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync
 import { join, dirname, relative, sep } from "node:path";
 import { resolve } from "node:path";
 import { classifyTask } from "./visual-task.js";
+import { evaluateLogoQuality } from "./branding.js";
 import { applyBrandCmd, loadBrandStateFromFiles, createBrandStudio, brandSnapshot, type BrandCmd, type BrandStudioSnapshot } from "./branding-state.js";
 import { resolveBrandIdentity, runBrandMockup, mockupContext, readMockupResult, readMockupHistory } from "./mockup-integration.js";
 import { createArtifactStore } from "./artifact-store.js";
@@ -241,6 +242,10 @@ export function buildSiteTools(env: ToolEnv) {
       lines.push(`Selecionado: ${snapshot.selectedConceptId ?? "—"} | Versão atual: ${snapshot.currentVersionId ?? "—"} | Anterior: ${snapshot.previousVersionId ?? "—"}`);
       lines.push(`Paleta: ${snapshot.palette.primary} | Tipografia: ${snapshot.typography.heading} ${snapshot.typography.weights}`);
       lines.push(`Construção: ${snapshot.construction.constructionLogic}`);
+      // GATE DE QUALIDADE da marca (anti-genérica): só aceita como final o que passar.
+      const chosen = snapshot.concepts.find((c) => c.id === snapshot.selectedConceptId);
+      const q = chosen && snapshot.variants?.primary ? evaluateLogoQuality(snapshot.variants.primary, { type: chosen.type }) : null;
+      if (q) lines.push(`Crítica de marca (gate): ${q.ok ? "APROVADA" : "REVER, refine antes de finalizar"} · score ${q.score.toFixed(2)}${q.critiques.length ? " · " + q.critiques.join("; ") : ""}`);
       return lines.join("\n");
     },
   });

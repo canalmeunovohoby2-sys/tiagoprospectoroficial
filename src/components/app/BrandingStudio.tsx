@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Sparkles, RotateCcw, Send, ShieldCheck, ImagePlus, Loader2, AlertTriangle, FileText, Download, Eye, Archive, PlayCircle, Film } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,148 @@ function statusBadge(c: BrandViewConcept) {
   if (c.status === "selecionado") return <Badge variant="default">Selecionado</Badge>;
   if (c.status === "rejeitado") return <Badge variant="outline" className="text-muted-foreground line-through">Rejeitado</Badge>;
   return <Badge variant="outline">Disponível</Badge>;
+}
+
+function DeliveryRow(props: { icon: ReactNode; title: string; status: string; statusTone?: string; onAction?: () => void; loading?: boolean; actionLabel: string; ready?: boolean; readyContent?: ReactNode; help?: string; error?: string }) {
+  return (
+    <div className="rounded-xl border border-border/60 p-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          {props.icon}
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">{props.title}</span>
+            {props.status && <Badge variant={(props.statusTone as "default" | "outline" | "secondary" | "destructive") ?? "outline"}>{props.status}</Badge>}
+          </div>
+        </div>
+        <Button size="sm" variant={props.ready ? "outline" : "default"} disabled={props.loading} onClick={props.onAction}>
+          {props.loading ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null}
+          {props.actionLabel}
+        </Button>
+      </div>
+      {props.help && <p className="text-xs text-muted-foreground mt-1">{props.help}</p>}
+      {props.error && <p className="text-xs text-destructive mt-1">{props.error}</p>}
+      {props.ready && props.readyContent && <div className="mt-2">{props.readyContent}</div>}
+    </div>
+  );
+}
+
+function renderHistoricRow(view: BrandView, onRevert: () => void) {
+  return (
+    <div className="rounded-xl border border-border/60 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium">Histórico</span>
+        <Button size="sm" variant="outline" onClick={onRevert} disabled={!view.hasBrand || view.versions.length < 2}><RotateCcw className="h-3.5 w-3.5 mr-1" /> Voltar versão anterior</Button>
+      </div>
+      {view.versions.length > 0 && (
+        <ol className="mt-2 space-y-1">
+          {view.versions.map((v) => (
+            <li key={v.id} className={`flex items-center gap-2 text-xs ${v.current ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-primary/10 text-[10px]">{v.id}</span>
+              {v.label}{v.current && <Badge variant="default" className="text-[9px]">atual</Badge>}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
+function renderMockupRow(mockup: MockupView | undefined, loading: boolean | undefined, onGen: (() => void) | undefined, base?: string, pid?: string) {
+  return (
+    <DeliveryRow
+      icon={<ImagePlus className="h-4 w-4 text-primary" />}
+      title="Mockups (PSD Master real)"
+      status={mockup?.isReady ? "Pronto" : mockup ? String(mockup.status) : "Não gerado"}
+      statusTone={mockup?.isReady ? "default" : "outline"}
+      onAction={onGen}
+      loading={loading}
+      ready={mockup?.isReady}
+      actionLabel={mockup?.isReady ? "Gerar novamente" : "Gerar mockups"}
+      help="Aplica a identidade aprovada no PSD Master e exporta os rasters reais das camadas."
+      error={mockup && !mockup.isReady ? `A última execução não foi concluída (${mockup.status}): sem resultado falso.` : undefined}
+      readyContent={mockup?.previews.length ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+          {mockup.previews.map((p) => {
+            const src = (base && pid) ? mockupPreviewUrl(base, pid, p.applicationId) : p.dataUrl;
+            return (
+              <figure key={p.applicationId} className="rounded-lg border border-border/60 overflow-hidden">
+                <img src={src} alt={`Mockup ${p.applicationId}`} className="w-full h-24 object-contain bg-card/60" />
+                <figcaption className="text-[10px] text-center text-muted-foreground py-0.5">{p.applicationId}</figcaption>
+              </figure>
+            );
+          })}
+        </div>
+      ) : undefined}
+    />
+  );
+}
+
+function renderPdfRow(pdf: BrandPdfView | undefined, loading: boolean | undefined, onGen: (() => void) | undefined) {
+  return (
+    <DeliveryRow
+      icon={<FileText className="h-4 w-4 text-primary" />}
+      title="Manual da Identidade (PDF)"
+      status={pdf?.state === "ready" ? "Pronto" : pdf?.state === "error" ? "Erro" : "Não gerado"}
+      statusTone={pdf?.state === "ready" ? "default" : pdf?.state === "error" ? "destructive" : "outline"}
+      onAction={onGen} loading={loading} ready={pdf?.state === "ready"}
+      actionLabel={pdf?.state === "ready" ? "Gerar novamente" : "Gerar Proposta de PDF"}
+      help="PDF exclusivo gerado a partir da identidade real e dos mockups reais persistidos."
+      error={pdf?.state === "error" ? `A última geração falhou ou não foi validada${pdf.reason ? ` (${pdf.reason})` : ""}. Sem resultado falso.` : undefined}
+      readyContent={pdf?.state === "ready" && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Versão <strong>{pdf.versionId}</strong> · {pdf.pageCount} páginas · {pdf.createdAt ? new Date(pdf.createdAt).toLocaleString() : ""}</span>
+          {pdf.pdfUrl && <Button size="sm" variant="outline" asChild><a href={pdf.pdfUrl} target="_blank" rel="noreferrer"><Eye className="h-3.5 w-3.5 mr-1" /> Visualizar</a></Button>}
+          {pdf.pdfUrl && <Button size="sm" variant="outline" asChild><a href={pdf.pdfUrl} download><Download className="h-3.5 w-3.5 mr-1" /> Baixar</a></Button>}
+        </div>
+      )}
+    />
+  );
+}
+
+function renderPackageRow(pkg: BrandPackageView | undefined, loading: boolean | undefined, onGen: (() => void) | undefined) {
+  return (
+    <DeliveryRow
+      icon={<Archive className="h-4 w-4 text-primary" />}
+      title="Identidade completa (ZIP)"
+      status={pkg?.state === "ready" ? "Pronto" : pkg?.state === "error" ? "Erro" : "Não gerado"}
+      statusTone={pkg?.state === "ready" ? "default" : pkg?.state === "error" ? "destructive" : "outline"}
+      onAction={onGen} loading={loading} ready={pkg?.state === "ready"}
+      actionLabel={pkg?.state === "ready" ? "Gerar novamente" : "Baixar identidade completa"}
+      help="Reúne identidade real, mockups reais, manual PDF e PSD final em um ZIP."
+      error={pkg?.state === "error" ? `A geração falhou ou o pacote não foi validado${pkg.reason ? ` (${pkg.reason})` : ""}.` : undefined}
+      readyContent={pkg?.state === "ready" && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Versão <strong>{pkg.versionId}</strong> · {pkg.fileCount} arquivos · {pkg.zipSizeBytes ? Math.round(pkg.zipSizeBytes / 1024) : "—"} KB</span>
+          {pkg.zipUrl && <Button size="sm" variant="outline" asChild><a href={pkg.zipUrl} download><Download className="h-3.5 w-3.5 mr-1" /> Baixar ZIP</a></Button>}
+        </div>
+      )}
+    />
+  );
+}
+
+function renderVideoRow(video: SiteVideoView | undefined, loading: boolean | undefined, onGen: (() => void) | undefined) {
+  return (
+    <DeliveryRow
+      icon={<Film className="h-4 w-4 text-primary" />}
+      title="Vídeo de apresentação"
+      status={video?.state === "ready" ? "Pronto" : video?.state === "error" ? "Erro" : "Não gerado"}
+      statusTone={video?.state === "ready" ? "default" : video?.state === "error" ? "destructive" : "outline"}
+      onAction={onGen} loading={loading} ready={video?.state === "ready"}
+      actionLabel={video?.state === "ready" ? "Gerar novamente" : "Gerar vídeo"}
+      help="Vídeo real (~40–50s, 16:9) do site, com análise, roteiro e captura reais."
+      error={video?.state === "error" ? `A última geração falhou ou o vídeo não foi validado${video.reason ? ` (${video.reason})` : ""}.` : undefined}
+      readyContent={video?.state === "ready" && (
+        <div className="space-y-2">
+          <video className="w-full rounded-lg border border-border/60 max-h-56" controls poster={video.posterUrl ?? undefined} src={video.videoUrl ?? undefined} />
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">Versão <strong>{video.versionId}</strong> · {video.duration ?? "—"}s · {video.width ?? "—"}×{video.height ?? "—"} · {video.sceneCount ?? "—"} cenas</span>
+            {video.videoUrl && <Button size="sm" variant="outline" asChild><a href={video.videoUrl} target="_blank" rel="noreferrer"><PlayCircle className="h-3.5 w-3.5 mr-1" /> Assistir</a></Button>}
+            {video.videoUrl && <Button size="sm" variant="outline" asChild><a href={video.videoUrl} download><Download className="h-3.5 w-3.5 mr-1" /> Baixar vídeo</a></Button>}
+          </div>
+        </div>
+      )}
+    />
+  );
 }
 
 export function BrandingStudio({ view, messages, loading, error, empty, mockup, brandPdf, brandPackage, siteVideo, onGenerateMockup, onGeneratePdf, onGeneratePackage, onGenerateVideo, onSelect, onReject, onRevert, onSend, mockupBaseUrl, mockupProjectId }: BrandingStudioProps) {
@@ -132,180 +274,29 @@ export function BrandingStudio({ view, messages, loading, error, empty, mockup, 
                 </span>
               ))}
             </div>
-            <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
-              <p><strong>Tipografia:</strong> {view.typography.heading} {view.typography.weights} · {view.typography.body} (hierarquia: {view.identity.hierarchy || "—"})</p>
-              {view.identity.photoDirection && <p><strong>Direção fotográfica:</strong> {view.identity.photoDirection}</p>}
-              {view.identity.applicationRules && <p><strong>Regras:</strong> {view.identity.applicationRules}</p>}
+            <div className="mt-2 text-[11px] text-muted-foreground">
+              <p><strong>Tipografia:</strong> {view.typography.heading} {view.typography.weights} · {view.typography.body}</p>
+              {view.identity.photoDirection && <p className="truncate"><strong>Direção:</strong> {view.identity.photoDirection}</p>}
             </div>
           </Card>
-
-          {view.versions.length > 0 && (
-            <Card className="p-4">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground mb-2">Histórico</p>
-              <ol className="space-y-1">
-                {view.versions.map((v) => (
-                  <li key={v.id} className={`flex items-center gap-2 text-xs ${v.current ? "text-foreground font-medium" : "text-muted-foreground"}`}>
-                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-primary/10 text-[10px]">{v.id}</span>
-                    {v.label}{v.current && <Badge variant="default" className="text-[9px]">atual</Badge>}
-                  </li>
-                ))}
-              </ol>
-            </Card>
-          )}
         </div>
       </div>
 
-      {/* MOCKUPS (FASE 10.10) */}
-      <Card className="p-4 border-dashed border-border/70">
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <ImagePlus className="h-4 w-4 text-primary" />
-            <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Mockups (PSD Master real)</p>
-            {mockup?.isReady && <Badge variant="default">pronto</Badge>}
-            {mockup && !mockup.isReady && <Badge variant="outline">{mockup.status}</Badge>}
+      {/* ENTREGÁVEIS — secundário/discreto (colapsado por padrão para não poluir) */}
+      <Card className="p-2">
+        <details className="group">
+          <summary className="flex items-center justify-between cursor-pointer select-none px-2 py-1">
+            <span className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground"><ImagePlus className="h-3.5 w-3.5 text-primary" /> Entregáveis &amp; mais ações</span>
+            <span className="text-[10px] text-muted-foreground group-open:rotate-180 transition-transform">▾</span>
+          </summary>
+          <div className="mt-2 space-y-2 px-1">
+            {renderHistoricRow(view, onRevert)}
+            {renderMockupRow(mockup, loading, onGenerateMockup, mockupBaseUrl, mockupProjectId)}
+            {renderPdfRow(brandPdf, loading, onGeneratePdf)}
+            {renderPackageRow(brandPackage, loading, onGeneratePackage)}
+            {renderVideoRow(siteVideo, loading, onGenerateVideo)}
           </div>
-          <Button size="sm" variant={mockup?.isReady ? "outline" : "default"} disabled={loading} onClick={onGenerateMockup}>
-            {loading ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5 mr-1" />}
-            {mockup?.isReady ? "Gerar novamente" : "Gerar mockups"}
-          </Button>
-        </div>
-
-        {!mockup?.hasMockup ? (
-          <p className="text-xs text-muted-foreground">
-            A identidade está pronta para virar mockup. Clique em <strong>Gerar mockups</strong> para aplicar a identidade aprovada
-            no PSD Master (aplicações contextuais) e exportar os rasters reais.
-          </p>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-              <span><strong>Identidade:</strong> {mockup.identityName || "—"} {mockup.versionId && <Badge variant="secondary" className="text-[9px]">v{mockup.versionId}</Badge>}</span>
-              <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-full border" style={{ backgroundColor: mockup.primary }} /> primary</span>
-              <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded-full border" style={{ backgroundColor: mockup.secondary }} /> secondary</span>
-            </div>
-
-            {mockup.previews.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {mockup.previews.map((p) => {
-                  const src = (mockupBaseUrl && mockupProjectId) ? mockupPreviewUrl(mockupBaseUrl, mockupProjectId, p.applicationId) : p.dataUrl;
-                  return (
-                    <figure key={p.applicationId} className="rounded-lg border border-border/60 overflow-hidden">
-                      <img src={src} alt={`Mockup ${p.applicationId}`} className="w-full h-32 object-contain bg-card/60" />
-                      <figcaption className="text-[10px] text-center text-muted-foreground py-1">{p.applicationId}</figcaption>
-                    </figure>
-                  );
-                })}
-              </div>
-            )}
-            <p className="text-[10px] text-muted-foreground">Previews = rasters reais das camadas modificadas (exportLayerRasterPng). Não é preview embutido do PSD.</p>
-
-            {mockup.applicationsUnsupported.length > 0 && (
-              <div className="flex items-center gap-1.5 text-xs text-amber-600">
-                <AlertTriangle className="h-3.5 w-3.5" />
-                <span>Não suportadas: {mockup.applicationsUnsupported.map((u) => `${u.applicationId} (${u.reason})`).join(", ")}</span>
-              </div>
-            )}
-            {!mockup.isReady && (
-              <p className="text-xs text-destructive">A última execução não foi concluída com sucesso ({mockup.status}): sem resultado falso.</p>
-            )}
-          </div>
-        )}
-      </Card>
-
-      {/* MANUAL DA IDENTIDADE (FASE 11) */}
-      <Card className="p-4 border-dashed border-border/70">
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <FileText className="h-4 w-4 text-primary" />
-            <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Manual da Identidade (PDF)</p>
-            {brandPdf?.state === "ready" && <Badge variant="default">Pronto</Badge>}
-            {brandPdf?.state === "error" && <Badge variant="outline">Erro</Badge>}
-            {brandPdf?.state === "none" && <Badge variant="outline">Não gerado</Badge>}
-          </div>
-          <Button size="sm" variant={brandPdf?.state === "ready" ? "outline" : "default"} disabled={loading} onClick={onGeneratePdf}>
-            {loading ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <FileText className="h-3.5 w-3.5 mr-1" />}
-            {brandPdf?.state === "ready" ? "Gerar novamente" : "Gerar manual"}
-          </Button>
-        </div>
-
-        {brandPdf?.state === "none" && (
-          <p className="text-xs text-muted-foreground">O PDF será gerado a partir da identidade real e dos mockups reais persistidos. Clique em <strong>Gerar manual</strong>.</p>
-        )}
-        {brandPdf?.state === "error" && (
-          <p className="text-xs text-destructive">A última geração falhou ou não foi validada{brandPdf.reason ? ` (${brandPdf.reason})` : ""}. Sem resultado falso.</p>
-        )}
-        {brandPdf?.state === "ready" && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">Versão <strong>{brandPdf.versionId}</strong> · {brandPdf.pageCount} páginas · {brandPdf.createdAt ? new Date(brandPdf.createdAt).toLocaleString() : ""}</span>
-            {brandPdf.pdfUrl && (
-              <>
-                <Button size="sm" variant="outline" asChild><a href={brandPdf.pdfUrl} target="_blank" rel="noreferrer"><Eye className="h-3.5 w-3.5 mr-1" /> Visualizar</a></Button>
-                <Button size="sm" variant="outline" asChild><a href={brandPdf.pdfUrl} download><Download className="h-3.5 w-3.5 mr-1" /> Baixar</a></Button>
-              </>
-            )}
-          </div>
-        )}
-      </Card>
-
-      {/* IDENTIDADE COMPLETA (FASE 12) */}
-      <Card className="p-4 border-dashed border-border/70">
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <Archive className="h-4 w-4 text-primary" />
-            <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Identidade completa (ZIP)</p>
-            {brandPackage?.state === "ready" && <Badge variant="default">Pronto</Badge>}
-            {brandPackage?.state === "error" && <Badge variant="outline">Erro</Badge>}
-            {brandPackage?.state === "none" && <Badge variant="outline">Não gerado</Badge>}
-          </div>
-          <Button size="sm" variant={brandPackage?.state === "ready" ? "outline" : "default"} disabled={loading} onClick={onGeneratePackage}>
-            {loading ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Archive className="h-3.5 w-3.5 mr-1" />}
-            {brandPackage?.state === "ready" ? "Gerar novamente" : "Baixar identidade completa"}
-          </Button>
-        </div>
-
-        {brandPackage?.state === "none" && <p className="text-xs text-muted-foreground">Reúne a identidade real, mockups reais, manual PDF e PSD final em um ZIP profissional.</p>}
-        {brandPackage?.state === "error" && <p className="text-xs text-destructive">A geração falhou ou o pacote não foi validado{brandPackage.reason ? ` (${brandPackage.reason})` : ""}. Sem resultado falso.</p>}
-        {brandPackage?.state === "ready" && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">Versão <strong>{brandPackage.versionId}</strong> · {brandPackage.fileCount} arquivos · {brandPackage.zipSizeBytes ? Math.round(brandPackage.zipSizeBytes / 1024) : "—"} KB · {brandPackage.createdAt ? new Date(brandPackage.createdAt).toLocaleString() : ""}</span>
-            {brandPackage.zipUrl && (
-              <Button size="sm" variant="outline" asChild><a href={brandPackage.zipUrl} download><Download className="h-3.5 w-3.5 mr-1" /> Baixar ZIP</a></Button>
-            )}
-          </div>
-        )}
-      </Card>
-
-      {/* VÍDEO DE APRESENTAÇÃO (FASE 13) */}
-      <Card className="p-4 border-dashed border-border/70">
-        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <Film className="h-4 w-4 text-primary" />
-            <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Vídeo de apresentação</p>
-            {siteVideo?.state === "ready" && <Badge variant="default">Pronto</Badge>}
-            {siteVideo?.state === "error" && <Badge variant="outline">Erro</Badge>}
-            {siteVideo?.state === "none" && <Badge variant="outline">Não gerado</Badge>}
-          </div>
-          <Button size="sm" variant={siteVideo?.state === "ready" ? "outline" : "default"} disabled={loading} onClick={onGenerateVideo}>
-            {loading ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <PlayCircle className="h-3.5 w-3.5 mr-1" />}
-            {siteVideo?.state === "ready" ? "Gerar novamente" : "Gerar vídeo"}
-          </Button>
-        </div>
-
-        {siteVideo?.state === "none" && <p className="text-xs text-muted-foreground">Vídeo profissional (~40–50s, 16:9) do site real, com análise, roteiro e captura reais.</p>}
-        {siteVideo?.state === "error" && <p className="text-xs text-destructive">A última geração falhou ou o vídeo não foi validado{siteVideo.reason ? ` (${siteVideo.reason})` : ""}. Sem resultado falso.</p>}
-        {siteVideo?.state === "ready" && (
-          <div className="space-y-2">
-            <video className="w-full rounded-lg border border-border/60 max-h-72" controls poster={siteVideo.posterUrl ?? undefined} src={siteVideo.videoUrl ?? undefined} />
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted-foreground">Versão <strong>{siteVideo.versionId}</strong> · {siteVideo.duration ?? "—"}s · {siteVideo.width ?? "—"}×{siteVideo.height ?? "—"} · {siteVideo.sceneCount ?? "—"} cenas · {siteVideo.createdAt ? new Date(siteVideo.createdAt).toLocaleString() : ""}</span>
-              {siteVideo.videoUrl && (
-                <Button size="sm" variant="outline" asChild><a href={siteVideo.videoUrl} target="_blank" rel="noreferrer"><PlayCircle className="h-3.5 w-3.5 mr-1" /> Assistir</a></Button>
-              )}
-              {siteVideo.videoUrl && (
-                <Button size="sm" variant="outline" asChild><a href={siteVideo.videoUrl} download><Download className="h-3.5 w-3.5 mr-1" /> Baixar vídeo</a></Button>
-              )}
-            </div>
-          </div>
-        )}
+        </details>
       </Card>
 
       {/* CHAT */}

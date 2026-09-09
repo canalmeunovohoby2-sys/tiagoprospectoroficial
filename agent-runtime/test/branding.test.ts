@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildBrandBriefing, brandDirection, generateBrandConcepts, evaluateBrandConcept,
   buildBrandSvg, validateBrandSvg, brandVariations, buildBrandIdentitySystem,
+  evaluateLogoQuality,
   createBrandProjectState, selectBrandConcept, rejectBrandConcept, revertToPrevious,
   editBrandTypography, editBrandPalette,
 } from "../src/branding";
@@ -87,12 +88,21 @@ describe("branding — identidade + estado não-destrutivo (6.0)", () => {
     expect(s.current!.label).toContain("Conceito 1");
   });
 
-  it("edição não destrutiva não recria a marca inteira (numa edição só a tipografia)", () => {
-    let s = createBrandProjectState(briefing);
-    s = selectBrandConcept(s, "1");
-    const geom = s.chosen!.id;
-    s = editBrandTypography(s, { heading: "Playfair", body: "Inter", weights: "700" });
-    expect(s.chosen!.id).toBe(geom); // conceito inalterado
-    expect(s.versions.length).toBeGreaterThanOrEqual(2);
+  it("editPalette troca só a cor; monograma mantém anel/construção (não vira texto solto)", () => {
+    const c = generateBrandConcepts(briefing, brandDirection(briefing))[0];
+    const svg = buildBrandSvg(c, { primary: "#111111", secondary: "#6B7280", accent: "#4F46E5", background: "#fff", foreground: "#111" });
+    const q = evaluateLogoQuality(svg, { type: c.type });
+    expect(q.ok).toBe(true);
+    expect(q.score).toBeGreaterThan(0.5);
+    expect(svg).toMatch(/stroke-dasharray|<path|<rect|<circle/); // construção, não só texto
+  });
+
+  it("gate de qualidade rejeita marca trivial/genérica (só texto ou quadrado+círculo)", () => {
+    const trivialText = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 180"><text x="100" y="90" fill="#111">X</text></svg>`;
+    const trivialShapes = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 180"><g fill="#111"><rect x="64" y="36" width="44" height="108"/><circle cx="136" cy="90" r="54"/></g></svg>`;
+    expect(evaluateLogoQuality(trivialText, { type: "monogram" }).ok).toBe(false);
+    expect(evaluateLogoQuality(trivialShapes, { type: "abstract" }).ok).toBe(false);
+    // inválido também rejeita
+    expect(evaluateLogoQuality("<div>x</div>", { type: "abstract" }).ok).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { BrandingStudio } from "@/components/app/BrandingStudio";
 import { toBrandView, type BrandSnapshotLike } from "@/lib/brandingView";
@@ -76,10 +77,44 @@ export default function BrandingStudioPage() {
     }
   }
 
-  const generateMockup = useCallback(() => { void apply("Faça os mockups dessa identidade no PSD Master."); }, [apply]);
-  const generatePdf = useCallback(() => { void apply("Crie o manual da identidade a partir dos mockups atuais."); }, [apply]);
-  const generatePackage = useCallback(() => { void apply("Prepare a identidade completa para download (pacote ZIP)."); }, [apply]);
-  const generateVideo = useCallback(() => { void apply("Crie um vídeo profissional desse site."); }, [apply]);
+  const LABEL: Record<"mockup" | "pdf" | "package" | "video", string> = { mockup: "Mockups", pdf: "Proposta de PDF", package: "Pacote (ZIP)", video: "Vídeo do site" };
+
+  // Geração determinística de artefato (mockup/pdf/package/video): mostra estado de
+  // processamento, apresenta erro REAL se falhar/não gerar, e só dá sucesso quando
+  // o artefato REALMENTE apareceu persistido e validado. Nunca fica "sem resposta".
+  async function runGeneration(kind: "mockup" | "pdf" | "package" | "video", instruction: string) {
+    if (busy || !data || !user) return;
+    setBusy(true);
+    const userMsg = { role: "user" as const, text: instruction };
+    setMessages((m) => [...m, userMsg]);
+    void persistBrandChatMessage(data.projectId, user.id, userMsg, data.conversationId);
+    const res = await sendBrandInstruction({ projectId: data.projectId, conversationId: data.conversationId, instruction, files: data.files, projectName: data.projectName, userId: user.id });
+    setBusy(false);
+    const replyText = res.ok ? (res.reply ?? "ok") : (res.error ?? "Não consegui concluir.");
+    const assistantMsg = { role: "assistant" as const, text: replyText };
+    setMessages((m) => [...m, assistantMsg]);
+    void persistBrandChatMessage(data.projectId, user.id, assistantMsg, data.conversationId);
+    const files = res.files ?? data.files;
+    setData((d) => (d ? { ...d, files, conversationId: d.conversationId } : d));
+    setCraft(res.snapshot ?? (data.snapshot));
+    const base = mockupBaseUrl, pid = data?.projectId;
+    setMockup(toMockupView(files));
+    setBrandPdf(toBrandPdfView(files, { base, projectId: pid }));
+    setBrandPackage(toBrandPackageView(files, { base, projectId: pid }));
+    setSiteVideo(toSiteVideoView(files, { base, projectId: pid }));
+    const ready = kind === "pdf" ? toBrandPdfView(files, { base, projectId: pid }).isReady
+      : kind === "mockup" ? toMockupView(files).isReady
+        : kind === "package" ? toBrandPackageView(files, { base, projectId: pid }).state === "ready"
+          : toSiteVideoView(files, { base, projectId: pid }).state === "ready";
+    if (!res.ok) { toast.error(`${LABEL[kind]}: ${res.error ?? "não foi possível concluir."}`); return; }
+    if (!ready) { toast.error(`${LABEL[kind]}: o agente não gerou o resultado. ${res.reply ?? ""}`.trim()); return; }
+    toast.success(`${LABEL[kind]} pronto.`);
+  }
+
+  const generateMockup = useCallback(() => void runGeneration("mockup", "Faça os mockups dessa identidade no PSD Master."), [runGeneration]);
+  const generatePdf = useCallback(() => void runGeneration("pdf", "Crie a proposta de PDF da identidade a partir dos mockups atuais."), [runGeneration]);
+  const generatePackage = useCallback(() => void runGeneration("package", "Prepare a identidade completa para download (pacote ZIP)."), [runGeneration]);
+  const generateVideo = useCallback(() => void runGeneration("video", "Crie um vídeo profissional desse site."), [runGeneration]);
 
   const view = craft ? toBrandView(craft) : null;
 

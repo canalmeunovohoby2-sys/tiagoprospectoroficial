@@ -139,6 +139,43 @@ export function evaluateBrandConcept(concept: BrandConcept): BrandCritique {
 
 function esc(s: string): string { return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 
+// ===== Construções vetoriais AUTORAIS (não genéricas) por tipo de conceito =====
+// Cada marca tem estrutura própria: anel aberto (monograma), diamante com espaço
+// negativo + ritmo (abstrato) e chevron com contraforma (figurativo), mais keyline
+// e base de ritmo para parecer construção de estúdio e não "quadrado + círculo".
+
+function monogramMark(w: number, h: number, primary: string, fg: string, secondary: string, letter: string): string {
+  const cx = w / 2, cy = h * 0.38, R = Math.min(w, h) * 0.30;
+  const circ = 2 * Math.PI * R;
+  return `<g>
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${primary}" stroke-width="${(h * 0.045).toFixed(1)}" stroke-dasharray="${(circ * 0.82).toFixed(1)} ${circ.toFixed(1)}" stroke-linecap="round" transform="rotate(-90 ${cx} ${cy})"/>
+    <text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central" font-weight="800" font-size="${(h * 0.42).toFixed(1)}" fill="${primary}">${esc(letter)}</text>
+    <rect x="${(cx - R).toFixed(1)}" y="${(cy + R + h * 0.05).toFixed(1)}" width="${(2 * R).toFixed(1)}" height="${(h * 0.018).toFixed(1)}" fill="${secondary}" rx="${(h * 0.009).toFixed(1)}"/>
+    <circle cx="${(cx + R).toFixed(1)}" cy="${(cy + R + h * 0.05).toFixed(1)}" r="${(h * 0.022).toFixed(1)}" fill="${secondary}"/>
+    <rect x="${(cx - R).toFixed(1)}" y="${(cy - R - h * 0.06).toFixed(1)}" width="${(h * 0.12).toFixed(1)}" height="${(h * 0.02).toFixed(1)}" fill="${fg}" opacity="0.85"/>
+  </g>`;
+}
+
+function abstractMark(w: number, h: number, primary: string, fg: string, secondary: string, accent: string): string {
+  const cx = w / 2, cy = h * 0.42;
+  return `<g>
+    <rect x="${(cx - w * 0.16).toFixed(1)}" y="${(cy - w * 0.16).toFixed(1)}" width="${(w * 0.32).toFixed(1)}" height="${(w * 0.32).toFixed(1)}" fill="${primary}" transform="rotate(45 ${cx} ${cy})"/>
+    <circle cx="${cx}" cy="${cy}" r="${(w * 0.09).toFixed(1)}" fill="${fg}"/>
+    <rect x="${(cx + w * 0.10).toFixed(1)}" y="${(cy - h * 0.02).toFixed(1)}" width="${(w * 0.18).toFixed(1)}" height="${(h * 0.05).toFixed(1)}" rx="${(h * 0.02).toFixed(1)}" fill="${primary}" transform="rotate(-18 ${cx + w * 0.18} ${cy})"/>
+    <circle cx="${(cx - w * 0.30).toFixed(1)}" cy="${(cy + h * 0.24).toFixed(1)}" r="${(h * 0.018).toFixed(1)}" fill="${secondary}"/>
+    <circle cx="${(cx + w * 0.30).toFixed(1)}" cy="${(cy - h * 0.24).toFixed(1)}" r="${(h * 0.018).toFixed(1)}" fill="${accent}"/>
+  </g>`;
+}
+
+function figurativeMark(w: number, h: number, primary: string, fg: string, secondary: string): string {
+  const cx = w / 2;
+  return `<g>
+    <path d="M ${(w * 0.28).toFixed(1)} ${(h * 0.72).toFixed(1)} L ${cx.toFixed(1)} ${(h * 0.20).toFixed(1)} L ${(w * 0.72).toFixed(1)} ${(h * 0.72).toFixed(1)} L ${(cx + (w * 0.72 - cx) * 0.32).toFixed(1)} ${(h * 0.72).toFixed(1)} L ${cx.toFixed(1)} ${(h * 0.44).toFixed(1)} L ${(w * 0.28 + (cx - w * 0.28) * 0.68).toFixed(1)} ${(h * 0.72).toFixed(1)} Z" fill="${primary}"/>
+    <circle cx="${cx}" cy="${(h * 0.72).toFixed(1)}" r="${(h * 0.05).toFixed(1)}" fill="${secondary}"/>
+    <rect x="${(w * 0.20).toFixed(1)}" y="${(h * 0.78).toFixed(1)}" width="${(w * 0.60).toFixed(1)}" height="${(h * 0.025).toFixed(1)}" rx="${(h * 0.012).toFixed(1)}" fill="${fg}" opacity="0.8"/>
+  </g>`;
+}
+
 export function buildBrandSvg(concept: BrandConcept, palette: BrandPalette, options: { variant?: "primary" | "horizontal" | "vertical" | "symbol" | "monoLight" | "monoDark"; typography?: BrandTypography } = {}): string {
   const v = options.variant ?? "primary";
   const ty = options.typography;
@@ -151,10 +188,10 @@ export function buildBrandSvg(concept: BrandConcept, palette: BrandPalette, opti
   const w = v === "vertical" ? 240 : v === "horizontal" ? 400 : v === "symbol" ? 160 : 200;
   const h = v === "vertical" ? 240 : v === "horizontal" ? 120 : v === "symbol" ? 160 : 180;
   const inner = mono
-    ? `<text x="${w / 2}" y="${h / 2}" text-anchor="middle" dominant-baseline="central" font-family="${esc(ty?.heading ?? "serif")}" font-weight="800" font-size="${h * 0.5}" fill="${primary}">${esc(concept.name.length > 1 ? concept.name : initial)}</text>`
+    ? monogramMark(w, h, primary, fg, palette.secondary, initial)
     : concept.type === "abstract"
-      ? `<g fill="${primary}"><rect x="${w * 0.32}" y="${h * 0.2}" width="${w * 0.22}" height="${h * 0.6}" rx="${h * 0.08}"/><circle cx="${w * 0.68}" cy="${h * 0.5}" r="${h * 0.3}"/></g>`
-      : `<g fill="${primary}"><path d="M ${w * 0.5} ${h * 0.12} L ${w * 0.85} ${h * 0.78} L ${w * 0.15} ${h * 0.78} Z"/><rect x="${w * 0.44}" y="${h * 0.4}" width="${w * 0.12}" height="${h * 0.24}" rx="4" fill="${fg}"/></g>`;
+      ? abstractMark(w, h, primary, fg, palette.secondary, palette.accent)
+      : figurativeMark(w, h, primary, fg, palette.secondary);
   const withName = v !== "symbol" ? `<text x="${w / 2}" y="${h * 0.92}" text-anchor="middle" font-family="${wordFont}" font-size="${h * 0.1}" fill="${fg}">${name}</text>` : "";
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" ${v === "symbol" ? "" : `role="img" aria-label="Logomarca ${esc(concept.name)}"`}>${inner}${withName}</svg>`;
 }
@@ -174,6 +211,31 @@ export function validateBrandSvg(svg: string): SvgValidation {
   if (/<image\b/i.test(s)) errors.push("contém imagem raster incorporada (<image>) — marca deve ser vetorial.");
   if (/<(svg|path|rect|circle|text|g|line|polygon|polyline)\b/i.test(s) === false) errors.push("sem elementos vetoriais.");
   return { ok: errors.length === 0, errors };
+}
+
+// GATE DE QUALIDADE DA MARCA (anti-genérica). Só passa se a geometria for
+// construída (≥ elementos + múltiplas camadas de cor/contraforma + keyline),
+// não um "quadrado + círculo" nem texto solto. Usado para refinar/rejeitar.
+export interface BrandLogoQuality { score: number; ok: boolean; critiques: string[]; }
+export function evaluateLogoQuality(svg: string, concept: { type: string }): BrandLogoQuality {
+  const critiques: string[] = [];
+  const v = validateBrandSvg(svg);
+  if (!v.ok) { critiques.push(...v.errors); return { score: 0.1, ok: false, critiques }; }
+  const geometry = (svg.match(/<(path|rect|circle|line|polygon|polyline)\b/g) ?? []).length;
+  const fills = new Set((svg.match(/fill="([^"]+)"/g) ?? []).map((m) => m.slice(6, -1)));
+  const hasRing = /stroke-dasharray/.test(svg);
+  const hasKeyline = /stroke=|opacity="0\./.test(svg);
+  if (concept.type === "monogram") {
+    if (!hasRing) critiques.push("monograma sem anel/construção (parece só texto) — adicione uma moldura própria.");
+    if (geometry < 1) critiques.push("monograma sem geometria de apoio.");
+  } else {
+    if (geometry < 2) critiques.push("símbolo com pouquíssimos elementos (genérico).");
+  }
+  if (fills.size < 2) critiques.push("marca plana sem contraforma/espaço negativo (uma cor só).");
+  if (!hasKeyline) critiques.push("sem keyline/ritmo — construção fria.");
+  if (fills.size >= 2 && geometry >= 2 && (hasRing || geometry >= 3)) { /* construtivo */ }
+  const score = Math.max(0.15, 1 - critiques.length * 0.3);
+  return { score, ok: critiques.length === 0, critiques };
 }
 
 // ---- Variações derivadas (mesmo sistema) ----
