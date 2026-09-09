@@ -274,7 +274,11 @@ async function searchPlacesNewWithFallback(
   options?: { locationBias?: { lat: number; lon: number; radius: number }; locationRestriction?: GeoBounds | null; includedType?: string | null; ctx?: SearchCtx },
 ): Promise<{ places: PlaceRaw[]; error?: SearchError; fallbackUsed?: boolean; primaryCount?: number }> {
   const result = await searchPlacesNew(textQuery, maxPages, options);
-  if (result.places.length <= 2 && options?.includedType) {
+  // RECALL (genérico): se o tipo restrito sub-entrega (páginas curtas), retenta SEM
+  // includedType para não limitar a descoberta a poucas empresas. Threshold amplo
+  // (padrão de ~1 página cheia) evita perder resultados por tipo estrito.
+  const lowYield = result.places.length <= Math.max(12, maxPages * 12);
+  if (lowYield && options?.includedType) {
     const fallbackResult = await searchPlacesNew(textQuery, maxPages, { ...options, includedType: null });
     if (fallbackResult.places.length > result.places.length) {
       return { places: fallbackResult.places, error: fallbackResult.error, fallbackUsed: true, primaryCount: result.places.length };
@@ -2567,7 +2571,9 @@ Deno.serve(async (req) => {
     const textQueries = synonyms.map((s) => `${s} em ${city}, ${state}, Brasil`);
     const primaryQuery = textQueries[0];
     const includedTypes = getGoogleIncludedTypes(segment);
-    const includedTypeForQuery: (string | null)[] = includedTypes.length > 0 ? includedTypes : [null];
+    // RECALL: sempre inclui um passe SEM tipo ao lado dos tipos restritos — um
+    // includedType estrito nunca limita a descoberta a poucas empresas.
+    const includedTypeForQuery: (string | null)[] = includedTypes.length > 0 ? [...includedTypes, null] : [null];
     const sourcesTried: string[] = [];
     const warnings: Array<{ source: string; code?: string; message: string; action?: string }> = [];
     let leads: PublicLead[] = [];

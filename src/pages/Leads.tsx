@@ -501,6 +501,7 @@ function LeadRow({
               );
             })()}
             {!lead.has_website && <Badge variant="outline" className="text-xs border-emerald-500/40 text-emerald-500">Sem site</Badge>}
+            {!lead.whatsapp && <Badge variant="outline" className="text-xs border-amber-500/40 text-amber-500">Sem WhatsApp</Badge>}
             {lead.is_contacted && <Badge variant="outline" className="text-xs border-blue-500/40 text-blue-500">Contatado</Badge>}
             {lead.in_crm && <Badge variant="outline" className="text-xs border-violet-500/40 text-violet-500">No CRM</Badge>}
           </div>

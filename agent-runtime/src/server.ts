@@ -486,11 +486,13 @@ export function startServer(port = PORT, host = HOST) {
         const genKey = genKeyFor(identity.uid, projectId);
         pruneSessions();
         const existingGen = sessions.get(genKey);
-        const genIter = Math.min(80, Math.max(10, Number(body.maxIterations ?? process.env.GENERATE_MAX_ITERATIONS ?? 32)));
-        // Browser QA na geração fica LIGADO por padrão (teste de clique sem tela
-        // preta, mapa, menu mobile). Para desligar: GENERATE_BROWSER=0 ou envie
-        // enableBrowser:false.
-        const genBrowser = process.env.GENERATE_BROWSER !== "0" && body.enableBrowser !== false;
+        // Gera em MENOS iterações por padrão (a geração é uma chamada bloqueante; 32
+        // iterações + browser estouram o limite de ~300s de proxy/transport e dão
+        // "Agent Runtime não respondeu"). Configurável via GENERATE_MAX_ITERATIONS.
+        const genIter = Math.min(60, Math.max(8, Number(body.maxIterations ?? process.env.GENERATE_MAX_ITERATIONS ?? 22)));
+        // Browser QA na geração fica OPT-IN (acelera muito; evita timeout). Para
+        // ligar por padrão: GENERATE_BROWSER=1 ou envie enableBrowser:true.
+        const genBrowser = process.env.GENERATE_BROWSER === "1" || body.enableBrowser === true;
         // Prova real: resolve a IA da conta; se a config mudou desde a última
         // geração, recria a sessão do agente com provider/modelo/chave novos.
         const genExec = await prepareExec({ ...body, mode: "generate" }, identity.uid, identity);

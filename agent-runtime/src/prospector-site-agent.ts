@@ -123,7 +123,7 @@ export class ProspectorSiteAgent {
 
   constructor(options: ProspectorAgentOptions) {
     this.options = options;
-    const tools = buildSiteTools({ workspaceRoot: options.workspaceRoot, business: options.business, projectId: options.projectId });
+    const tools = buildSiteTools({ workspaceRoot: options.workspaceRoot, business: options.business, projectId: options.projectId, mode: options.mode });
 
     const complete = createTool({
       name: "finish_task",

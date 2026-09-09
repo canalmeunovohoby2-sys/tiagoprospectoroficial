@@ -31,7 +31,13 @@ export interface ToolEnv {
   workspaceRoot: string;
   business: BusinessContext;
   projectId?: string;
+  /** mode da execução: "generate" recebe uma toolset enxuta (sem identidade/deliverables). */
+  mode?: "edit" | "generate";
 }
+
+// Tarefas SÓ de identidade/deliverables — NÃO devem rodar durante a GERAÇÃO de um
+// site (evita o agente criar identidade visual standalone e inflar/atrasar a geração).
+const GENERATE_EXCLUDED_TOOLS = new Set(["branding", "mockup", "brand_pdf", "brand_package", "site_video"]);
 
 const MAX_FILE = 2_000_000;
 
@@ -437,7 +443,13 @@ export function buildSiteTools(env: ToolEnv) {
     },
   });
 
-  return [list, read, write, edit, remove, context, imagePlan, branding, mockup, brand_pdf, brand_package, site_video];
+  const tools = [list, read, write, edit, remove, context, imagePlan, branding, mockup, brand_pdf, brand_package, site_video];
+  // Geração de site: remove a toolset de identidade/deliverables para o agente
+  // focar no site (e não criar uma identidade visual automaticamente).
+  if (env.mode === "generate") {
+    return tools.filter((t) => !GENERATE_EXCLUDED_TOOLS.has((t as { name: string }).name));
+  }
+  return tools;
 }
 
 function readFilesRec(root: string): Record<string, string> {

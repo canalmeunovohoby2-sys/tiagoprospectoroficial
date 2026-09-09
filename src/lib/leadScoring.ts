@@ -10,6 +10,17 @@ export interface ScoreableLead {
   website_quality?: "good" | "bad" | "outdated" | null;
   instagram?: string | null;
   facebook?: string | null;
+  whatsapp?: string | null;
+  phone?: string | null;
+}
+
+/** WhatsApp verificado (nunca inventado): só se o campo `whatsapp` existir. */
+export function hasWhatsappContact(lead: ScoreableLead): boolean {
+  return !!lead.whatsapp && String(lead.whatsapp).trim().length > 0;
+}
+
+export function whatsappStatus(lead: ScoreableLead): "with_whatsapp" | "sem_whatsapp" {
+  return hasWhatsappContact(lead) ? "with_whatsapp" : "sem_whatsapp";
 }
 
 function clamp(n: number, min = 0, max = 100): number {
@@ -68,6 +79,8 @@ export function calculateIntentScore(lead: ScoreableLead): number {
   if (reviews > 100 && !hasSite) score += 35;
   if (!hasIg || !hasFb) score += 25;
   if (rating === 5.0) score += 20;
+  // Prioriza empresas com WhatsApp verificável (contato sem atrito) — sem inventar.
+  if (hasWhatsappContact(lead)) score += 20;
 
   return clamp(score);
 }
@@ -81,12 +94,14 @@ export function calculateFinalScore(lead: ScoreableLead): number {
 
 export function enrichLeadWithScores<T extends ScoreableLead>(
   lead: T,
-): T & { money_score: number; pain_score: number; intent_score: number; final_score: number } {
+): T & { money_score: number; pain_score: number; intent_score: number; final_score: number; whatsapp_status: "with_whatsapp" | "sem_whatsapp" } {
   const money_score = calculateMoneyScore(lead);
   const pain_score = calculatePainScore(lead);
   const intent_score = calculateIntentScore(lead);
   const final_score = clamp(Math.round(money_score * 0.4 + pain_score * 0.35 + intent_score * 0.25));
-  return { ...lead, money_score, pain_score, intent_score, final_score };
+  // Marca explicitamente leads SEM WhatsApp verificável (não são descartados).
+  const whatsapp_status = whatsappStatus(lead);
+  return { ...lead, money_score, pain_score, intent_score, final_score, whatsapp_status };
 }
 
 export function sortLeadsByScore<T extends { final_score?: number }>(leads: T[]): T[] {
