@@ -16,6 +16,11 @@ import { createBrandingProject as createBrand } from "@/lib/brandingApi";
 
 const CREATE_EXAMPLE = 'Crie um site profissional para uma clínica de fisioterapia chamada Movimento Saúde, com aparência moderna, premium e responsiva.';
 
+// OCULTO (não removido): oculta a criação de identidade visual na UI.
+// O código/botão/diálogo continuam existindo (não removemos a funcionalidade),
+// apenas não são renderizados. Para reexibir, troque para `false`.
+const HIDE_IDENTITY_CREATION = true;
+
 export default function Sites() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -97,9 +102,11 @@ export default function Sites() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => { setBrandPrompt(""); setOpenBrand(true); }}>
-            <Palette className="h-4 w-4 mr-1" /> Criar Identidade
-          </Button>
+          {!HIDE_IDENTITY_CREATION && (
+            <Button variant="outline" onClick={() => { setBrandPrompt(""); setOpenBrand(true); }}>
+              <Palette className="h-4 w-4 mr-1" /> Criar Identidade
+            </Button>
+          )}
           <Button onClick={() => { setPrompt(""); setOpenCreate(true); }}>
             <Plus className="h-4 w-4 mr-1" /> Criar site
           </Button>
@@ -123,9 +130,11 @@ export default function Sites() {
             <Button onClick={() => { setPrompt(""); setOpenCreate(true); }}>
               <Plus className="h-4 w-4 mr-1" /> Criar site
             </Button>
-            <Button variant="outline" onClick={() => { setBrandPrompt(""); setOpenBrand(true); }}>
-              <Palette className="h-4 w-4 mr-1" /> Criar Identidade
-            </Button>
+            {!HIDE_IDENTITY_CREATION && (
+              <Button variant="outline" onClick={() => { setBrandPrompt(""); setOpenBrand(true); }}>
+                <Palette className="h-4 w-4 mr-1" /> Criar Identidade
+              </Button>
+            )}
           </div>
         </Card>
       ) : (
@@ -162,7 +171,7 @@ export default function Sites() {
         </div>
       )}
 
-      {openBrand && (
+      {openBrand && !HIDE_IDENTITY_CREATION && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => !creatingBrand && setOpenBrand(false)}>
           <div className="w-full max-w-2xl rounded-2xl border bg-background shadow-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div>
