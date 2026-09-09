@@ -7,7 +7,7 @@ import {
   Target,
   ListChecks,
   Briefcase,
-  Globe,
+  Sparkles,
   Settings,
 } from "lucide-react";
 import { BrandLogo } from "./BrandLogo";
@@ -30,7 +30,7 @@ const items = [
   { title: "Meus Leads", url: "/leads", icon: Users },
   { title: "Fila de Espera", url: "/queue", icon: ListChecks },
   { title: "Serviços", url: "/services", icon: Briefcase },
-  { title: "Sites", url: "/sites", icon: Globe },
+  { title: "Studio", url: "/sites", icon: Sparkles },
   { title: "Histórico", url: "/history", icon: History },
   { title: "Configurações", url: "/settings", icon: Settings },
 ];

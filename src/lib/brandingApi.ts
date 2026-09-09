@@ -33,7 +33,20 @@ export function getBrandConversationId(userId: string, projectId: string): strin
 }
 
 export async function createBrandingProject(userId: string, briefing: string): Promise<string> {
-  return createSiteProjectFromPrompt(userId, briefing);
+  const id = await createSiteProjectFromPrompt(userId, briefing);
+  // Dispara a GERAÇÃO INICIAL pelo MESMO agente/runtime (tool `branding`), da
+  // mesma forma que o chat do Branding Studio. Sem isso, a tela abre com
+  // "Nenhum conceito ainda" (projeto criado sem executar o agente).
+  const conversationId = getBrandConversationId(userId, id);
+  const projectName = briefing.split(/\r?\n/)[0].slice(0, 80).trim() || "Marca";
+  const res = await sendBrandInstruction({ projectId: id, conversationId, instruction: briefing, files: {}, projectName, userId });
+  if (!res.ok || !res.persisted) {
+    throw new Error(res.error ?? "O agente não conseguiu gerar a identidade. Verifique se o Agent Runtime / AI está configurado e tente novamente.");
+  }
+  if (!res.snapshot) {
+    throw new Error("A geração terminou, mas nenhuma identidade (conceitos/SVGs) foi criada. Tente novamente.");
+  }
+  return id;
 }
 
 export async function loadBrandData(projectId: string, conversationId?: string | null): Promise<BrandProjectData> {

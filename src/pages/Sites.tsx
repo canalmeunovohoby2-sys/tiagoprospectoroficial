@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  Globe, Plus, Loader2, Trash2, ArrowRight, Sparkles, Wand2, Palette,
+  Plus, Loader2, Trash2, ArrowRight, Sparkles, Wand2, Palette,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -90,10 +90,10 @@ export default function Sites() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Globe className="h-6 w-6 text-primary" /> Sites
+            <Sparkles className="h-6 w-6 text-primary" /> Studio
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Projetos de site criados a partir de uma instrução sua (ou de um lead). Cada projeto guarda identidade, conteúdo e estrutura prontos para edição e publicação futura.
+            Crie e gerencie seus projetos de site e identidade visual. Cada projeto guarda identidade, conteúdo e estrutura prontos para edição e publicação futura.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -115,13 +115,16 @@ export default function Sites() {
           <div className="mx-auto h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-4">
             <Sparkles className="h-6 w-6 text-primary" />
           </div>
-          <h2 className="font-display font-semibold text-lg">Nenhum site criado ainda</h2>
+          <h2 className="font-display font-semibold text-lg">Nenhum projeto criado ainda</h2>
           <p className="text-sm text-muted-foreground mt-2 max-w-md mx-auto">
-            Descreva o site que deseja criar: o agente analisa a solicitação, trabalha no workspace do projeto e gera o site.
+            Descreva o site ou a identidade visual que deseja criar: o agente analisa a solicitação, trabalha no workspace do projeto e gera o projeto. Crie um site ou uma identidade acima.
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
             <Button onClick={() => { setPrompt(""); setOpenCreate(true); }}>
               <Plus className="h-4 w-4 mr-1" /> Criar site
+            </Button>
+            <Button variant="outline" onClick={() => { setBrandPrompt(""); setOpenBrand(true); }}>
+              <Palette className="h-4 w-4 mr-1" /> Criar Identidade
             </Button>
           </div>
         </Card>
