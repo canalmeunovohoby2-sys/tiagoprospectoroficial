@@ -442,7 +442,7 @@ function readFilesRec(root: string): Record<string, string> {
       if (e.name === "node_modules" || e.name === ".git") continue;
       const full = join(dir, e.name);
       if (e.isDirectory()) walk(full);
-      else if (e.isFile() && /\.(html|css|js|json)$/i.test(e.name)) {
+      else if (e.isFile() && /\.(html|css|js|json|svg)$/i.test(e.name)) {
         try { out[relative(root, full).split(sep).join("/")] = readFileSync(full, "utf8"); } catch { /* noop */ }
       }
     }
