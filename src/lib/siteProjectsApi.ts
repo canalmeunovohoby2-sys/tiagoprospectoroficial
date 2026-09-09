@@ -572,10 +572,31 @@ export async function invokeProspectorGenerate(input: {
       body: JSON.stringify({ projectId: input.projectId, context: input.context, briefing: input.briefing ?? {}, prompt: input.prompt, user_id: input.userId ?? undefined }),
       signal: AbortSignal.timeout(600_000),
     });
-    if (res.ok) {
-      const data = (await res.json()) as AgentExecuteResult & { error?: string };
-      if (data.error) return { status: "error", runtime: "cline", executor: "cline-editor", errors: [data.error] };
-      return { ...data, executor: "cline-editor" };
+    if (res.ok && res.body) {
+      // A geração transmite NDJSON (start/ping/result) com HEARTBEAT para manter a
+      // conexão viva além de ~300s (evita "Agent Runtime não respondeu"). Lemos o
+      // stream e devolvemos o evento `result` (mesmo payload de antes).
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let payload: (AgentExecuteResult & { error?: string }) | null = null;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, nl).trim(); buffer = buffer.slice(nl + 1);
+          if (!line) continue;
+          let ev: any; try { ev = JSON.parse(line); } catch { continue; }
+          if (ev?.type === "result") { payload = ev; break; }
+        }
+        if (payload) break;
+      }
+      if (payload) {
+        if (payload.error) return { status: "error", runtime: "cline", executor: "cline-editor", errors: [payload.error] };
+        return { ...payload, executor: "cline-editor" };
+      }
     }
     return { status: "error", runtime: "cline", executor: "cline-editor", errors: [`Editor completo indisponível (HTTP ${res.status}).`] };
   } catch {

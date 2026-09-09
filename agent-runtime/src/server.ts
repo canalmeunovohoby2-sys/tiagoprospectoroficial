@@ -406,6 +406,11 @@ export function startServer(port = PORT, host = HOST) {
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
+    // Streaming do /generate (NDJSON + heartbeat): se o streaming já começou, o
+    // catch de erro deve emitir um evento `result` de erro (não `send(500)`).
+    let genStreamStarted = false;
+    let genStreamFinish: ((payload: Record<string, unknown>) => void) | null = null;
+
     try {
       if (url.pathname === "/health") {
         send(res, 200, {
@@ -639,6 +644,16 @@ ${creativeDirective}
 
 IMPORTANTE: a "Direção criativa sugerida" é apenas um PONTO DE PARTIDA entre muitas direções possíveis — combine-a com a pesquisa e com o que encontrar no negócio. Cada site deve ter identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS (nunca copie o mesmo layout de outros projetos). Você tem liberdade para escolher o layout e a direção visual. Use imagens contextuais reais.`;
 
+        // STREAMING + HEARTBEAT: geração longa; sem bytes a conexão é morta pelo
+        // transporte (~300s). Envia NDJSON com ping para manter viva.
+        const genWriteLine = (obj: unknown) => { try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ } };
+        res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
+        genWriteLine({ type: "start", runtime: "cline", mode: "generate" });
+        const genHeartbeat = setInterval(() => { try { genWriteLine({ type: "ping" }); } catch { /* noop */ } }, 12_000);
+        const finishGenerate = (payload: Record<string, unknown>) => { clearInterval(genHeartbeat); try { genWriteLine({ type: "result", ...payload }); } catch { /* noop */ } try { res.end(); } catch { /* noop */ } };
+        genStreamStarted = true;
+        genStreamFinish = finishGenerate;
+
         const outcome = await agent.runTask(mission, { continueSession: !!existingGen });
         // ===== QUALITY GATE PÓS-GERAÇÃO (5.21) =====
         // A qualidade passa a ser consequência do processo: se a primeira versão
@@ -678,7 +693,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         sessions.delete(genKey);
         sessions.set(editKey(identity.uid, projectId), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
 
-        send(res, 200, {
+        finishGenerate({
           status: genBlocked ? "error" : (finalOutcome.ok ? "ok" : "error"),
           reply: finalOutcome.reply,
           error: genBlocked
@@ -943,7 +958,12 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
 
       send(res, 404, { error: "rota não encontrada" });
     } catch (e) {
-      send(res, 500, { error: e instanceof Error ? e.message : "erro inesperado" });
+      const errMsg = e instanceof Error ? e.message : "erro inesperado";
+      if (genStreamStarted && genStreamFinish) {
+        try { genStreamFinish({ status: "error", error: errMsg, reply: `Falha na geração: ${errMsg}`, changed: false, files: {}, runtime: "cline", mode: "generate" }); } catch { try { res.end(); } catch { /* noop */ } }
+      } else {
+        send(res, 500, { error: errMsg });
+      }
     }
   });
 

@@ -331,6 +331,11 @@ export class ProspectorSiteAgent {
   async runTask(instruction: string, opts?: { continueSession?: boolean }): Promise<AgentRunOutcome> {
     const events: AgentRuntimeEvent[] = [];
     this.currentToolEvents = []; // nova missão → nova trilha de evidência da run
+    // RECUPERAÇÃO do Cline: se a sessão ficou presa numa run anterior (ex.: o
+    // cliente desistiu após timeout e o engine continua "already running"),
+    // abortamos a tarefa em voo ANTES de rodar — sem isso a próxima execução
+    // do mesmo zAgent reutilizado falha com "Agent runtime is already running".
+    try { (this.agent as { abort?: (reason?: unknown) => void }).abort?.("re-exec"); } catch { /* noop */ }
     const tStart = Date.now();
     const timing: AgentRunTiming = { totalMs: 0, turnCount: 0, toolMs: 0, modelMs: 0, tools: {} };
     let toolStart: { name: string; at: number } | null = null;
