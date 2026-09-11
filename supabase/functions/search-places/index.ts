@@ -307,6 +307,7 @@ const FIELD_MASK = [
   "places.internationalPhoneNumber",
   "places.websiteUri",
   "places.googleMapsUri",
+  "places.photos",
   "places.rating",
   "places.userRatingCount",
   "places.businessStatus",
@@ -326,6 +327,7 @@ type PlaceRaw = {
   internationalPhoneNumber?: string;
   websiteUri?: string;
   googleMapsUri?: string;
+  photos?: Array<{ name?: string }>;
   rating?: number;
   userRatingCount?: number;
   businessStatus?: string;
@@ -364,6 +366,7 @@ type PublicLead = {
   whatsapp: string | null;
   website: string | null;
   google_url: string | null;
+  photo_name?: string | null;
   instagram: string | null;
   facebook: string | null;
   rating: number | null;
@@ -1190,6 +1193,7 @@ function mapPlacesNewToLeads(unique: PlaceRaw[], city: string, state: string): P
         whatsapp,
         website: site,
         google_url: p.googleMapsUri ?? null,
+        photo_name: p.photos?.[0]?.name ?? null,
         instagram: null,
         facebook: null,
         rating: p.rating ?? null,
@@ -1239,6 +1243,7 @@ function mapLegacyPlacesToLeads(unique: LegacyDetailsResult[], city: string, sta
         whatsapp,
         website: site,
         google_url: p.url ?? `https://www.google.com/maps/place/?q=place_id:${p.place_id}`,
+        photo_name: null,
         instagram: null,
         facebook: null,
         rating: p.rating ?? null,
@@ -2366,9 +2371,9 @@ function computeLeadPriority(lead: PublicLead, segment: string, module: "orvix" 
   else if (lead.reviews_count >= 5) p += 3;
   if ((lead.rating ?? 0) >= 4.5) p += 10;
   else if ((lead.rating ?? 0) >= 4.0) p += 6;
-  // Reachability
-  if (lead.whatsapp) p += 12;
-  if (lead.phone) p += 4;
+  // Reachability — WhatsApp é o canal preferencial; quem tem sobe no ranking.
+  if (lead.whatsapp) p += 25;
+  else if (lead.phone) p += 4;
   if (lead.instagram) p += 6;
   // City match bonus
   if (lead.city_matches) p += 5;
@@ -3378,19 +3383,21 @@ Deno.serve(async (req) => {
         const whatsapp = l.whatsapp ?? null;
         const phone = l.phone ?? null;
         const hasContact = Boolean(whatsapp || phone);
+        const hasWhatsapp = Boolean(whatsapp);
         const hasWebsite = Boolean(website);
 
         if (!hasWebsite && hasContact) {
-          l.commercial_score = 100;
-          l.score_reasons = [...(l.score_reasons ?? []), "Sem site + contato → lead quente"];
+          // WhatsApp é o canal preferencial: lead sem site + WhatsApp é o mais quente.
+          l.commercial_score = hasWhatsapp ? 110 : 92;
+          l.score_reasons = [...(l.score_reasons ?? []), hasWhatsapp ? "Sem site + WhatsApp → lead muito quente" : "Sem site + contato sem WhatsApp → lead quente"];
         } else if (hasWebsite && hasContact) {
           // Site ruim = domínio free/placeholder ou muito curto, ou sem evidência de segmento.
           const isBadSite = isLowQualityWebsite(website);
           if (isBadSite) {
-            l.commercial_score = 70;
-            l.score_reasons = [...(l.score_reasons ?? []), "Site ruim + contato → lead quente"];
+            l.commercial_score = hasWhatsapp ? 82 : 68;
+            l.score_reasons = [...(l.score_reasons ?? []), hasWhatsapp ? "Site ruim + WhatsApp → lead quente" : "Site ruim + contato → lead quente"];
           } else {
-            l.commercial_score = 10;
+            l.commercial_score = hasWhatsapp ? 16 : 10;
             l.score_reasons = [...(l.score_reasons ?? []), "Site bom + contato → lead frio"];
           }
         } else if (hasWebsite && !hasContact) {
