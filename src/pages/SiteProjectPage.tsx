@@ -517,7 +517,8 @@ export default function SiteProjectPage() {
     appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }], conversationId ?? undefined).catch(() => {});
     const hasWorkspace = !!draftFiles && Object.keys(draftFiles).length > 0;
     const pushReply = (msg: string, activity?: Array<{ phase: string; detail: string }>, changedFiles?: string[]) => {
-      const full = `${msg}${buildWorkTimeline(activity, changedFiles)}`;
+      // Resposta enxuta no chat: no máximo 3 linhas de timeline.
+      const full = `${msg}${buildWorkTimeline(activity, changedFiles, 3)}`;
       setAiMessages((prev) => [...prev, { role: "assistant", text: full }]);
       appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: full }], conversationId ?? undefined).catch(() => {});
     };
@@ -578,9 +579,9 @@ export default function SiteProjectPage() {
           const autosave = await persistAutosave(derivedSpec, agentRes.files, `Alteração via chat: ${displayText}`);
           const runtime = agentRes.runtime === "cline" ? "" : " (modo compatível)";
           let savedNote;
-          if (autosave.ok && autosave.created) savedNote = "\n\n_(já ficou salvo no projeto.)_";
-          else if (autosave.ok) savedNote = "\n\n_(o estado já era o mais recente — nenhuma versão duplicada.)_";
-          else savedNote = `\n\n⚠ Não foi possível salvar automaticamente: ${autosave.error || "erro desconhecido"}. A edição está no preview — clique em Salvar para persistir.`;
+          if (autosave.ok && autosave.created) savedNote = "\n\n_(salvo no projeto.)_";
+          else if (autosave.ok) savedNote = "";
+          else savedNote = `\n\n⚠ Não foi possível salvar automaticamente: ${autosave.error || "erro desconhecido"}. Clique em Salvar para persistir.`;
           const valErrors = agentRes.status === "error" && agentRes.errors?.length ? `\n(Validação reportou: ${agentRes.errors.slice(0, 2).join("; ")})` : "";
           const changedKeys = Object.keys(agentRes.files).filter((p) => draftFiles?.[p] !== agentRes.files?.[p]);
           pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}${valErrors}`, agentRes.activity, changedKeys);

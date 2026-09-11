@@ -24,14 +24,14 @@ describe("Agent Identity central (5.27) — profissional permanente", () => {
     expect(id).toContain("reutilize o mesmo arquivo");
   });
 
-  it("identidade inclui comunicação profissional estruturada e auditoria (5.28)", () => {
+  it("identidade exige comunicação BREVE e resposta final curta", () => {
     const id = AGENT_IDENTITY.toLowerCase();
-    expect(id).toContain("comunicação profissional (5.28)");
-    expect(id).toContain("🔎 análise");
-    expect(id).toContain("📋 diagnóstico");
-    expect(id).toContain("🧪 verificação");
-    expect(id).toContain("✅ resultado");
-    expect(id).toContain("não vire todo retorno em um relatório");
+    expect(id).toContain("comunicação (breve por padrão)");
+    expect(id).toContain("a resposta é curta");
+    expect(id).toContain("nunca transforme o retorno em relatório");
+    expect(id).toContain("resposta final sempre curta");
+    expect(id).toContain("450 caracteres");
+    expect(id).toContain("precedência máxima");
     expect(id).toContain("não altere arquivos quando o usuário não pediu alteração");
     expect(id).toContain("nunca invente arquivos, alterações, testes");
     expect(id).toContain("entenda continuidade");
