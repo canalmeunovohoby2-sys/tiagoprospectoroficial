@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useNavigate } from "react-router-dom";
 import { Moon, Sun, LogOut } from "lucide-react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
@@ -17,17 +17,24 @@ import { useAuth } from "@/hooks/useAuth";
 import { useTheme } from "@/hooks/useTheme";
 
 export function AppShell({ children }: { children?: ReactNode }) {
-  const { user, signOut, isAnonymous } = useAuth();
+  const { user, signOut } = useAuth();
   const { theme, toggle } = useTheme();
+  const navigate = useNavigate();
 
-  const displayName = user?.user_metadata?.full_name || user?.email || "Tiago";
+  const displayName = user?.email || user?.user_metadata?.full_name || "Tiago";
 
   const initials = displayName
-    .split(" ")
+    .split(/[\s@.]+/)
+    .filter(Boolean)
     .map((s: string) => s[0])
     .slice(0, 2)
     .join("")
     .toUpperCase();
+
+  const handleSignOut = async () => {
+    try { await signOut(); } catch { /* segue para o login mesmo assim */ }
+    navigate("/login", { replace: true });
+  };
 
   return (
     <SidebarProvider defaultOpen>
@@ -58,14 +65,10 @@ export function AppShell({ children }: { children?: ReactNode }) {
                   <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
                     {displayName}
                   </DropdownMenuLabel>
-                  {user && !isAnonymous && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={signOut} className="text-destructive">
-                        <LogOut className="h-4 w-4 mr-2" /> Sair
-                      </DropdownMenuItem>
-                    </>
-                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleSignOut} className="text-destructive">
+                    <LogOut className="h-4 w-4 mr-2" /> Sair
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

@@ -3,17 +3,19 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "@/hooks/useAuth";
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { AppShell } from "@/components/app/AppShell";
 import { ErrorBoundary } from "@/components/app/ErrorBoundary";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
+
 import Dashboard from "./pages/Dashboard";
 
 // Lazy-loaded routes — reduces initial JS bundle for the landing/Dashboard.
 // `lazyWithRetry` protege contra "Failed to fetch dynamically imported module"
 // causado por cache de HTML apontando para chunks antigos após novo deploy.
 
+const Login = lazyWithRetry(() => import("./pages/Login"), "Login");
 const ResetPassword = lazyWithRetry(() => import("./pages/ResetPassword"), "ResetPassword");
 const Search = lazyWithRetry(() => import("./pages/Search"), "Search");
 const Leads = lazyWithRetry(() => import("./pages/Leads"), "Leads");
@@ -30,6 +32,20 @@ const PublicSitePage = lazyWithRetry(() => import("./pages/PublicSitePage"), "Pu
 const NotFound = lazyWithRetry(() => import("./pages/NotFound"), "NotFound");
 
 const queryClient = new QueryClient();
+
+// Protege as rotas da aplicação: sem login → redireciona para /login (guardando a rota de origem).
+const RequireAuth = () => {
+  const { session, loading } = useAuth();
+  const location = useLocation();
+  if (loading)
+    return (
+      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
+        Carregando…
+      </div>
+    );
+  if (!session) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  return <Outlet />;
+};
 
 const RouteFallback = () => (
   <div className="min-h-screen flex items-center justify-center text-muted-foreground">Carregando…</div>
@@ -65,19 +81,22 @@ const App = () => (
             <Suspense fallback={<RouteFallback />}>
               <Routes>
                 <Route path="/auth" element={<Navigate to="/" replace />} />
+                <Route path="/login" element={<Login />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
-                <Route element={<AppShell />}>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/search" element={<Search />} />
-                  <Route path="/leads" element={<Leads />} />
-                  
-                  <Route path="/history" element={<History />} />
-                  <Route path="/queue" element={<Queue />} />
-                  <Route path="/services" element={<Services />} />
-                  <Route path="/sites" element={<Sites />} />
-                  <Route path="/sites/:id" element={<SiteProjectPage />} />
-                  <Route path="/branding/:id" element={<BrandingStudioPage />} />
-                  <Route path="/settings" element={<Settings />} />
+                <Route element={<RequireAuth />}>
+                  <Route element={<AppShell />}>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/search" element={<Search />} />
+                    <Route path="/leads" element={<Leads />} />
+                    
+                    <Route path="/history" element={<History />} />
+                    <Route path="/queue" element={<Queue />} />
+                    <Route path="/services" element={<Services />} />
+                    <Route path="/sites" element={<Sites />} />
+                    <Route path="/sites/:id" element={<SiteProjectPage />} />
+                    <Route path="/branding/:id" element={<BrandingStudioPage />} />
+                    <Route path="/settings" element={<Settings />} />
+                  </Route>
                 </Route>
                 <Route path="/public/:slug" element={<PublicSitePage />} />
                 <Route path="*" element={<NotFound />} />
