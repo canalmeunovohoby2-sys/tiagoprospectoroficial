@@ -21,6 +21,11 @@ const BLOCKED_HOSTS = new Set([
   "wa.me", "whatsapp.com", "guiamais.com.br", "apontador.com.br", "guiafacil.com.br",
   "yellowpages.com", "mercadolivre.com.br", "olx.com.br", "ifood.com.br", "google.com",
   "cidadeverde.com", "imoveis.com.br", "zap.com.br", "vivaoreal.com.br",
+  "doctoralia.com.br", "doctoralia.com", "zocdoc.com", "healthgrades.com",
+  "yelp.com", "tripadvisor.com.br", "tripadvisor.com",
+  "blogspot.com", "wordpress.com", "medium.com", "jusbrasil.com.br", "escavador.com",
+  "diretoriodeempresas.com.br", "directory.com.br", "empresase.com.br",
+  "tabeliao.com.br", "tabelas.com.br", "listacdn.com", "listas.com.br",
 ]);
 
 function hostOf(url: string): string {
@@ -64,8 +69,13 @@ export function normalizeItemList(raw: unknown, source: "tavily" | "firecrawl"):
   return out;
 }
 
+// Títulos de páginas de listas/rankings/diretórios — NÃO representam empresa individual.
+const LIST_TITLE_HINT = /^\s*(os?\s+)?(os?\s+\d+\s+|os\s+$|[“"']?(\d+)[\s.]*(melhors?|top|melhores|lista|listas|empresas|profissionais|estabelecimentos|opcionais|gratuitos|recomendad[oa]s?|próxim[oa]s?|maiores|melhores)\b)/i;
+const AGGREGATOR_TITLE_HINT = /(melhores|top\s*\d|lista\s+de|ranking|guia\s+de|de|\s+em\s+|\s*-\s*|blog|not[ií]cias|artigo|posto\s+de\s+atendimento)/i;
+
 // Descobre o site mais provável do negócio a partir de itens web.
-// Exige sinal razoável (tokens do nome no título ou domínio) — nunca "chuta".
+// Exige sinal raroável (tokens do nome no título ou domínio) — nunca "chuta".
+// Rejeita páginas de listas/rankings/diretórios.
 export function matchLeadWebsite(leadName: string, items: WebItem[]): { website: string; domain: string; evidence: string } | null {
   const name = norm(leadName);
   if (!name) return null;
@@ -75,8 +85,14 @@ export function matchLeadWebsite(leadName: string, items: WebItem[]): { website:
   let best: { website: string; domain: string; evidence: string; score: number } | null = null;
   for (const item of items) {
     const domain = hostOf(item.url);
+    if (!domain || BLOCKED_HOSTS.has(domain)) continue;
     const domainMain = domain.split(".")[0] ?? "";
-    const title = norm(item.title ?? "");
+    const title = item.title ?? "";
+    const titleNorm = norm(title);
+
+    // Rejeita páginas de listas/rankings/diretórios
+    if (isListOrAggregatorPage(titleNorm, domain)) continue;
+
     let score = 0;
     let evidence = "";
     // Domínio contém um token forte do nome.
@@ -86,14 +102,14 @@ export function matchLeadWebsite(leadName: string, items: WebItem[]): { website:
       evidence = `dominio_contem_${strongToken}`;
     }
     // 2+ tokens do nome no título.
-    const matchedTokens = nameTokens.filter((t) => title.includes(t));
+    const matchedTokens = nameTokens.filter((t) => titleNorm.includes(t));
     if (matchedTokens.length >= 2) {
       score = Math.max(score, 60);
       evidence = `titulo_contem_${matchedTokens.slice(0, 2).join("_")}`;
     }
     // Token forte do nome no título, desde que o domínio não seja de agregador.
     if (score === 0) {
-      const st = nameTokens.find((t) => t.length >= 6 && title.includes(t));
+      const st = nameTokens.find((t) => t.length >= 6 && titleNorm.includes(t));
       if (st && domain !== "site" && !domain.includes("guia")) {
         score = 40;
         evidence = `titulo_contem_${st}`;
@@ -104,6 +120,25 @@ export function matchLeadWebsite(leadName: string, items: WebItem[]): { website:
     }
   }
   return best ? { website: best.website, domain: best.domain, evidence: best.evidence } : null;
+}
+
+// Detecta páginas de listas, rankings, diretórios ou agregadores.
+function isListOrAggregatorPage(titleNorm: string, domain: string): boolean {
+  // Título começa com "Os N..." ou contém padrões de lista
+  if (LIST_TITLE_HINT.test(titleNorm)) return true;
+
+  // Domínio de diretório
+  if (BLOCKED_HOSTS.has(domain)) return true;
+
+  // Título com padrões de diretório (exceto quando é nome real de empresa)
+  // Ex: "Os 20 Dentistas mais recomendados em Barueri" → REJEITAR
+  // Ex: "Clínica Odontológica Dr. João" → ACCEPTAR
+  if (AGGREGATOR_TITLE_HINT.test(titleNorm) || /\d+\s+(melhores?|profissionais?|empresas?|estabelecimentos?|negócios?)/i.test(titleNorm)) return true;
+
+  // Páginas com múltiplos profissionais (indicam diretório)
+  if (/(e outros|e outras|mais\s+de\s+\d+)/i.test(titleNorm)) return true;
+
+  return false;
 }
 
 // Validação geográfica textual: exige a cidade E o estado mencionados no texto

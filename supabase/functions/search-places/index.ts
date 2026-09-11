@@ -3218,39 +3218,12 @@ Deno.serve(async (req) => {
       };
     }
 
-    // ─── Descoberta web independente ──────────────────────────────
-    // Executa sempre que os candidatos estruturados+recovery estiverem abaixo
-    // do alvo de cobertura (não só quando o resultado for zero). Tavily e
-    // Firecrawl atuam como FONTES DE DESCOBERTA (multi-queries), sem exigir
-    // contato/domínio no snippet. Nunca inventa dados.
-    if (leads.length < DISCOVERY_TARGET) {
-      sourcesTried.push("web_discovery");
-      const webDiscovery = await discoverLeadsViaWeb(segment, city, state, {
-        target: Math.min(DISCOVERY_TARGET - leads.length, MAX_DISCOVERY_RESULTS),
-        queriesCap: MAX_DISCOVERY_QUERIES,
-        resultsCap: MAX_DISCOVERY_RESULTS,
-      });
-      const existingWeb = typeof diagnostics.web_sources === "object" && diagnostics.web_sources
-        ? diagnostics.web_sources as Record<string, unknown>
-        : {} as Record<string, unknown>;
-      diagnostics.web_sources = { ...existingWeb, ...webDiscovery.diagnostics };
-      // Merge com prioridade estruturada (OSM/recovery vencem; web só soma
-      // candidatos que NÃO duplicam por telefone/domínio/nome+cidade).
-      const mergedWeb = mergeCandidateLeads(leads, webDiscovery.leads);
-      diagnostics.web_discovery_duplicates = mergedWeb.duplicates;
-      diagnostics.web_discovery_added = mergedWeb.added;
-      leads = mergedWeb.leads;
-      for (const l of webDiscovery.leads) {
-        perLeadAudit.set(l.external_id, {
-          source: "web_discovery",
-          synonym: segment,
-          includedType: null,
-          rule: "web_tavily_firecrawl_discovery",
-          category: l.category ?? null,
-        });
-      }
-      if (leads.length > 0 && source === "none") source = "web_discovery";
-    }
+    // ─── Descoberta web disabled ──────────────────────────────
+    // Web Discovery (Tavily/Firecrawl) NÃO cria leads primários.
+    // A descoberta primária é exclusiva de Google Places / OSM / Overpass.
+    // Web é usado SOMENTE para enriquecimento de leads já descobertos.
+    // (Bloco de descoberta web removido conforme requisito do LeadHunter.)
+    diagnostics.web_sources = {};
 
     // ─── ENRIQUECIMENTO/CONFIRMAÇÃO ORIENTADO AO LEAD ─────────────
     // Em vez de uma única query cidade+segmento para todos os leads, cada
