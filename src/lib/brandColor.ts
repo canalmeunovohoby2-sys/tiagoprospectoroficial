@@ -1,6 +1,7 @@
 // Cor de marca personalizável — aplicada globalmente via CSS custom properties
 // (--brand-h/--brand-s/--brand-l) usadas por --primary/--ring/gradientes/sombras.
 import { safeLocalStorage } from "@/lib/safeStorage";
+import { supabase } from "@/integrations/supabase/client";
 
 export const DEFAULT_BRAND = "#ED2C2C"; // padrão do prospector (vermelho)
 
@@ -50,4 +51,19 @@ export function setBrandColor(hex: string) {
     const v = hex.trim().startsWith("#") ? hex.trim() : `#${hex.trim()}`;
     safeLocalStorage.setItem("lh-brand", v);
   } catch { /* best-effort */ }
+  void syncBrandToSupabase(hex);
+}
+
+async function syncBrandToSupabase(hex: string) {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    await supabase.auth.updateUser({
+      user_metadata: { ...user.user_metadata, brand_color: hex },
+    });
+  } catch (e) {
+    console.warn("[brandColor] não sincronizou cor para Supabase:", e);
+  }
 }

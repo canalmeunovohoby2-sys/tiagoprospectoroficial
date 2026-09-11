@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
+import { restorePreferences } from "@/hooks/useTheme";
 
 interface AuthCtx {
   session: Session | null;
@@ -89,7 +90,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       if (!active) return;
-      if (s) setAuthError(null);
+      if (s) {
+        setAuthError(null);
+        void restorePreferences();
+      }
       applySession(s);
     });
 
@@ -99,11 +103,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const s = data.session;
       if (s) {
         applySession(s);
+        void restorePreferences();
         return;
       }
       // Uso pessoal: sem sessão existente, entra automaticamente.
       const ok = await ensureSession();
       if (!active) return;
+      if (ok) void restorePreferences();
       if (!ok) setLoading(false);
     })();
 

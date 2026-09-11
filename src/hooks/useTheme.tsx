@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { safeLocalStorage } from "@/lib/safeStorage";
-import { applyBrandColor, readBrandColor } from "@/lib/brandColor";
+import { applyBrandColor, readBrandColor, DEFAULT_BRAND } from "@/lib/brandColor";
+import { supabase } from "@/integrations/supabase/client";
 
 type Theme = "light" | "dark";
 
@@ -15,13 +16,32 @@ function initialTheme(): Theme {
 let currentTheme: Theme = initialTheme();
 const listeners = new Set<() => void>();
 
+async function syncToSupabase(updates: Record<string, unknown>) {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    await supabase.auth.updateUser({
+      user_metadata: { ...user.user_metadata, ...updates },
+    });
+  } catch (e) {
+    console.warn("[Theme] não sincronizou para Supabase:", e);
+  }
+}
+
 function apply(theme: Theme) {
   if (typeof window === "undefined") return;
   const root = document.documentElement;
   if (theme === "dark") root.classList.add("dark");
   else root.classList.remove("dark");
   applyBrandColor(readBrandColor());
-  try { safeLocalStorage.setItem("lh-theme", theme); } catch { /* best-effort */ }
+  try {
+    safeLocalStorage.setItem("lh-theme", theme);
+  } catch {
+    /* best-effort */
+  }
+  void syncToSupabase({ theme });
 }
 
 function subscribe(cb: () => void) {
@@ -44,3 +64,31 @@ export function useTheme() {
 
 // Aplica o tema salvo assim que o módulo carrega (antes/na montagem).
 if (typeof window !== "undefined") apply(currentTheme);
+
+// Restaura preferências do usuário Supabase (theme + brandColor) quando houver sessão ativa.
+export async function restorePreferences(): Promise<void> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user?.user_metadata) return;
+
+    const { theme: savedTheme, brand_color: savedBrand } = user.user_metadata as Record<string, unknown>;
+
+    if (savedTheme === "light" || savedTheme === "dark") {
+      currentTheme = savedTheme;
+      const root = document.documentElement;
+      if (savedTheme === "dark") root.classList.add("dark");
+      else root.classList.remove("dark");
+      try {
+        safeLocalStorage.setItem("lh-theme", savedTheme);
+      } catch { /* best-effort */ }
+    }
+
+    if (typeof savedBrand === "string" && savedBrand.trim().startsWith("#")) {
+      import("@/lib/brandColor").then(({ setBrandColor }) => setBrandColor(savedBrand));
+    }
+
+    listeners.forEach((l) => l());
+  } catch (e) {
+    console.warn("[Theme] não restaurou preferências:", e);
+  }
+}
