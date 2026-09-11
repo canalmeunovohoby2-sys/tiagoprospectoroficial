@@ -21,6 +21,7 @@ export interface Lead {
   whatsapp: string | null;
   website: string | null;
   google_url: string | null;
+  photo_name?: string | null;
   instagram: string | null;
   facebook: string | null;
   rating: number | null;

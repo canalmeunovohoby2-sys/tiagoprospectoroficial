@@ -103,6 +103,7 @@ export type Database = {
           opening_hours: Json | null
           pain_score: number | null
           phone: string | null
+          photo_name: string | null
           rating: number | null
           reviews_count: number | null
           score: number
@@ -143,6 +144,7 @@ export type Database = {
           opening_hours?: Json | null
           pain_score?: number | null
           phone?: string | null
+          photo_name?: string | null
           rating?: number | null
           reviews_count?: number | null
           score?: number
@@ -183,6 +185,7 @@ export type Database = {
           opening_hours?: Json | null
           pain_score?: number | null
           phone?: string | null
+          photo_name?: string | null
           rating?: number | null
           reviews_count?: number | null
           score?: number
