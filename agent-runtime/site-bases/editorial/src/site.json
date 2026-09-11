@@ -1,0 +1,14 @@
+{
+  "base": "editorial",
+  "kind": "scaffold",
+  "note": "Estrutura inicial. O conteúdo real do cliente é criado pelo agente.",
+  "sections": [
+    { "id": "hero", "type": "hero" },
+    { "id": "sobre", "type": "about" },
+    { "id": "servicos", "type": "services" },
+    { "id": "quote", "type": "statement" },
+    { "id": "processo", "type": "process" },
+    { "id": "localizacao", "type": "location" },
+    { "id": "contato", "type": "contact" }
+  ]
+}

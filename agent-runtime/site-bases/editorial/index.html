@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{BUSINESS_NAME}} — {{SEGMENT}}</title>
+  <meta name="description" content="{{BUSINESS_NAME}} em {{CITY}}/{{STATE}}. {{SEGMENT}} com atendimento profissional." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link id="base-font" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=Inter:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="./src/site.css" />
+</head>
+<body class="base-editorial">
+  <a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
+
+  <header class="site-header" id="topo">
+    <div class="shell header-grid">
+      <a class="brand" href="#topo">
+        <span class="brand-mark">{{BUSINESS_NAME}}</span>
+        <span class="brand-sub">{{SEGMENT}}</span>
+      </a>
+      <nav class="site-nav" aria-label="Navegação principal">
+        <a href="#sobre">Sobre</a>
+        <a href="#servicos">Serviços</a>
+        <a href="#processo">Processo</a>
+        <a href="#localizacao">Localização</a>
+        <a class="nav-cta" href="#contato">Fale conosco</a>
+      </nav>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="menu-mobile" aria-label="Abrir menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+    <nav class="mobile-nav" id="menu-mobile" aria-label="Navegação mobile" hidden>
+      <a href="#sobre">Sobre</a>
+      <a href="#servicos">Serviços</a>
+      <a href="#processo">Processo</a>
+      <a href="#localizacao">Localização</a>
+      <a href="#contato">Fale conosco</a>
+    </nav>
+  </header>
+
+  <main id="conteudo">
+    <section class="ed-hero" data-reveal>
+      <div class="shell ed-hero-grid">
+        <div class="ed-hero-copy">
+          <p class="eyebrow">{{SEGMENT}} · {{CITY}}/{{STATE}}</p>
+          <h1 class="ed-display">
+            <span class="line">Excelência que</span>
+            <span class="line em">se reconhece</span>
+            <span class="line">no detalhe.</span>
+          </h1>
+          <p class="ed-lead">Uma experiência pensada para quem valoriza cuidado, clareza e resultado — feita sob medida para o seu momento.</p>
+          <div class="ed-hero-actions">
+            <a class="btn btn-solid" href="#contato">Agendar conversa</a>
+            <a class="btn btn-line" href="#servicos">Ver serviços</a>
+          </div>
+        </div>
+        <figure class="ed-hero-media media-slot" data-media-role="hero" aria-hidden="true">
+          <div class="media-inner"></div>
+        </figure>
+      </div>
+      <div class="shell ed-hero-meta">
+        <div><span class="meta-num">01</span><span class="meta-label">Atendimento próximo</span></div>
+        <div><span class="meta-num">02</span><span class="meta-label">Trabalho sob medida</span></div>
+        <div><span class="meta-num">03</span><span class="meta-label">Compromisso com o resultado</span></div>
+      </div>
+    </section>
+
+    <section class="ed-about" id="sobre" data-reveal>
+      <div class="shell ed-about-grid">
+        <p class="section-index">— 01 / Sobre</p>
+        <div class="ed-about-body">
+          <h2 class="ed-section-title">Uma marca construída sobre confiança.</h2>
+          <p>Apresente aqui a história e a proposta de valor do negócio, sempre a partir de fatos reais fornecidos pelo cliente. Este texto deve ser reescrito com a voz da marca.</p>
+          <p>Descreva o que torna este negócio diferente, quem atende e o que o cliente pode esperar. Evite promessas que não possam ser comprovadas.</p>
+          <ul class="ed-list">
+            <li><span>Atendimento personalizado</span></li>
+            <li><span>Profissionais qualificados</span></li>
+            <li><span>Transparência em cada etapa</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="ed-services" id="servicos" data-reveal>
+      <div class="shell">
+        <p class="section-index">— 02 / Serviços</p>
+        <h2 class="ed-section-title wide">O que oferecemos</h2>
+        <div class="ed-service-list">
+          <article class="ed-service" data-reveal>
+            <span class="ed-service-num">01</span>
+            <div class="ed-service-body">
+              <h3>Serviço principal</h3>
+              <p>Descreva o serviço principal do negócio com linguagem clara e foco no benefício para o cliente.</p>
+            </div>
+            <a class="ed-service-link" href="#contato" aria-label="Saber mais sobre o serviço principal">Saber mais →</a>
+          </article>
+          <article class="ed-service" data-reveal>
+            <span class="ed-service-num">02</span>
+            <div class="ed-service-body">
+              <h3>Serviço complementar</h3>
+              <p>Explique um segundo serviço oferecido, com detalhes reais e sem inventar informações.</p>
+            </div>
+            <a class="ed-service-link" href="#contato" aria-label="Saber mais sobre o serviço complementar">Saber mais →</a>
+          </article>
+          <article class="ed-service" data-reveal>
+            <span class="ed-service-num">03</span>
+            <div class="ed-service-body">
+              <h3>Atendimento especializado</h3>
+              <p>Detalhe um diferencial de atendimento que ajude o cliente a entender a experiência oferecida.</p>
+            </div>
+            <a class="ed-service-link" href="#contato" aria-label="Saber mais sobre o atendimento especializado">Saber mais →</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="ed-quote" data-reveal>
+      <div class="shell">
+        <blockquote class="ed-quote-text">“A identidade deste site nasce do negócio — nunca de um modelo pronto.”</blockquote>
+        <p class="ed-quote-src">Reescreva esta seção com um diferencial real, um número ou um princípio da marca.</p>
+      </div>
+    </section>
+
+    <section class="ed-process" id="processo" data-reveal>
+      <div class="shell">
+        <p class="section-index">— 03 / Processo</p>
+        <h2 class="ed-section-title wide">Como trabalhamos</h2>
+        <ol class="ed-steps">
+          <li data-reveal><span class="step-k">Passo 01</span><h3>Primeiro contato</h3><p>Ouvimos o que o cliente precisa e entendemos o contexto.</p></li>
+          <li data-reveal><span class="step-k">Passo 02</span><h3>Planejamento</h3><p>Definimos o melhor caminho, com prazos e transparência.</p></li>
+          <li data-reveal><span class="step-k">Passo 03</span><h3>Execução</h3><p>Realizamos o trabalho com atenção a cada detalhe.</p></li>
+          <li data-reveal><span class="step-k">Passo 04</span><h3>Acompanhamento</h3><p>Seguimos disponíveis para o que o cliente precisar depois.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="ed-location" id="localizacao" data-reveal>
+      <div class="shell ed-location-grid">
+        <div class="ed-location-copy">
+          <p class="section-index">— 04 / Localização</p>
+          <h2 class="ed-section-title">Onde nos encontrar</h2>
+          <p class="ed-location-line">{{BUSINESS_NAME}}</p>
+          <p class="ed-location-line">{{CITY}} / {{STATE}}</p>
+          <div class="ed-location-actions">
+            <a class="btn btn-solid" href="#contato">Falar no WhatsApp</a>
+          </div>
+        </div>
+        <div class="ed-map map-slot" data-map-role="location" aria-label="Mapa da localização"></div>
+      </div>
+    </section>
+
+    <section class="ed-contact" id="contato" data-reveal>
+      <div class="shell ed-contact-grid">
+        <div>
+          <p class="section-index">— 05 / Contato</p>
+          <h2 class="ed-section-title wide">Vamos conversar?</h2>
+          <p class="ed-lead">Conte o que você precisa. Responderemos com o próximo passo.</p>
+        </div>
+        <div class="ed-contact-card">
+          <a class="btn btn-solid full" href="#contato">Agendar pelo WhatsApp</a>
+          <a class="btn btn-line full" href="tel:{{PHONE}}">Ligar agora</a>
+          <p class="ed-contact-note">Atendimento em {{CITY}}/{{STATE}} e região.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <div class="footer-brand">
+        <span class="brand-mark">{{BUSINESS_NAME}}</span>
+        <p>{{SEGMENT}} · {{CITY}}/{{STATE}}</p>
+      </div>
+      <nav class="footer-nav" aria-label="Navegação do rodapé">
+        <a href="#sobre">Sobre</a>
+        <a href="#servicos">Serviços</a>
+        <a href="#processo">Processo</a>
+        <a href="#contato">Contato</a>
+      </nav>
+      <div class="footer-contact">
+        <a href="tel:{{PHONE}}">{{PHONE}}</a>
+        <a href="#contato">WhatsApp</a>
+      </div>
+    </div>
+    <div class="shell footer-legal">
+      <span>© {{YEAR}} {{BUSINESS_NAME}}. Todos os direitos reservados.</span>
+      <a href="#topo">Voltar ao topo</a>
+    </div>
+  </footer>
+
+  <script src="./src/main.js"></script>
+</body>
+</html>

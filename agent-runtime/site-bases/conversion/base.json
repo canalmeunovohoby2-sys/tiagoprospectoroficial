@@ -1,0 +1,8 @@
+{
+  "id": "conversion",
+  "label": "Comercial / Conversão",
+  "summary": "Arquitetura orientada a ação: hero com CTA forte, prova social, benefícios em cards e CTA fixo.",
+  "intent": ["comercial", "conversão", "oferta", "agendamento", "vendas", "energético", "popular"],
+  "archetypes": ["Bold", "Performance", "Street", "Pop", "Playful", "Automotive", "Tech", "Health-tech"],
+  "structure": ["header", "hero-cta", "stats-band", "benefits-cards", "services-cards", "process-steps", "testimonials", "location", "final-cta", "sticky-cta", "footer"]
+}

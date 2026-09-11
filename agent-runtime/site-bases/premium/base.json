@@ -1,0 +1,8 @@
+{
+  "id": "premium",
+  "label": "Premium / Experiência",
+  "summary": "Arquitetura imersiva: fundo escuro, gradientes, glassmorphism, timeline e microinterações.",
+  "intent": ["premium", "exclusivo", "experiência", "sofisticado", "imersivo", "moderno", "luxo"],
+  "archetypes": ["Premium", "Clinical", "Spa", "Bistro", "Organic", "Modern Premium", "Neon"],
+  "structure": ["header-glass", "hero-immersive", "trust", "feature-glass", "showcase", "timeline", "cta-glass", "location", "footer"]
+}

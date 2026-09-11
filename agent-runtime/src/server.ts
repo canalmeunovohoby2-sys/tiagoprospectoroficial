@@ -15,6 +15,7 @@ import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspa
 import type { BusinessContext } from "./tools.js";
 import { assertGenerationQuality } from "./generation-gate.js";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js";
+import { buildGenerationSeed, formatBaseDirective } from "./site-bases.js";
 import { materializeAttachments, type ChatAttachment } from "./attachments.js";
 import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
 import { trimConversationWindow } from "./conversation-window.js";
@@ -481,8 +482,21 @@ export function startServer(port = PORT, host = HOST) {
         const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
         const briefing = (body.briefing && typeof body.briefing === "object" ? body.briefing : {}) as Record<string, unknown>;
 
-        // Missão de geração: workspace limpo (ou arquivos pré-existentes se houver).
-        const seed = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
+        // Direção criativa do negócio (calculada uma vez): é a AUTORIDADE visual
+        // do projeto e também orienta a escolha da base estrutural.
+        const creativeBrief = buildCreativeBrief(business.name ?? "", business.segment ?? "");
+
+        // BASE TÉCNICA (scaffold): quando a geração parte de um workspace vazio,
+        // injeta uma cópia sanitizada de site-bases/<id> para o agente ADAPTAR —
+        // economiza estrutura/CSS/responsividade sem virar template. Arquivos
+        // enviados pelo cliente sempre têm precedência e nunca são sobrescritos.
+        const incomingSeed = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
+        const { seed, baseUsed } = buildGenerationSeed({
+          files: incomingSeed,
+          business,
+          brief: creativeBrief,
+          briefing,
+        });
         const gExec = executionConfig(body);
         if (gExec.provider && !["deepseek", "openai", "nvidia", "openrouter", "gemini", "ollama"].includes(gExec.provider)) {
             send(res, 400, { error: `Provedor "${gExec.provider}" não é suportado pelo runtime (use deepseek, openai, nvidia, openrouter, gemini ou ollama).` });
@@ -617,6 +631,9 @@ DIRETRIZ DE DIVERSIDADE CRIATIVA (obrigatória — leia e aplique):
 - Diversidade ≠ caos: mantenha originalidade + usabilidade + hierarquia + conversão + identidade, respeitando acessibilidade, legibilidade, responsividade, performance e coerência de marca.
 - ENTREGUE EXECUTANDO: crie/edite/remova arquivos reais no workspace. Não explique como fazer nem responda no lugar da execução.`;
 
+        // Diretiva da BASE TÉCNICA (só quando uma base foi pré-carregada).
+        const baseDirective = baseUsed ? `\n${formatBaseDirective(baseUsed)}\n` : "";
+
         const mission = userPrompt
           ? `${userPrompt}
 
@@ -626,8 +643,9 @@ ${ctxLines ? `CONTEXTO REAL DO NEGÓCIO (se fornecido):\n${ctxLines}` : ""}
 ${extra}
 ${genAttachBlock}
 ${researchBlock}
-${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
+${formatCreativeBrief(creativeBrief)}
 ${tokenDirective}
+${baseDirective}
 ${creativeDirective}
 
 IMPORTANTE: crie um site completo conforme o pedido, com identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS, responsivo. Use imagens contextuais reais quando fizer sentido. NUNCA deixe o site "de rascunho" — entregue código real dos arquivos necessários.`
@@ -638,8 +656,9 @@ ${ctxLines || "(apenas nome de arquivo/nenhum dado além do projeto)"}
 ${extra}
 ${genAttachBlock}
 ${researchBlock}
-${formatCreativeBrief(buildCreativeBrief(business.name ?? "", business.segment ?? ""))}
+${formatCreativeBrief(creativeBrief)}
 ${tokenDirective}
+${baseDirective}
 ${creativeDirective}
 
 IMPORTANTE: a "Direção criativa sugerida" é apenas um PONTO DE PARTIDA entre muitas direções possíveis — combine-a com a pesquisa e com o que encontrar no negócio. Cada site deve ter identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS (nunca copie o mesmo layout de outros projetos). Você tem liberdade para escolher o layout e a direção visual. Use imagens contextuais reais.`;
@@ -711,6 +730,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           provider_changed: genProviderChanged,
           runtime: "cline",
           mode: "generate",
+          base: baseUsed,
           gate_ok: gateResult.ok,
           gate_issues: gateResult.issues,
           interaction: { ok: interaction.ok, tested: interaction.tested, issues: interaction.issues, cycles: interaction.cycles },

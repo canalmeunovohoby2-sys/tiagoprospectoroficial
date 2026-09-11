@@ -1,0 +1,8 @@
+{
+  "id": "editorial",
+  "label": "Editorial / Institucional",
+  "summary": "Arquitetura editorial: tipografia display, muito respiro, grid assimétrico e listas numeradas.",
+  "intent": ["institucional", "autoridade", "tradição", "consultivo", "elegante", "sereno"],
+  "archetypes": ["Editorial", "Minimal", "Clássico", "Jurídic", "Financeiro", "Consultivo", "Wellness", "Autoridade"],
+  "structure": ["header", "hero-editorial", "about", "services-list", "statement", "process-steps", "location", "contact", "footer"]
+}
