@@ -55,6 +55,7 @@ interface ServiceItem {
   total: number;
   paid: number;
   createdAt: number;
+  position?: number;
   done?: boolean;
 }
 
@@ -92,6 +93,7 @@ const rowToItem = (r: ServiceRow): ServiceItem => ({
   total: Number(r.total) || 0,
   paid: Number(r.paid) || 0,
   createdAt: new Date(r.created_at).getTime(),
+  position: typeof r.position === "number" ? r.position : 0,
   done: !!r.done,
 });
 
@@ -111,7 +113,7 @@ type UndoAction =
 const HISTORY_LIMIT = 20;
 
 export default function Services() {
-  const { user } = useAuth();
+  const { user, ensureSession } = useAuth();
   const [items, setItems] = useState<ServiceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -241,8 +243,19 @@ export default function Services() {
     setOpen(true);
   };
 
+  // Garante uma sessão válida antes de gravar (mesmo padrão do LeadSearchForm/
+  // AiProvidersSettings): se o usuário ainda não estiver hidratado, tenta o
+  // sign-in de uso pessoal e lê o id direto do Supabase.
+  const resolveUserId = async (): Promise<string | null> => {
+    if (user?.id) return user.id;
+    await ensureSession();
+    const { data } = await supabase.auth.getSession();
+    return data.session?.user?.id ?? null;
+  };
+
   const handleSave = async () => {
-    if (!user) return toast.error("SessÃ£o expirada");
+    const uid = await resolveUserId();
+    if (!uid) return toast.error("Sessão expirada. Recarregue a página e tente de novo.");
     const idNum = identifier.trim();
     if (!idNum) return toast.error("Informe o nÃºmero de identificaÃ§Ã£o");
     const t = parseFloat(total.replace(",", "."));
@@ -298,7 +311,7 @@ export default function Services() {
       }
       toast.success("ServiÃ§o atualizado");
     } else {
-      const minPos = items.reduce((m, s: any) => {
+      const minPos = items.reduce((m, s) => {
         const p = typeof s.position === "number" ? s.position : 0;
         return p < m ? p : m;
       }, 0);
@@ -306,7 +319,7 @@ export default function Services() {
       const { data, error } = await supabase
         .from("services")
         .insert({
-          user_id: user.id,
+          user_id: uid,
           identifier: idNum,
           type: finalType as string,
           total: t,
@@ -408,17 +421,18 @@ export default function Services() {
 
   // ---------------- UNDO ----------------
   const handleUndo = async () => {
-    if (!user) return;
     const action = historyRef.current[historyRef.current.length - 1];
     if (!action) return toast.info("Nada para desfazer");
     setUndoing(true);
     try {
       if (action.kind === "delete") {
+        const uid = await resolveUserId();
+        if (!uid) return toast.error("Sessão expirada. Recarregue a página.");
         const { item, index } = action;
         const { data, error } = await supabase
           .from("services")
           .insert({
-            user_id: user.id,
+            user_id: uid,
             identifier: item.identifier,
             type: item.type as string,
             total: item.total,

@@ -46,6 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   const anonAttempt = useRef<Promise<boolean> | null>(null);
+  const bootstrapped = useRef(false);
 
   const applySession = useCallback((next: Session | null) => {
     setSession((current) => (current?.access_token === next?.access_token ? current : next));
@@ -87,9 +88,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
+    // Enquanto o bootstrap (getSession/sign-in de uso pessoal) não termina, o
+    // evento inicial do Supabase (que pode chegar com sessão nula) é ignorado —
+    // senão o gate cairia em /login antes de tentarmos a sessão automática.
+    bootstrapped.current = false;
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       if (!active) return;
+      if (!bootstrapped.current) return;
       if (s) {
         setAuthError(null);
         void restorePreferences();
@@ -102,6 +108,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!active) return;
       const s = data.session;
       if (s) {
+        bootstrapped.current = true;
         applySession(s);
         void restorePreferences();
         return;
@@ -109,8 +116,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Uso pessoal: sem sessão existente, entra automaticamente.
       const ok = await ensureSession();
       if (!active) return;
-      if (ok) void restorePreferences();
-      if (!ok) setLoading(false);
+      bootstrapped.current = true;
+      if (ok) {
+        const { data: refreshed } = await supabase.auth.getSession();
+        applySession(refreshed.session ?? null);
+        void restorePreferences();
+      } else {
+        setLoading(false);
+      }
     })();
 
     return () => {

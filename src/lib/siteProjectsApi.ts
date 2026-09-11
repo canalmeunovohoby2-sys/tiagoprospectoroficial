@@ -427,7 +427,7 @@ export function buildGenerationMission(ctx: { name?: string | null; segment?: st
     Array.isArray(ctx.services) && ctx.services.length ? `Serviços: ${ctx.services.join(", ")}` : "",
   ].filter(Boolean).join("\n");
   const extra = briefing && Object.keys(briefing).length ? `\nBriefing adicional (use o que for real; não invente):\n${JSON.stringify(briefing).slice(0, 1800)}` : "";
-  const mission = `CRIE UM SITE COMPLETO E PREMIUM para este negócio, direto no workspace (site estático autocontido: index.html completo, CSS em <style> inline ou src/site.css, dados em src/site.json). Você é um Senior UI/UX Director + Art Director + Frontend Engineer especialista em landing pages de alta conversão.
+  let mission = `CRIE UM SITE COMPLETO E PREMIUM para este negócio, direto no workspace (site estático autocontido: index.html completo, CSS em <style> inline ou src/site.css, dados em src/site.json). Você é um Senior UI/UX Director + Art Director + Frontend Engineer especialista em landing pages de alta conversão.
 
 CONTEXTO REAL DO NEGÓCIO:
 ${ctxLines || "(poucos dados — não invente o resto)"}
