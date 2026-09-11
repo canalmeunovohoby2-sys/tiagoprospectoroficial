@@ -873,6 +873,7 @@ type FetchRetryOpts = {
   onRateLimit?: () => void;
   abortIfRateLimited?: () => boolean;
   respectRetryAfter?: boolean;
+  timeoutMs?: number;
 };
 
 async function fetchWithRetry(
@@ -891,7 +892,7 @@ async function fetchWithRetry(
       throw new Error("CIRCUIT_OPEN");
     }
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 15000);
+    const timeout = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 15000);
     try {
       const res = await fetch(url, { ...init, signal: ctrl.signal });
       if (res.status === 429 || res.status >= 500) {
@@ -1468,10 +1469,73 @@ type OverpassSearchResult = {
 };
 
 const OVERPASS_ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass-api.de/api/interpreter",
   "https://lz4.overpass-api.de/api/interpreter",
 ];
+
+// Executa UM lote de selectors no Overpass, tentando os endpoints em ordem.
+// Timeout do servidor e do cliente são parametrizados para que selectors
+// pesados (ex.: regex de `name` sobre cidade grande) usem limites curtos e
+// não bloqueiem os demais lotes.
+async function runOverpassBatch(
+  selectors: string[],
+  areaHeader: string,
+  serverTimeoutSec: number,
+  clientTimeoutMs: number,
+): Promise<{ elements: OverpassElement[]; endpointUsed?: string; query: string; status: number; error?: string }> {
+  const query = `
+    [out:json][timeout:${serverTimeoutSec}];
+    ${areaHeader}
+    (
+      ${selectors.join("\n")}
+    );
+    out center tags 500;
+  `.trim();
+
+  let lastStatus = 0;
+  let endpointUsed: string | undefined;
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      // O mirror priorizado (kumi) é instável e às vezes fica pendurado por
+      // dezenas de segundos. Limita o tempo dele para ceder lugar aos demais.
+      const effectiveTimeout = /kumi/.test(endpoint)
+        ? Math.min(clientTimeoutMs, 15000)
+        : clientTimeoutMs;
+      const res = await fetchWithRetry(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          "User-Agent": "TiagoProspector/1.0 (contato: tiagoprospector)",
+        },
+        body: new URLSearchParams({ data: query }).toString(),
+      }, { retries: 0, respectRetryAfter: true, timeoutMs: effectiveTimeout });
+
+      if (!res.ok) {
+        lastStatus = res.status;
+        await res.text().catch(() => "");
+        console.warn("[search-places] Overpass endpoint failed, trying next", { endpoint, status: res.status });
+        continue;
+      }
+      endpointUsed = endpoint;
+      const data = await res.json().catch(() => ({}));
+      const elements = Array.isArray(data.elements) ? data.elements : [];
+      console.info("[search-places] Overpass success", { endpoint, elements: elements.length });
+      return { elements, endpointUsed, query, status: res.status };
+    } catch (e) {
+      console.warn("[search-places] Overpass endpoint threw", { endpoint, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  console.error("[search-places] Overpass all endpoints failed", lastStatus);
+  return {
+    elements: [],
+    query,
+    status: lastStatus,
+    error: `Overpass indisponível (último status: ${lastStatus || "network"})`,
+  };
+}
 
 async function searchOverpass(segment: string, city: string, state: string, ctx?: SearchCtx): Promise<OverpassSearchResult> {
   try {
@@ -1490,21 +1554,6 @@ async function searchOverpass(segment: string, city: string, state: string, ctx?
     const hasBoundaryFromNominatim = !!(boundary.areaId || (boundary.lat && boundary.lon));
     const boundarySource = boundary.areaId ? "nominatim_area" : boundary.lat ? "nominatim_around" : "overpass_area_name";
 
-    // Usa `nwr` (node+way+relation shorthand) — reduz drasticamente o custo
-    // computacional em cidades grandes como São Paulo (evita 504 Gateway Timeout).
-    const selectors = filters.map((filter) => {
-      const tagSelector = filter.value
-        ? `["${escapeOverpassString(filter.key)}"="${escapeOverpassString(filter.value)}"]`
-        : `["${escapeOverpassString(filter.key)}"~"${escapeOverpassString(filter.regex ?? ".+")}",i]`;
-
-      if (boundary.lat && boundary.lon && !boundary.areaId) {
-        return `nwr${tagSelector}(around:25000,${boundary.lat},${boundary.lon});`;
-      }
-      return `nwr${tagSelector}(area.searchArea);`;
-    });
-
-    if (selectors.length === 0) return { elements: [], error: "Não foi possível montar a query Overpass" };
-
     // Cabeçalho: se temos areaId oficial do Nominatim, usa. Caso contrário,
     // resolve a área direto no Overpass consultando pelo nome da cidade
     // (admin_level=8 para municípios brasileiros).
@@ -1516,60 +1565,72 @@ async function searchOverpass(segment: string, city: string, state: string, ctx?
       areaHeader = `area["name"="${cityEscaped}"]["boundary"="administrative"]["admin_level"="8"]->.searchArea;`;
     }
 
-    // Timeout de 90s: São Paulo/RJ têm grafos gigantes e travam com 25s.
-    // `out center tags 1000` evita truncar cidades grandes (ex.: SP tem 800+
-    // clínicas mapeadas; antes retornava no máximo 100).
-    const query = `
-      [out:json][timeout:90];
-      ${areaHeader}
-      (
-        ${selectors.join("\n")}
-      );
-      out center tags 1000;
-    `.trim();
+    // Usa `nwr` (node+way+relation shorthand) — reduz o custo computacional.
+    const buildSelectors = (fs: OsmTagFilter[]) =>
+      fs.map((filter) => {
+        const tagSelector = filter.value
+          ? `["${escapeOverpassString(filter.key)}"="${escapeOverpassString(filter.value)}"]`
+          : `["${escapeOverpassString(filter.key)}"~"${escapeOverpassString(filter.regex ?? ".+")}",i]`;
+
+        if (boundary.lat && boundary.lon && !boundary.areaId) {
+          return `nwr${tagSelector}(around:25000,${boundary.lat},${boundary.lon});`;
+        }
+        return `nwr${tagSelector}(area.searchArea);`;
+      });
+
+    // Lotes: filtros por TAG (leves) vão numa única query; cada filtro de
+    // regex de `name` (pesado em cidade grande) roda isolado, com timeout
+    // curto, para que um selector lento não derrube os demais.
+    const tagFilters = filters.filter((f) => !!f.value);
+    const regexFilters = filters.filter((f) => !f.value);
+    const batches: Array<{ label: string; selectors: string[]; serverTimeoutSec: number; clientTimeoutMs: number }> = [];
+    if (tagFilters.length > 0) {
+      batches.push({ label: "tags", selectors: buildSelectors(tagFilters), serverTimeoutSec: 25, clientTimeoutMs: 42000 });
+    }
+    for (const rf of regexFilters) {
+      batches.push({ label: `regex:${rf.key}`, selectors: buildSelectors([rf]), serverTimeoutSec: 12, clientTimeoutMs: 14000 });
+    }
+
+    if (batches.length === 0) return { elements: [], error: "Não foi possível montar a query Overpass" };
 
     console.info("[search-places] Overpass request", {
       boundarySource,
       nominatimAvailable: hasBoundaryFromNominatim,
-      selectorCount: selectors.length,
-      timeoutSec: 60,
+      tagSelectors: tagFilters.length,
+      regexSelectors: regexFilters.length,
+      batches: batches.length,
     });
 
-    // Tenta múltiplos endpoints do Overpass. Se o primário retornar 504/5xx
-    // (Gateway Timeout — comum em cidades grandes), migra para mirror.
-    let lastStatus = 0;
-    let lastText = "";
+    const collected: OverpassElement[] = [];
+    const seenElem = new Set<string>();
     let endpointUsed: string | undefined;
-    for (const endpoint of OVERPASS_ENDPOINTS) {
-      try {
-        const res = await fetchWithRetry(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "User-Agent": "TiagoProspector/1.0 (contato: tiagoprospector)",
-          },
-          body: new URLSearchParams({ data: query }).toString(),
-        }, { retries: 1, respectRetryAfter: true });
+    let lastQuery = "";
+    let lastStatus = 0;
+    let lastError: string | undefined;
 
-        if (!res.ok) {
-          const t = await res.text().catch(() => "");
-          lastStatus = res.status;
-          lastText = t;
-          console.warn("[search-places] Overpass endpoint failed, trying next", { endpoint, status: res.status });
-          continue;
-        }
-        endpointUsed = endpoint;
-        const data = await res.json().catch(() => ({}));
-        const elements = Array.isArray(data.elements) ? data.elements : [];
-        console.info("[search-places] Overpass success", { endpoint, elements: elements.length });
-        return { elements, query, boundarySource, endpointUsed };
-      } catch (e) {
-        console.warn("[search-places] Overpass endpoint threw", { endpoint, error: e instanceof Error ? e.message : String(e) });
+    for (const batch of batches) {
+      const r = await runOverpassBatch(batch.selectors, areaHeader, batch.serverTimeoutSec, batch.clientTimeoutMs);
+      lastQuery = r.query;
+      lastStatus = r.status;
+      if (r.endpointUsed) endpointUsed = r.endpointUsed;
+      if (r.error && !r.endpointUsed) lastError = r.error;
+      for (const el of r.elements) {
+        const key = `${el.type}:${el.id}`;
+        if (seenElem.has(key)) continue;
+        seenElem.add(key);
+        collected.push(el);
       }
+      console.info("[search-places] Overpass batch done", {
+        label: batch.label,
+        elements: r.elements.length,
+        endpoint: r.endpointUsed,
+      });
     }
 
-    console.error("[search-places] Overpass all endpoints failed", lastStatus, lastText.slice(0, 200));
-    return { elements: [], error: `Overpass indisponível (último status: ${lastStatus || "network"})`, query, boundarySource, endpointUsed };
+    if (endpointUsed) {
+      return { elements: collected, query: lastQuery, boundarySource, endpointUsed };
+    }
+    return { elements: [], error: lastError ?? `Overpass indisponível (último status: ${lastStatus || "network"})`, query: lastQuery, boundarySource, endpointUsed };
   } catch (e) {
     console.error("[search-places] Overpass fatal", e);
     return { elements: [], error: e instanceof Error ? e.message : "overpass_failed" };
@@ -1630,7 +1691,7 @@ async function searchOverpassByName(
     }
 
     const query = `
-      [out:json][timeout:90];
+      [out:json][timeout:20];
       ${areaHeader}
       (
         ${selectors.join("\n")}
@@ -1648,6 +1709,7 @@ async function searchOverpassByName(
     let endpointUsed: string | undefined;
     for (const endpoint of OVERPASS_ENDPOINTS) {
       try {
+        const effectiveTimeout = /kumi/.test(endpoint) ? 14000 : 24000;
         const res = await fetchWithRetry(endpoint, {
           method: "POST",
           headers: {
@@ -1655,7 +1717,7 @@ async function searchOverpassByName(
             "User-Agent": "TiagoProspector/1.0 (contato: tiagoprospector)",
           },
           body: new URLSearchParams({ data: query }).toString(),
-        }, { retries: 1, respectRetryAfter: true });
+        }, { retries: 0, respectRetryAfter: true, timeoutMs: effectiveTimeout });
 
         if (!res.ok) { lastStatus = res.status; continue; }
         endpointUsed = endpoint;
