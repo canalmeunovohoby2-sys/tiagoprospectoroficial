@@ -2,7 +2,9 @@
 // Returns only verified public data. No mock, no invented fields.
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { runWebSources, enrichLeadsWithWeb, extractContactsFromMarkdown, extractPhoneBR, extractWhatsAppExplicit, extractWhatsappBR, textMentionsGeo, type WebItem } from "../_shared/lead-web.ts";
+import { extractContactsFromMarkdown } from "../_shared/lead-web.ts";
+import { extractWikimediaFileName, extractOgImage, extractMainImage, extractLogoUrl, pickLeadImage } from "../_shared/lead-images.ts";
+import { TtlCache, cacheKey } from "../_shared/ttl-cache.ts";
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const GOOGLE_KEY_LOADED = typeof GOOGLE_KEY === "string" && GOOGLE_KEY.trim().length > 0;
@@ -15,63 +17,68 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-// Chamada interna às edge functions search-tavily / search-firecrawl (que usam
-// o Provider Key Pool com failover sequencial). Falhas nunca derrubam a busca.
-async function callWebFunction(
-  provider: "tavily" | "firecrawl",
-  payload: { query?: string; url?: string; limit?: number },
-): Promise<{ ok: boolean; results?: WebItem[]; content?: string }> {
-  const baseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-  const fnName = provider === "tavily" ? "search-tavily" : "search-firecrawl";
-  if (!baseUrl || !anonKey) return { ok: false };
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15_000);
-  try {
-    const res = await fetch(`${baseUrl}/functions/v1/${fnName}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}`, apikey: anonKey },
-      body: JSON.stringify(payload),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) return { ok: false };
-    const data = await res.json().catch(() => null);
-    if (!data || typeof data !== "object") return { ok: false };
-    if (payload.url) {
-      return { ok: true, content: typeof (data as { content?: unknown }).content === "string" ? (data as { content: string }).content : undefined };
-    }
-    const results = Array.isArray((data as { results?: unknown }).results) ? (data as { results: WebItem[] }).results : [];
-    return { ok: true, results };
-  } catch {
-    return { ok: false };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function scrapePageContent(url: string): Promise<string | null> {
-  const result = await callWebFunction("firecrawl", { url });
-  return result.ok ? (result.content ?? null) : null;
-}
-
 // ─── Alvo de cobertura (não é meta artificial: é quando paramos de descobrir) ─
 const DISCOVERY_TARGET = Math.min(80, Math.max(10, Number(Deno.env.get("DISCOVERY_TARGET") ?? 28)));
 const MAX_DISCOVERY_QUERIES = Math.min(12, Math.max(2, Number(Deno.env.get("MAX_DISCOVERY_QUERIES") ?? 6)));
 const MAX_DISCOVERY_RESULTS = Math.min(150, Math.max(10, Number(Deno.env.get("MAX_DISCOVERY_RESULTS") ?? 60)));
+// Descoberta 100% gratuita: Google Places está DESACOPLADO do pipeline.
+// O código do Google continua definido (não apagado), mas não é executado —
+// o Prospector funciona sem GOOGLE_API_KEY. Não há fallback Google↔OSM.
+const USE_GOOGLE_PLACES = false;
+
+// ─── Pipeline de imagens 100% gratuito (cache + fetch controlado) ──────────
+const SITE_HTML_CACHE = new TtlCache<string | null>(6 * 60 * 60 * 1000, 200);
+const WIKIDATA_CACHE = new TtlCache<string | null>(24 * 60 * 60 * 1000, 500);
+const LEAD_IMAGE_CACHE = new TtlCache<{ url: string; source: string } | null>(12 * 60 * 60 * 1000, 1500);
+const IMAGE_FETCH_TIMEOUT_MS = 6000;
+const IMAGE_MAX_HTML = 400_000;
+const IMAGE_BUDGET = 25;
+const IMAGE_USER_AGENT = "TiagoProspectorBot/1.0 (+https://tiagoprospector.lovable.app)";
+
+async function fetchSiteHtml(url: string): Promise<string | null> {
+  const key = cacheKey(url);
+  if (SITE_HTML_CACHE.has(key)) return SITE_HTML_CACHE.get(key) ?? null;
+  let result: string | null = null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), IMAGE_FETCH_TIMEOUT_MS);
+    const res = await fetch(url, { redirect: "follow", signal: ctrl.signal, headers: { "User-Agent": IMAGE_USER_AGENT } });
+    clearTimeout(timer);
+    const ct = res.headers.get("content-type") ?? "";
+    if (res.ok && /text\/html|application\/xhtml/i.test(ct)) {
+      result = (await res.text()).slice(0, IMAGE_MAX_HTML);
+    }
+  } catch {
+    result = null;
+  }
+  SITE_HTML_CACHE.set(key, result);
+  return result;
+}
+
+async function resolveWikidataImageName(qid: string): Promise<string | null> {
+  const key = cacheKey("wikidata", qid);
+  if (WIKIDATA_CACHE.has(key)) return WIKIDATA_CACHE.get(key) ?? null;
+  let fileName: string | null = null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), IMAGE_FETCH_TIMEOUT_MS);
+    const url = `https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${encodeURIComponent(qid)}&property=P18&format=json`;
+    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": IMAGE_USER_AGENT } });
+    clearTimeout(timer);
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      const value = (data as { claims?: { P18?: Array<{ mainsnak?: { datavalue?: { value?: unknown } } }> } })
+        ?.claims?.P18?.[0]?.mainsnak?.datavalue?.value;
+      if (typeof value === "string") fileName = value;
+    }
+  } catch {
+    fileName = null;
+  }
+  WIKIDATA_CACHE.set(key, fileName);
+  return fileName;
+}
 const ENRICH_BUDGET = Math.min(20, Math.max(2, Number(Deno.env.get("ENRICH_BUDGET") ?? 10)));
 const PER_LEAD_QUERY_LIMIT = 6;
-
-type WebDiscoveryDiag = {
-  enabled: boolean;
-  target: number;
-  queries: Array<{ query: string; tavily: number; firecrawl: number }>;
-  raw_tavily: number;
-  raw_firecrawl: number;
-  total_candidates: number;
-  accepted: number;
-  rejection_reasons: Record<string, number>;
-  error?: string;
-};
 
 // Hosts de portais/notícias/conteúdo — nunca são a empresa em si.
 const CONTENT_HOST_HINT = /(g1\.globo|uol|terra\.com|folha|estadao|estad[aã]o|c[oó]rreio|gazeta|cidadeverde|guia|portal|not[ií]cias|blogspot|wordpress\.com|medium|jusbrasil|escavador|jurisprudencia|direito)/;
@@ -95,137 +102,6 @@ function looksLikeBusinessTitle(title: string, segNorm: string): boolean {
     if (!looksName) return false;
   }
   return true;
-}
-
-// Descoberta web independente: Tavily/Firecrawl como FONTE DE DESCOBERTA (não
-// só enriquecimento). Multi-queries + multi-provedores. NÃO exige telefone/
-// WhatsApp/domínio no snippet (isso eliminava empresas reais antes da
-// confirmação) — exige empresa/estabelecimento real + cidade + segmento.
-async function discoverLeadsViaWeb(
-  segment: string,
-  city: string, state: string,
-  opts?: { target?: number; queriesCap?: number; resultsCap?: number },
-): Promise<{ leads: PublicLead[]; diagnostics: WebDiscoveryDiag }> {
-  const target = opts?.target ?? DISCOVERY_TARGET;
-  const queriesCap = opts?.queriesCap ?? MAX_DISCOVERY_QUERIES;
-  const resultsCap = opts?.resultsCap ?? MAX_DISCOVERY_RESULTS;
-  const segNorm = normalizeText(segment);
-  const segWords = segNorm.split(/\s+/).filter((w) => w.length >= 3);
-  const webDiag: WebDiscoveryDiag = {
-    enabled: true,
-    target,
-    queries: [],
-    raw_tavily: 0,
-    raw_firecrawl: 0,
-    total_candidates: 0,
-    accepted: 0,
-    rejection_reasons: { invalid_geo: 0, invalid_segment: 0, directory_only: 0, list_article: 0, duplicate_host: 0, not_company: 0 },
-  };
-  const discovered: PublicLead[] = [];
-  const seenHost = new Set<string>();
-  const seenNameCity = new Set<string>();
-
-  // Queries semanticamente variadas (segmento + variações comerciais + cidade).
-  const synonyms = expandSegment(segment).slice(0, 5);
-  const variants: string[] = [];
-  for (const s of synonyms) {
-    const variantsOf = [
-      `${s} em ${city}, ${state}`,
-      `${s} ${city} ${state}`,
-      `empresas de ${s} em ${city}`,
-      `melhores ${s} em ${city}`,
-    ];
-    for (const v of variantsOf) if (!variants.includes(v)) variants.push(v);
-  }
-  variants.push(`${segNorm} ${city} ${state}`);
-  const queries = variants.slice(0, queriesCap);
-
-  for (const query of queries) {
-    if (discovered.length >= target) break;
-    try {
-      const web = await runWebSources({ query, limit: PER_LEAD_QUERY_LIMIT + 4, call: callWebFunction });
-      webDiag.raw_tavily += web.tavily.length;
-      webDiag.raw_firecrawl += web.firecrawl.length;
-      webDiag.queries.push({ query, tavily: web.tavily.length, firecrawl: web.firecrawl.length });
-
-      const items = [...web.tavily, ...web.firecrawl];
-      for (const item of items) {
-        if (discovered.length >= target || discovered.length >= resultsCap) break;
-        const name = (item.title ?? "").trim();
-        if (!name || name.length < 3) continue;
-
-        const text = `${name} ${item.description || ""} ${item.url}`;
-        const textNorm = normalizeText(text);
-
-        // 1) Geografia: cidade (obrigatória) é o sinal forte.
-        if (!textMentionsGeo(text, city, state) && !textMentionsGeo(text, city, "")) {
-          webDiag.rejection_reasons.invalid_geo += 1;
-          continue;
-        }
-        // 2) Segmento presente no título/descrição/url.
-        const segOk = segWords.some((w) => textNorm.includes(w)) || textNorm.includes(segNorm);
-        if (!segOk) {
-          webDiag.rejection_reasons.invalid_segment += 1;
-          continue;
-        }
-        // 3) Não aceitar diretório/portal/lista como empresa.
-        const host = hostOf(item.url);
-        if (!host) continue;
-        if (DIRECTORY_HOST_HINT.test(host) || CONTENT_HOST_HINT.test(host)) {
-          webDiag.rejection_reasons.directory_only += 1;
-          continue;
-        }
-        if (!looksLikeBusinessTitle(name, segNorm)) {
-          webDiag.rejection_reasons.list_article += 1;
-          continue;
-        }
-        // 4) Dedupe entre queries (host + nome+cidade).
-        if (seenHost.has(host)) {
-          webDiag.rejection_reasons.duplicate_host += 1;
-          continue;
-        }
-        const nc = `${normalizeText(name)}|${normalizeText(city)}`;
-        if (seenNameCity.has(nc)) continue;
-        seenHost.add(host);
-        seenNameCity.add(nc);
-
-        const phone = extractPhoneBR(text);
-        const whatsapp = extractWhatsAppExplicit(text) ?? extractWhatsappBR(text);
-
-        const lead: PublicLead = {
-          external_id: `web:${host}`,
-          name: name.slice(0, 200),
-          category: segment,
-          address: null,
-          city,
-          state,
-          phone,
-          whatsapp,
-          website: item.url,
-          google_url: item.url,
-          instagram: null,
-          facebook: null,
-          rating: null,
-          reviews_count: 0,
-          has_website: true,
-          score: 3,
-          score_reasons: ["Fonte: busca web"],
-          opening_hours: null,
-          latitude: null,
-          longitude: null,
-          confidence: "medium",
-          city_matches: true,
-        };
-        discovered.push(lead);
-      }
-    } catch (e) {
-      webDiag.error = e instanceof Error ? e.message : "web_error";
-    }
-  }
-
-  webDiag.total_candidates = discovered.length;
-  webDiag.accepted = discovered.length;
-  return { leads: discovered, diagnostics: webDiag };
 }
 
 // Chaves de dedupe por lead (usadas no merge web/recovery dentro dos dados
@@ -367,6 +243,8 @@ type PublicLead = {
   website: string | null;
   google_url: string | null;
   photo_name?: string | null;
+  photo_url?: string | null;
+  photo_source?: string | null;
   instagram: string | null;
   facebook: string | null;
   rating: number | null;
@@ -404,9 +282,9 @@ type GoogleErrorCode =
 type SearchError = { status: number; text: string; endpoint: string; durationMs?: number };
 
 const OSM_SEGMENT_FILTERS: Array<{ match: string[]; filters: OsmTagFilter[] }> = [
-  { match: ["dentista", "dentistas", "odontologia", "odontologico", "odontológica", "odontologica"], filters: [{ key: "amenity", value: "dentist" }, { key: "healthcare", value: "dentist" }] },
+  { match: ["dentista", "dentistas", "odontologia", "odontologico", "odontológica", "odontologica"], filters: [{ key: "amenity", value: "dentist" }, { key: "healthcare", value: "dentist" }, { key: "office", value: "dentist" }, { key: "name", regex: "dentist|odontolog|odontológica|odontologica|consultorio odontologico|consultório odontológico|clinica odontologica|clínica odontológica" }] },
   { match: ["medico", "médico", "medicos", "médicos", "clinica", "clínica", "clinicas", "clínicas"], filters: [{ key: "amenity", value: "clinic" }, { key: "healthcare", value: "clinic" }, { key: "healthcare", value: "doctor" }] },
-  { match: ["advogado", "advogados", "advocacia"], filters: [{ key: "office", value: "lawyer" }, { key: "amenity", value: "lawyer" }, { key: "name", regex: "advogad|advocaci|lawyer|oab" }] },
+  { match: ["advogado", "advogados", "advocacia"], filters: [{ key: "office", value: "lawyer" }, { key: "amenity", value: "lawyer" }] },
   { match: ["contador", "contadores", "contabilidade"], filters: [{ key: "office", value: "accountant" }, { key: "name", regex: "contabil|contador" }] },
   { match: ["imobiliaria", "imobiliária", "imobiliarias", "imobiliárias"], filters: [{ key: "office", value: "estate_agent" }, { key: "shop", value: "estate_agent" }] },
   { match: ["restaurante", "restaurantes"], filters: [{ key: "amenity", value: "restaurant" }, { key: "amenity", value: "food_court" }] },
@@ -1480,6 +1358,9 @@ const OVERPASS_ENDPOINTS = [
   "https://lz4.overpass-api.de/api/interpreter",
 ];
 
+// Cache de consultas Overpass idênticas (evita repetir a mesma query).
+const OVERPASS_CACHE = new TtlCache<{ elements: OverpassElement[]; endpointUsed: string }>(10 * 60 * 1000, 120);
+
 // Executa UM lote de selectors no Overpass, tentando os endpoints em ordem.
 // Timeout do servidor e do cliente são parametrizados para que selectors
 // pesados (ex.: regex de `name` sobre cidade grande) usem limites curtos e
@@ -1499,8 +1380,15 @@ async function runOverpassBatch(
     out center tags 500;
   `.trim();
 
+  const cached = OVERPASS_CACHE.get(query);
+  if (cached) {
+    console.info("[search-places] Overpass cache hit", { elements: cached.elements.length, endpoint: cached.endpointUsed });
+    return { elements: cached.elements, endpointUsed: cached.endpointUsed, query, status: 200 };
+  }
+
   let lastStatus = 0;
   let endpointUsed: string | undefined;
+  let emptyFallback: { elements: OverpassElement[]; endpointUsed: string; status: number } | null = null;
   for (const endpoint of OVERPASS_ENDPOINTS) {
     try {
       // O mirror priorizado (kumi) é instável e às vezes fica pendurado por
@@ -1527,12 +1415,23 @@ async function runOverpassBatch(
       const data = await res.json().catch(() => ({}));
       const elements = Array.isArray(data.elements) ? data.elements : [];
       console.info("[search-places] Overpass success", { endpoint, elements: elements.length });
-      return { elements, endpointUsed, query, status: res.status };
+      if (elements.length === 0) {
+        // 200 mas sem dados (mirror com base desatualizada?): guarda como
+        // fallback e tenta o próximo endpoint — nunca aceitar "0" do primeiro.
+        if (!emptyFallback) emptyFallback = { elements, endpointUsed: endpoint, status: res.status };
+        continue;
+      }
+      OVERPASS_CACHE.set(query, { elements, endpointUsed: endpoint });
+      return { elements, endpointUsed: endpoint, query, status: res.status };
     } catch (e) {
       console.warn("[search-places] Overpass endpoint threw", { endpoint, error: e instanceof Error ? e.message : String(e) });
     }
   }
 
+  if (emptyFallback) {
+    console.warn("[search-places] Overpass: todos os endpoints vazios; usando o primeiro", { endpoint: emptyFallback.endpointUsed });
+    return { elements: emptyFallback.elements, endpointUsed: emptyFallback.endpointUsed, query, status: emptyFallback.status };
+  }
   console.error("[search-places] Overpass all endpoints failed", lastStatus);
   return {
     elements: [],
@@ -1995,37 +1894,17 @@ async function enrichLeadsWithInstagram(leads: PublicLead[]): Promise<void> {
 }
 
 // ============================================================
-// Website discovery + validation
+// Website: fonte única = OSM
 // ============================================================
-// Goal: when Google Places returns no websiteUri, run a second pass that:
-//   1. Searches Google Places (New) again with name + city + state
-//   2. Falls back to a DuckDuckGo HTML query "<name> <city> site oficial"
-//   3. Validates candidate domains (blacklist directories/socials, fetch HTML,
-//      verify name/city/phone presence) and only accepts when confidence is
-//      high enough. Otherwise leaves website empty (never invents data).
-
-const NON_OFFICIAL_HOSTS = [
-  "facebook.com", "fb.com", "instagram.com", "linkedin.com", "twitter.com", "x.com",
-  "tiktok.com", "youtube.com", "youtu.be", "wa.me", "api.whatsapp.com", "whatsapp.com",
-  "goo.gl", "maps.google.com", "google.com", "google.com.br", "maps.app.goo.gl",
-  "yelp.com", "tripadvisor.com", "tripadvisor.com.br", "ifood.com.br", "rappi.com.br",
-  "olx.com.br", "mercadolivre.com.br", "vivareal.com.br", "zapimoveis.com.br",
-  "doctoralia.com.br", "consultaremedios.com.br", "guiamais.com.br", "telelistas.net",
-  "apontador.com.br", "econodata.com.br", "cnpj.biz", "econoinfo.com.br",
-  "solucoesindustriais.com.br", "soluctionia.com.br", "linktr.ee", "lnk.bio",
-  "beacons.ai", "bio.link", "campsite.bio", "carrd.co",
-];
+// O website do lead vem exclusivamente do OSM (website/contact:website/url).
+// Não há descoberta por Google/Tavily/DuckDuckGo nem adivinhação de domínio.
+// Sem website no OSM → website = null (o lead continua válido).
 
 function hostOf(url: string): string {
   try {
     const u = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
     return u.hostname.replace(/^www\./, "").toLowerCase();
   } catch { return ""; }
-}
-
-function isOfficialCandidateHost(host: string): boolean {
-  if (!host || host.length < 4) return false;
-  return !NON_OFFICIAL_HOSTS.some((bad) => host === bad || host.endsWith(`.${bad}`));
 }
 
 // Detecta sites de baixa qualidade comercial: domínios grátis/placeholder,
@@ -2059,242 +1938,9 @@ function digits(v: string | null | undefined): string {
   return (v ?? "").replace(/\D/g, "");
 }
 
-type WebsiteValidation = {
-  url: string;
-  host: string;
-  confidence: number;
-  signals: string[];
-};
-
-async function validateCandidateWebsite(
-  candidate: string,
-  lead: PublicLead,
-  city: string,
-  state: string,
-  timeoutMs = 4000,
-): Promise<WebsiteValidation | null> {
-  const host = hostOf(candidate);
-  if (!isOfficialCandidateHost(host)) return null;
-
-  const nameNorm = normalizeName(lead.name);
-  const hostMain = normalizeName(host.split(".")[0] ?? "");
-  const signals: string[] = [];
-  let score = 0;
-
-  // Host vs name affinity
-  if (hostMain && nameNorm) {
-    if (hostMain === nameNorm) { score += 50; signals.push("host=name"); }
-    else if (hostMain.length >= 4 && (nameNorm.includes(hostMain) || hostMain.includes(nameNorm.slice(0, Math.max(4, Math.min(nameNorm.length, 10)))))) {
-      score += 30; signals.push("host~name");
-    }
-  }
-
-  // Fetch HTML for content-level signals
-  let html = "";
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-    const url = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
-    const res = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; LeadHunterBrasil/1.0)",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.5",
-      },
-      signal: ctrl.signal,
-    }).finally(() => clearTimeout(timer));
-    if (res.ok) {
-      const ct = res.headers.get("content-type") ?? "";
-      if (/text\/html|application\/xhtml/i.test(ct)) {
-        html = (await res.text()).slice(0, 400_000);
-      }
-    }
-  } catch { /* ignore */ }
-
-  if (html) {
-    const htmlNorm = html.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    const nameTokens = nameNorm.match(/[a-z0-9]{4,}/g) ?? [];
-    const nameHits = nameTokens.filter((t) => htmlNorm.includes(t)).length;
-    if (nameHits >= 2) { score += 25; signals.push(`name-tokens:${nameHits}`); }
-    else if (nameHits === 1) { score += 10; signals.push("name-token:1"); }
-
-    const cityNorm = normalizeName(city);
-    if (cityNorm && htmlNorm.includes(cityNorm)) { score += 20; signals.push("city-in-html"); }
-
-    const stateNorm = state.toLowerCase();
-    if (stateNorm && (htmlNorm.includes(` ${stateNorm} `) || htmlNorm.includes(`-${stateNorm}`) || htmlNorm.includes(`/${stateNorm}`))) {
-      score += 5; signals.push("state-in-html");
-    }
-
-    const leadDigits = digits(lead.phone) || digits(lead.whatsapp);
-    if (leadDigits.length >= 8) {
-      const tail = leadDigits.slice(-8);
-      const htmlDigits = htmlNorm.replace(/\D/g, "");
-      if (htmlDigits.includes(tail)) { score += 30; signals.push("phone-match"); }
-    }
-  } else {
-    signals.push("html-unreachable");
-  }
-
-  return { url: /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`, host, confidence: score, signals };
-}
-
-async function findWebsiteViaPlaces(lead: PublicLead, city: string, state: string): Promise<string[]> {
-  if (!GOOGLE_KEY_LOADED) return [];
-  const queries = [
-    `${lead.name} ${city} ${state}`,
-    `${lead.name} ${city}`,
-    `${lead.name} site oficial`,
-  ];
-  const found = new Set<string>();
-  for (const q of queries) {
-    try {
-      const res = await fetchWithRetry("https://places.googleapis.com/v1/places:searchText", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Goog-Api-Key": GOOGLE_KEY ?? "",
-          "X-Goog-FieldMask": "places.id,places.displayName,places.websiteUri,places.formattedAddress",
-        },
-        body: JSON.stringify({ textQuery: q, languageCode: "pt-BR", regionCode: "BR", pageSize: 5 }),
-      }, 1);
-      if (!res.ok) continue;
-      const data = await res.json().catch(() => ({}));
-      for (const p of (data.places ?? []) as PlaceRaw[]) {
-        if (p.websiteUri) found.add(p.websiteUri);
-      }
-      if (found.size >= 4) break;
-    } catch { /* ignore */ }
-  }
-  return [...found];
-}
-
-async function findWebsiteViaDuckDuckGo(lead: PublicLead, city: string, state: string): Promise<string[]> {
-  try {
-    const q = encodeURIComponent(`${lead.name} ${city} ${state} site oficial`);
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 4000);
-    const res = await fetch(`https://duckduckgo.com/html/?q=${q}`, {
-      method: "GET",
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; LeadHunterBrasil/1.0)",
-        "Accept": "text/html",
-      },
-      signal: ctrl.signal,
-    }).finally(() => clearTimeout(timer));
-    if (!res.ok) return [];
-    const html = (await res.text()).slice(0, 200_000);
-    const out = new Set<string>();
-    // DDG html result links use uddg= redirect param
-    const re = /uddg=([^"&]+)/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(html)) !== null) {
-      try {
-        const decoded = decodeURIComponent(m[1]);
-        const host = hostOf(decoded);
-        if (isOfficialCandidateHost(host)) out.add(decoded);
-      } catch { /* ignore */ }
-      if (out.size >= 6) break;
-    }
-    return [...out];
-  } catch { return []; }
-}
-
-async function findCandidatesViaTavily(lead: PublicLead, city: string, state: string): Promise<string[]> {
-  const out = new Set<string>();
-  try {
-    const name = String(lead.name ?? "").trim().replace(/["']/g, "");
-    if (name.length < 3) return [];
-    const loc = [city, state].filter(Boolean).join(" ");
-    // Telefone entra como sinal extra quando disponível — reforça a associação
-    // e evita empresas homônimas de outras cidades.
-    const phoneHint = digits(lead.phone) || digits(lead.whatsapp);
-    const query = phoneHint.length >= 8
-      ? `${name} ${loc} site oficial`
-      : `${name} ${loc} site`;
-    const web = await runWebSources({ query: query.slice(0, 300), limit: 8, call: callWebFunction });
-    for (const item of [...web.tavily, ...web.firecrawl]) {
-      const u = String(item?.url ?? "");
-      const host = hostOf(u);
-      if (host && isOfficialCandidateHost(host) && !host.includes("instagram") && !host.includes("facebook")) out.add(u);
-      if (out.size >= 5) break;
-    }
-  } catch { /* ignore */ }
-  return [...out];
-}
-
-async function discoverWebsiteForLead(lead: PublicLead, city: string, state: string): Promise<void> {
-  if (lead.website) return;
-  const t0 = Date.now();
-
-  const placeCandidates = await findWebsiteViaPlaces(lead, city, state);
-  const tavilyCandidates = placeCandidates.length === 0 ? await findCandidatesViaTavily(lead, city, state) : [];
-  const ddgCandidates = placeCandidates.length === 0 && tavilyCandidates.length === 0
-    ? await findWebsiteViaDuckDuckGo(lead, city, state)
-    : [];
-  const candidates = [...placeCandidates, ...tavilyCandidates, ...ddgCandidates].filter((u) => isOfficialCandidateHost(hostOf(u)));
-
-  if (candidates.length === 0) {
-    console.info("[search-places][website-discovery] no candidate found", {
-      lead: lead.name, city, state, reason: "no_candidates",
-      placeCandidates: placeCandidates.length, ddgCandidates: ddgCandidates.length,
-      durationMs: Date.now() - t0,
-    });
-    return;
-  }
-
-  const validations = await Promise.all(candidates.slice(0, 6).map((c) => validateCandidateWebsite(c, lead, city, state)));
-  const valid = validations.filter((v): v is WebsiteValidation => !!v).sort((a, b) => b.confidence - a.confidence);
-
-  const best = valid[0];
-  // Accept only when single confident winner (>=40) OR clearly above runner-up
-  const accept = !!best && best.confidence >= 40 && (!valid[1] || best.confidence - valid[1].confidence >= 15);
-
-  console.info("[search-places][website-discovery] result", {
-    lead: lead.name, city, state,
-    candidates: candidates.length,
-    validated: valid.length,
-    best: best ? { host: best.host, confidence: best.confidence, signals: best.signals } : null,
-    runnerUp: valid[1] ? { host: valid[1].host, confidence: valid[1].confidence } : null,
-    accepted: accept,
-    reason: accept ? "accepted" : (best ? "low_confidence_or_tie" : "no_valid_candidate"),
-    durationMs: Date.now() - t0,
-  });
-
-  if (accept && best) {
-    lead.website = best.url;
-    lead.has_website = true;
-    lead.score_reasons = [...(lead.score_reasons ?? []), `Site descoberto via validação multi-critério (${best.confidence}pts)`];
-  }
-}
-
-async function runWebsiteDiscovery(leads: PublicLead[], city: string, state: string): Promise<void> {
-  const targets = leads.filter((l) => !l.website);
-  if (targets.length === 0) return;
-  // Processa os leads sem site com mais sinais comerciais primeiro (reviews),
-  // limitado para manter o runtime do enrich aceitável.
-  const queue = [...targets]
-    .sort((a, b) => (b.reviews_count ?? 0) - (a.reviews_count ?? 0))
-    .slice(0, 60);
-  const concurrency = 4;
-  let idx = 0;
-  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
-    while (idx < queue.length) {
-      const my = idx++;
-      try { await discoverWebsiteForLead(queue[my], city, state); } catch { /* ignore */ }
-    }
-  });
-  await Promise.all(workers);
-  console.info("[search-places][website-discovery] summary", {
-    totalLeads: leads.length,
-    withoutSiteBefore: targets.length,
-    attempted: queue.length,
-    recovered: queue.filter((l) => !!l.website).length,
-    stillNoSite: queue.filter((l) => !l.website).length,
-  });
-}
+// Descoberta de website via Google Places / Tavily / DuckDuckGo REMOVIDA.
+// O pipeline é 100% gratuito: usa apenas o website fornecido pelo OSM.
+// Sem website no OSM → website = null (nunca adivinha domínio nem usa buscador).
 
 // ============================================================
 // Lead Score Inteligente (priorização interna)
@@ -2390,42 +2036,6 @@ function sortLeadsByPriority(leads: PublicLead[], segment: string, module: "orvi
     .map((x) => x.l);
 }
 
-// ── Contact Search Providers (5.39) — fallback opcional para descobrir WhatsApp.
-// Tavily usa runWebSources (já existente); Brave e Serper são chamadas diretas,
-// apenas se a respectiva key existir (skip graceful sem key).
-interface WebHit { title: string; url: string; description: string }
-function contactQueries(name: string, city: string): string[] {
-  return [
-    `${name} ${city} WhatsApp`,
-    `${name} ${city} telefone contato`,
-  ];
-}
-async function braveHits(query: string): Promise<WebHit[]> {
-  const key = Deno.env.get("BRAVE_SEARCH_API_KEY");
-  if (!key) return [];
-  try {
-    const res = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=8`, { headers: { "X-Subscription-Token": key, Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
-    if (res.status !== 200) return [];
-    const data = await res.json() as { web?: { results?: Array<{ title?: string; url?: string; description?: string }> } };
-    return (data.web?.results ?? []).map((r) => ({ title: String(r.title ?? ""), url: String(r.url ?? ""), description: String(r.description ?? "") }));
-  } catch { return []; }
-}
-async function serperHits(query: string): Promise<WebHit[]> {
-  const key = Deno.env.get("SERPER_API_KEY");
-  if (!key) return [];
-  try {
-    const res = await fetch("https://google.serper.dev/search", { method: "POST", headers: { "X-API-KEY": key, "Content-Type": "application/json" }, body: JSON.stringify({ q: query, gl: "br", hl: "pt-br", num: 10 }), signal: AbortSignal.timeout(8000) });
-    if (res.status !== 200) return [];
-    const data = await res.json() as { organic?: Array<{ title?: string; link?: string; snippet?: string }> };
-    return (data.organic ?? []).map((r) => ({ title: String(r.title ?? ""), url: String(r.link ?? ""), description: String(r.snippet ?? "") }));
-  } catch { return []; }
-}
-/** Converte hits em texto para extração de contato + evidência de origem. */
-function hitsMarkdown(provider: string, hits: WebHit[]): string {
-  return hits.map((h) => `[${provider}] ${h.title}\n${h.url}\n${h.description}`).join("\n");
-}
-
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -2486,7 +2096,7 @@ Deno.serve(async (req) => {
       if (batchErr) return json({ error: batchErr.message }, 500);
 
       const candidates: Array<Record<string, unknown>> = Array.isArray(batch) ? batch : [];
-      const stats = { processed: 0, websitesFound: 0, phonesFound: 0, whatsappFound: 0, instagramFound: 0, skippedAlreadyEnriched: 0, tavilySearches: 0, braveSearches: 0, serperSearches: 0, whatsappOfficial: 0 };
+      const stats = { processed: 0, websitesFound: 0, phonesFound: 0, whatsappFound: 0, instagramFound: 0, skippedAlreadyEnriched: 0, whatsappOfficial: 0 };
       const firstCity = String(candidates[0]?.city ?? "");
       const firstState = String(candidates[0]?.state ?? "");
 
@@ -2514,52 +2124,15 @@ Deno.serve(async (req) => {
           longitude: null,
         } as unknown as PublicLead;
         if (lead.website && (lead.whatsapp || lead.phone)) { stats.skippedAlreadyEnriched++; return; }
-        if (!lead.website) {
-          await discoverWebsiteForLead(lead, firstCity, firstState).catch(() => {});
-          if (lead.website) stats.websitesFound++;
-        }
+        // Enriquecimento 100% gratuito: somente o PRÓPRIO domínio do lead.
+        // Sem site → permanece null. Nunca usa buscador/API paga.
         if (lead.website && (!lead.whatsapp || !lead.instagram || !lead.phone)) {
-          const md = await scrapePageContent(lead.website).catch(() => null);
-          if (md) {
-            const contacts = extractContactsFromMarkdown(md, lead.city ?? "", lead.state ?? "", { requireGeo: false });
+          const html = await fetchSiteHtml(lead.website).catch(() => null);
+          if (html) {
+            const contacts = extractContactsFromMarkdown(html, lead.city ?? "", lead.state ?? "", { requireGeo: false });
             if (contacts.phone && !lead.phone) { lead.phone = contacts.phone; stats.phonesFound++; }
             if (contacts.whatsapp && !lead.whatsapp) { lead.whatsapp = contacts.whatsapp; stats.whatsappFound++; stats.whatsappOfficial++; }
             if (contacts.instagram && !lead.instagram) { lead.instagram = contacts.instagram; stats.instagramFound++; }
-          }
-        }
-        // CASCATA WEB (5.39): se ainda não há WhatsApp, busca orientada a contato
-        // em Tavily → Brave → Serper (cada uma só se necessário e com chave).
-        if (!lead.whatsapp) {
-          const name = String(lead.name ?? "");
-          const queries = contactQueries(name, lead.city ?? "");
-          for (const q of queries.slice(0, 1)) {
-            if (lead.whatsapp) break;
-            try {
-              const web = await runWebSources({ query: q, limit: 8, call: callWebFunction });
-              stats.tavilySearches++;
-              for (const items of [web.tavily, web.firecrawl]) {
-                const md = hitsMarkdown("tavily", items as unknown as WebHit[]);
-                const c = extractContactsFromMarkdown(md, lead.city ?? "", lead.state ?? "", { requireGeo: true });
-                if (c.whatsapp && !lead.whatsapp) { lead.whatsapp = c.whatsapp; stats.whatsappFound++; }
-                if (c.phone && !lead.phone) lead.phone = c.phone;
-              }
-            } catch { /* sem tavily */ }
-            if (lead.whatsapp) break;
-            const brave = await braveHits(q);
-            if (brave.length) {
-              stats.braveSearches++;
-              const c = extractContactsFromMarkdown(hitsMarkdown("brave", brave), lead.city ?? "", lead.state ?? "", { requireGeo: true });
-              if (c.whatsapp && !lead.whatsapp) { lead.whatsapp = c.whatsapp; stats.whatsappFound++; }
-              if (c.phone && !lead.phone) lead.phone = c.phone;
-            }
-            if (lead.whatsapp) break;
-            const serper = await serperHits(q);
-            if (serper.length) {
-              stats.serperSearches++;
-              const c = extractContactsFromMarkdown(hitsMarkdown("serper", serper), lead.city ?? "", lead.state ?? "", { requireGeo: true });
-              if (c.whatsapp && !lead.whatsapp) { lead.whatsapp = c.whatsapp; stats.whatsappFound++; }
-              if (c.phone && !lead.phone) lead.phone = c.phone;
-            }
           }
         }
         // PERSISTÊNCIA IMEDIATA (parcial nunca se perde)
@@ -2593,9 +2166,6 @@ Deno.serve(async (req) => {
         whatsapp_found: stats.whatsappFound,
         instagram_found: stats.instagramFound,
         skipped_already_enriched: stats.skippedAlreadyEnriched,
-        tavily_searches: stats.tavilySearches,
-        brave_searches: stats.braveSearches,
-        serper_searches: stats.serperSearches,
         whatsapp_official: stats.whatsappOfficial,
         remaining: Math.max(0, total - nextOffset),
         completed,
@@ -2682,8 +2252,8 @@ Deno.serve(async (req) => {
     // Contexto de resiliência partilhado por-request (circuit breaker + cache).
     const ctx = createSearchCtx();
 
-    // -------- 1) Google Places API (New) - multi-query + radius --------
-    if (GOOGLE_KEY_LOADED && GOOGLE_KEY!.startsWith("AIza")) {
+    // -------- 1) Google Places API (New) — DESACOPLADO (USE_GOOGLE_PLACES = false) --------
+    if (USE_GOOGLE_PLACES && GOOGLE_KEY_LOADED && GOOGLE_KEY!.startsWith("AIza")) {
       sourcesTried.push(SOURCE_LABELS.googleNew);
 
       // Resolve city center/bounds for geo-restricted (locationRestriction) variants in parallel with first query
@@ -2852,19 +2422,10 @@ Deno.serve(async (req) => {
           }
         }
       }
-    } else {
-      const missingOrInvalid = normalizeGoogleError(0, JSON.stringify({ error: { message: GOOGLE_KEY_LOADED ? "invalid API key" : "missing" } }), "Google Places New");
-      warnings.push({
-        source: SOURCE_LABELS.googleNew,
-        code: missingOrInvalid.code,
-        message: missingOrInvalid.message,
-        action: missingOrInvalid.action,
-      });
     }
+    // Sem bloco de "Google ausente": o Google não é mais esperado no fluxo.
 
-    // -------- 3) OpenStreetMap: SEMPRE executa em paralelo ao Google --------
-    // Google Places tem prioridade (processado primeiro no dedupe). OSM entra
-    // apenas complementando estabelecimentos que o Google não retornou.
+    // -------- 3) OpenStreetMap: MOTOR PRINCIPAL (Overpass) + Nominatim de apoio --------
     {
       sourcesTried.push(SOURCE_LABELS.nominatim, SOURCE_LABELS.overpass);
       const [osm, overpass] = await Promise.all([
@@ -3292,81 +2853,39 @@ Deno.serve(async (req) => {
     // (Bloco de descoberta web removido conforme requisito do LeadHunter.)
     diagnostics.web_sources = {};
 
-    // ─── ENRIQUECIMENTO/CONFIRMAÇÃO ORIENTADO AO LEAD ─────────────
-    // Em vez de uma única query cidade+segmento para todos os leads, cada
-    // candidato ainda incompleto é confirmado/enriquecido com busca dirigida
-    // "nome da empresa + cidade (+segmento)". Concorrência controlada, com
-    // orçamento de tempo — falha de um provedor nunca derruba a busca.
-    const webDiag: Record<string, unknown> = { enabled: leads.length > 0, mode: "per_lead" };
+    // ─── ENRIQUECIMENTO 100% GRATUITO (somente o PRÓPRIO domínio do lead) ───
+    // Sem Google, sem Tavily/Firecrawl/Brave/Serper, sem scraping de buscador.
+    // Se o lead veio do OSM com website, lê dados públicos do próprio domínio.
+    // Sem website → permanece null (nunca inventa/adivinha domínio).
+    const webDiag: Record<string, unknown> = { enabled: leads.length > 0, mode: "own_site" };
     let enrichmentAttempted = 0;
     let enrichmentCompleted = 0;
-    let scrapeAttempted = 0;
-    let websitesFound = 0;
     let phonesFound = 0;
     let whatsappsFound = 0;
+    let instagramFound = 0;
     if (leads.length > 0) {
       const candidates = leads
-        .map((l, i) => ({ l, i }))
-        .filter(({ l }) => !l.website || (!l.phone && !l.whatsapp))
-        .sort((a, b) => (a.l.website ? 1 : 0) - (b.l.website ? 1 : 0))
+        .filter((l) => !!l.website && (!l.phone || !l.whatsapp || !l.instagram))
         .slice(0, ENRICH_BUDGET);
-      const enrichStart = Date.now();
-      const runOne = async (): Promise<void> => {
-        for (const { l } of candidates) {
-          if (Date.now() - enrichStart > 45_000) break;
-          enrichmentAttempted += 1;
-          try {
-            const queries = [`${l.name} ${city}`];
-            if (!normalizeText(l.name ?? "").includes(normalizeText(segment))) queries.push(`${l.name} ${segment} ${city}`);
-            let web: { tavily: WebItem[]; firecrawl: WebItem[] } | null = null;
-            for (const q of queries) {
-              web = await runWebSources({ query: q, limit: PER_LEAD_QUERY_LIMIT, call: callWebFunction });
-              if (web.tavily.length + web.firecrawl.length > 0) break;
-            }
-            if (!web || web.tavily.length + web.firecrawl.length === 0) continue;
-            const hadSite = !!l.website;
-            const hadPhone = !!l.phone;
-            const hadWhats = !!l.whatsapp;
-            const enriched = await enrichLeadsWithWeb({
-              leads: [l as unknown as Parameters<typeof enrichLeadsWithWeb>[0]["leads"][number]],
-              web,
-              city,
-              state,
-              maxScrape: 1,
-              scrape: scrapePageContent,
-            });
-            const out = enriched.leads[0] as PublicLead | undefined;
-            enrichmentCompleted += 1;
-            scrapeAttempted += enriched.summary.scrapeAttempted;
-            if (out?.website && !hadSite) websitesFound += 1;
-            if (out?.phone && !hadPhone) phonesFound += 1;
-            if (out?.whatsapp && !hadWhats) whatsappsFound += 1;
-            if (out) {
-              const ext = out.external_id;
-              if (typeof ext === "string") {
-                const auditItem = perLeadAudit.get(ext);
-                if (auditItem) perLeadAudit.set(ext, { ...auditItem, web_enriched: true });
-              }
-            }
-          } catch {
-            // enriquecimento nunca quebra a busca
-          }
-        }
-      };
-      await Promise.all([runOne(), runOne()]);
+      await mapWithConcurrency(candidates, 3, async (l) => {
+        enrichmentAttempted += 1;
+        try {
+          const html = await fetchSiteHtml(l.website as string);
+          if (!html) return;
+          const contacts = extractContactsFromMarkdown(html, l.city ?? "", l.state ?? "", { requireGeo: false });
+          if (contacts.phone && !l.phone) { l.phone = contacts.phone; phonesFound += 1; }
+          if (contacts.whatsapp && !l.whatsapp) { l.whatsapp = contacts.whatsapp; whatsappsFound += 1; }
+          if (contacts.instagram && !l.instagram) { l.instagram = contacts.instagram; instagramFound += 1; }
+          enrichmentCompleted += 1;
+        } catch { /* enriquecimento nunca quebra a busca */ }
+      });
       webDiag.enrichment_attempted = enrichmentAttempted;
       webDiag.enrichment_completed = enrichmentCompleted;
-      webDiag.scrape_attempted = scrapeAttempted;
-      webDiag.websites_found = websitesFound;
       webDiag.phones_found = phonesFound;
       webDiag.whatsapps_found = whatsappsFound;
+      webDiag.instagram_found = instagramFound;
     }
-    // Preserva métricas da descoberta independente (quando houve) e adiciona
-    // as da rodada de enrich — webDiag nunca sobrescreve o funil da descoberta.
-    diagnostics.web_sources = {
-      ...(diagnostics.web_sources && typeof diagnostics.web_sources === "object" ? diagnostics.web_sources as Record<string, unknown> : {}),
-      ...webDiag,
-    };
+    diagnostics.web_sources = webDiag;
 
     // ─── Qualificação comercial ──────────────────────────────────
     // O motor rankeia por potencial comercial, não filtra.
@@ -3413,6 +2932,61 @@ Deno.serve(async (req) => {
     }
 
     // Pipeline metrics — contabiliza cada etapa do funil para auditoria.
+    // ─── IMAGENS 100% GRATUITAS ─────────────────────────────────────────
+    // Prioridade: Wikimedia (OSM) > og:image > imagem principal > logo.
+    // Somente candidatos do próprio domínio (ou Wikimedia associada via OSM).
+    // Sem imagem genérica. Cache por lead; budget e concorrência controlados.
+    {
+      const imgTargets = leads.filter((l) => !l.photo_url).slice(0, IMAGE_BUDGET);
+      await mapWithConcurrency(
+        imgTargets,
+        3,
+        async (l) => {
+          const tags = (osmTagsById.get(l.external_id) ?? {}) as Record<string, string | undefined>;
+          const key = cacheKey("img", l.external_id, l.website);
+          const cached = LEAD_IMAGE_CACHE.get(key);
+          if (cached !== undefined) {
+            if (cached) { l.photo_url = cached.url; l.photo_source = cached.source; }
+            return;
+          }
+          let wikimediaFileName = extractWikimediaFileName(tags as Record<string, string>);
+          if (!wikimediaFileName && tags.wikidata) {
+            wikimediaFileName = await resolveWikidataImageName(String(tags.wikidata));
+          }
+          let og: string | null = null;
+          let main: string | null = null;
+          let logo: string | null = null;
+          if (!wikimediaFileName && l.website) {
+            const html = await fetchSiteHtml(l.website);
+            if (html) {
+              og = extractOgImage(html, l.website);
+              main = extractMainImage(html, l.website);
+              logo = extractLogoUrl(html, l.website);
+            }
+          }
+          const picked = pickLeadImage({ siteUrl: l.website, wikimediaFileName, og, main, logo });
+          if (picked) {
+            l.photo_url = picked.url;
+            l.photo_source = picked.source;
+          }
+          LEAD_IMAGE_CACHE.set(key, picked ? { url: picked.url, source: picked.source } : null);
+        },
+        { interItemDelayMs: 0 },
+      );
+      const withImage = leads.filter((l) => !!l.photo_url).length;
+      diagnostics.images = {
+        attempted: imgTargets.length,
+        with_image: withImage,
+        by_source: {
+          wikimedia: leads.filter((l) => l.photo_source === "wikimedia").length,
+          website_og: leads.filter((l) => l.photo_source === "website-og").length,
+          website_html: leads.filter((l) => l.photo_source === "website-html").length,
+          website_logo: leads.filter((l) => l.photo_source === "website-logo").length,
+        },
+        none: leads.length - withImage,
+      };
+    }
+
     const pipeline = {
       discovered: leads.length,
       valid: leads.length,
@@ -3434,12 +3008,12 @@ Deno.serve(async (req) => {
       recovery_raw: Number(diagnostics.recovery_raw) || 0,
       recovery_accepted: recoveryAcceptedCount,
       recovery_duplicates: recoveryDuplicates,
-      web_discovery_attempted: sourcesTried.includes("web_discovery"),
+      web_discovery_attempted: false,
       tavily_queries: 0,
-      tavily_raw: Number((diagnostics.web_sources as Record<string, unknown> | undefined)?.["raw_tavily"] ?? 0) || 0,
+      tavily_raw: 0,
       firecrawl_queries: 0,
-      firecrawl_raw: Number((diagnostics.web_sources as Record<string, unknown> | undefined)?.["raw_firecrawl"] ?? 0) || 0,
-      web_accepted: Number((diagnostics.web_sources as Record<string, unknown> | undefined)?.["accepted"] ?? 0) || 0,
+      firecrawl_raw: 0,
+      web_accepted: 0,
       web_discovery_added: Number(diagnostics.web_discovery_added) || 0,
       web_discovery_duplicates: Number(diagnostics.web_discovery_duplicates) || 0,
       duplicates_removed: Number((diagnostics.combined as Record<string, unknown> | undefined)?.["duplicates_removed"] ?? 0) || 0,
