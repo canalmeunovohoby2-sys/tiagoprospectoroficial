@@ -128,11 +128,14 @@ export function siteMetrics(files: SiteFiles): SiteMetrics {
 // Reconstruções EXPLÍCITAS ("reescreva do zero") não passam pelo guard.
 export function editRegressionIssues(before: SiteFiles, after: SiteFiles, instruction: string): string[] {
   const ins = String(instruction ?? "");
-  if (REBUILD_INTENT.test(ins)) return [];
+  // FASE 7 — Reconstruções EXPLÍCITAS relaxam a PRESERVAÇÃO ESTRUTURAL, mas
+  // NUNCA as checagens críticas de saúde (stylesheet/chaves/scripts) mais abaixo.
+  const rebuild = REBUILD_INTENT.test(ins);
   const b = siteMetrics(before);
   const a = siteMetrics(after);
   const issues: string[] = [];
 
+  if (!rebuild) {
   // 1) Conteúdo desapareceu de forma drástica (>55% do texto).
   if (b.contentLen > 600 && a.contentLen < b.contentLen * 0.45 && !REMOVAL.test(ins)) {
     issues.push(`O conteúdo do site encolheu drasticamente (${b.contentLen.toLocaleString("pt-BR")} → ${a.contentLen.toLocaleString("pt-BR")} caracteres). Uma edição deve PRESERVAR o conteúdo existente — restaure as seções/textos que sumiram ou faça uma edição localizada.`);
@@ -179,6 +182,7 @@ export function editRegressionIssues(before: SiteFiles, after: SiteFiles, instru
   if (b.hasH1 && !a.hasH1 && !headingIntent(ins)) {
     issues.push("O título principal (h1/hero) foi removido. Restaure o título principal do site.");
   }
+  } // fim do bloco !rebuild
 
   // 9) <link rel="stylesheet"> removido — sem ele o CSS/tema inteiro deixa de aplicar.
   if (b.styleLinks >= 1 && a.styleLinks === 0 && !REMOVAL.test(ins)) {
@@ -191,7 +195,7 @@ export function editRegressionIssues(before: SiteFiles, after: SiteFiles, instru
   }
 
   // 11) Variáveis CSS do tema (--...) removidas.
-  if (b.cssVars >= 3 && a.cssVars < b.cssVars && !/variave|token|tema|remov|apag|delete|tirar/i.test(ins)) {
+  if (!rebuild && b.cssVars >= 3 && a.cssVars < b.cssVars && !/variave|token|tema|remov|apag|delete|tirar/i.test(ins)) {
     issues.push(`Variáveis CSS (--...) do tema foram removidas (${b.cssVars} → ${a.cssVars}). Restaure as variáveis (cores/tokens) para preservar a identidade visual.`);
   }
 

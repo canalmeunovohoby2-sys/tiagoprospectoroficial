@@ -16,12 +16,15 @@ import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap } from
 import { classifyTask } from "./visual-task.js";
 
 export type FinishBlockKind =
-  | "evidence" | "image" | "inspect" | "verify" | "visual" | "regression" | "quality";
+  | "evidence" | "image" | "inspect" | "verify" | "visual" | "regression" | "quality" | "console" | "images";
 
 export interface FinishDecision {
   block: boolean;
   reason?: string;
   kind?: FinishBlockKind;
+  /** true = o limite de tentativas foi atingido e ainda há gate crítico falhando.
+   * O runtime DEVE encerrar a run com resposta honesta (nunca declarar sucesso). */
+  terminal?: boolean;
 }
 
 export interface GuardCounters {
@@ -36,7 +39,7 @@ export const MAX_VISUAL_ITERATIONS_DEFAULT = 3;
 export function instructionRequestsChange(instruction: string): boolean {
   const text = String(instruction ?? "").trim();
   if (!text) return false;
-  const asks = /adiciona|adicionar|adicione|inclui|incluir|inclua|cria|criar|crie|coloca|colocar|coloque|muda|mudar|mude|troca|trocar|troque|remove|remover|remova|apaga|apagar|apague|deixa|deixar|deixe|faz|fazer|fa[cç]a|transforma|transformar|reconstruir|refina|refinar|refine|melhora|melhore|melhorar|aprimor|otimiz|reescreve|reescrever|substitui|substituir|insere|inserir|edita|editar|edite|implementa|implementar|aplica|aplicar|corrige|corrigir|arruma|arrumar|monta|montar|monte|premium|profissional|sofisticad|primeiro\s+mundo|site\s+completo|site\s+novo/i;
+  const asks = /adiciona|adicionar|adicione|inclui|incluir|inclua|cria|criar|crie|coloca|colocar|coloque|muda|mudar|mude|troca|trocar|troque|remove|remover|remova|apaga|apagar|apague|deixa|deixar|deixe|faz|fazer|fa[cç]a|transforma|transformar|reconstruir|refina|refinar|refine|melhora|melhore|melhorar|aprimor|otimiz|reescreve|reescrever|substitui|substituir|insere|inserir|edita|editar|edite|implementa|implementar|aplica|aplicar|corrige|corrigir|arruma|arrumar|monta|montar|monte|ajust\w*|altera\w*|aument\w*|diminu\w*|reduz\w*|reposicion\w*|centraliz\w*|alinh\w*|move[r]?|premium|profissional|sofisticad|primeiro\s+mundo|site\s+completo|site\s+novo/i;
   const justAsks = /^(o\s+que|como|qual|quando|onde|por\s+que|pode|poderia|voc[eê]\s+acha|diga|explique|resuma|liste)/i;
   if (justAsks.test(text)) return false;
   return asks.test(text);
@@ -75,6 +78,10 @@ export function replyAsksForCode(reply: string): boolean {
 }
 
 // Decide se finish_task deve ser bloqueado agora.
+// FASE 7 — CONFIABILIDADE: NÃO existe bypass por limite de tentativas. Os gates
+// são avaliados em TODAS as tentativas. Ao atingir o limite, gates ainda falhos
+// retornam `terminal: true` → o runtime encerra a run com resposta HONESTA e
+// NUNCA declara sucesso sem prova.
 export function decideFinishBlock(opts: {
   mode: "edit" | "generate";
   files?: Record<string, string>;
@@ -92,103 +99,87 @@ export function decideFinishBlock(opts: {
   visualIterations?: number;
   /** Máximo de iterações visuais consecutivas (evita loop). */
   maxVisualIterations?: number;
+  /** Erros de console observados no último inspect do browser (real, se houver). */
+  consoleErrors?: string[] | null;
+  /** Nº de imagens que falharam ao carregar no último inspect (real, se houver). */
+  brokenImages?: number | null;
 }): FinishDecision {
   const max = opts.maxFinishSkips ?? MAX_FINISH_SKIPS_DEFAULT;
-  if (opts.finishSkips >= max) {
-    // limite de retentativas atingido → deixa finalizar (evita loop), mas avisa.
-    return { block: false };
-  }
+  const terminal = opts.finishSkips >= max;
+  const blocked = (kind: FinishBlockKind, reason: string): FinishDecision => ({ block: true, kind, reason, terminal });
+
   const files = opts.files ?? (opts.workspaceRoot ? readWorkspace(opts.workspaceRoot) : {});
   const hasStart = !!opts.startFiles;
   const changed = hasStart ? JSON.stringify(opts.startFiles) !== JSON.stringify(files) : true;
-
-  // 1) EVIDÊNCIA: se a instrução pedia mudança e nenhum arquivo mudou nesta run,
-  //    o agente não pode afirmar que executou. (aplica a edit E generate)
-  // Bloqueia a PRIMEIRA tentativa (força o modelo a reavaliar); na segunda, se
-  // ainda não houver mudança, o guard deixa finalizar e o runTask reescreve a
-  // resposta final para ser HONESTA (nunca afirmar o que não aconteceu).
   const requestedChange = opts.instruction ? instructionRequestsChange(opts.instruction) : false;
-  if (requestedChange && hasStart && !changed && opts.finishSkips === 0) {
-    return {
-      block: true,
-      kind: "evidence",
-      reason: `A instrução pedia uma alteração no site, mas NENHUM arquivo foi modificado nesta execução. Você NÃO pode afirmar que executou. Use as ferramentas (write_file/edit_file) para aplicar a alteração REAL e só então chame finish_task. Se o estado pedido JÁ estava correto ou não havia o que mudar, finalize dizendo isso claramente (sem afirmar que alterou).`,
-    };
+
+  // 1) EVIDÊNCIA (aplica em TODAS as tentativas): pedia mudança e nada mudou.
+  if (requestedChange && hasStart && !changed) {
+    return blocked("evidence", `A instrução pedia uma alteração no site, mas NENHUM arquivo foi modificado nesta execução. Você NÃO pode afirmar que executou. Use as ferramentas (write_file/edit_file) para aplicar a alteração REAL e só então chame finish_task. Se o estado pedido JÁ estava correto ou não havia o que mudar, finalize dizendo isso claramente (sem afirmar que alterou).`);
   }
 
-  // 2) IMAGE SWAP GUARD (5.35): pedido explícito de trocar/substituir imagem só
-  //    finaliza com evidência de que uma referência de imagem MUDOU no código.
+  // 2) IMAGE SWAP GUARD (5.35) — todas as tentativas.
   if (opts.mode === "edit" && hasStart && changed && opts.startFiles && requestedChange) {
     const wantsSwap = requestsImageSwap(opts.instruction ?? "");
-    if (wantsSwap && !hasImageReferenceChange(opts.startFiles, files) && opts.finishSkips === 0) {
-      return {
-        block: true,
-        kind: "image",
-        reason: `Você foi solicitado a TROCAR/SUBSTITUIR uma imagem, mas o CONJUNTO de imagens no código não mudou (nenhuma URL de imagem foi substituída). Localize o elemento solicitado, altere de verdade a URL/path da imagem com edit_file e verifique no navegador antes de chamar finish_task. Se a imagem já era a correta, finalize dizendo que ela já estava assim.`,
-      };
+    if (wantsSwap && !hasImageReferenceChange(opts.startFiles, files)) {
+      return blocked("image", `Você foi solicitado a TROCAR/SUBSTITUIR uma imagem, mas o CONJUNTO de imagens no código não mudou (nenhuma URL de imagem foi substituída). Localize o elemento solicitado, altere de verdade a URL/path da imagem com edit_file e verifique no navegador antes de chamar finish_task. Se a imagem já era a correta, finalize dizendo que ela já estava assim.`);
     }
   }
 
-  // 3) DEPTH GUARD (5.28, modo edit): tarefas amplas — e pedidos de TROCA DE
-  //    IMAGEM/FOTO — não finalizam sem evidência de que o agente ENTENDEU o
-  //    estado atual (inspeção antes da 1ª alteração).
-  //    VERACIDADE ABSOLUTA (6.0): QUALQUER edição que alterou arquivos exige
-  //    verificação do resultado DEPOIS da última alteração (read-back ou
-  //    browser/visual_review) — aplica-se a TODA tarefa de mudança, não só às
-  //    amplas/imagem/bug. Texto do modelo NÃO é evidência.
+  // 3) DEPTH + VERACIDADE ABSOLUTA (6.0) — todas as tentativas.
   if (opts.mode === "edit" && requestedChange && hasStart && changed && opts.work) {
     const broad = isBroadQualityRequest(opts.instruction ?? "");
     const imageSwap = requestsImageSwap(opts.instruction ?? "");
     const bugFix = isBugReport(opts.instruction ?? "");
     if ((broad || imageSwap || bugFix) && opts.work.inspectedBeforeEdit === false) {
-      return {
-        block: true,
-        kind: "inspect",
-        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de que inspecionou o estado atual ANTES da primeira alteração. ${bugFix ? "Para um DEFEITO/BUG: reproduza o problema antes de mexer — abra o site no navegador (browser_open/browser_eval) e leia os arquivos envolvidos para confirmar a causa raiz. " : ""}ENTENDA o projeto: leia os arquivos relevantes com read_file (e, se envolver aparência/UX/imagem, abra o site no navegador) para localizar o elemento/foto exato — só então continue e finalize.`,
-      };
+      return blocked("inspect", `Esta tarefa alterou arquivos, mas NÃO há evidência de que inspecionou o estado atual ANTES da primeira alteração. ${bugFix ? "Para um DEFEITO/BUG: reproduza o problema antes de mexer — abra o site no navegador (browser_open/browser_eval) e leia os arquivos envolvidos para confirmar a causa raiz. " : ""}ENTENDA o projeto: leia os arquivos relevantes com read_file (e, se envolver aparência/UX/imagem, abra o site no navegador) para localizar o elemento/foto exato — só então continue e finalize.`);
     }
     if (opts.work.verifiedAfterLastEdit === false) {
-      return {
-        block: true,
-        kind: "verify",
-        reason: `Esta tarefa alterou arquivos, mas NÃO há evidência de VERIFICAÇÃO do resultado DEPOIS da última alteração. Texto do modelo NÃO é evidência: releia o(s) arquivo(s) alterado(s) (read_file) e/ou execute browser_reload/browser_inspect/visual_review para CONFIRMAR que a mudança está realmente aplicada e atende ao objetivo antes de chamar finish_task.${bugFix ? " Para um DEFEITO/BUG: recarregue o site (browser_reload) e reproduza o mesmo passo (ex.: browser_eval no clique) para confirmar que o problema sumiu." : ""}`,
-      };
+      return blocked("verify", `Esta tarefa alterou arquivos, mas NÃO há evidência de VERIFICAÇÃO do resultado DEPOIS da última alteração. Texto do modelo NÃO é evidência: releia o(s) arquivo(s) alterado(s) (read_file) e/ou execute browser_reload/browser_inspect/visual_review para CONFIRMAR que a mudança está realmente aplicada e atende ao objetivo antes de chamar finish_task.${bugFix ? " Para um DEFEITO/BUG: recarregue o site (browser_reload) e reproduza o mesmo passo (ex.: browser_eval no clique) para confirmar que o problema sumiu." : ""}`);
     }
   }
 
-  // 3b) CICLO VISUAL AUTÔNOMO (6.0): tarefa VISUAL (layout/geometria) alterou
-  //    código mas NÃO há verificação por RENDERIZAÇÃO real (browser_*/screenshot/
-  //    browser_measure) DEPOIS da última alteração → não pode concluir apenas por
-  //    "o código parece certo". Limite de iterações evita loop; ao atingir, deixa
-  //    finalizar (a resposta honesta/parcial é garantida pelo honestReply).
+  // 3b) BROWSER VERIFICATION OBRIGATÓRIA (FASE 7/7.1) — qualquer alteração
+  //     VISUAL/ASSET (html/css/js ou imagem), tarefa VISUAL ou troca de imagem
+  //     exige evidência REAL de renderização DEPOIS da última alteração. A
+  //     evidência anterior à última edição é considerada STALE e não vale.
   const taskClass = classifyTask(opts.instruction ?? "");
-  if (opts.mode === "edit" && taskClass === "visual" && requestedChange && hasStart && changed && opts.work) {
-    const maxVis = opts.maxVisualIterations ?? MAX_VISUAL_ITERATIONS_DEFAULT;
-    if (!opts.work.renderVerifiedAfterLastEdit && (opts.visualIterations ?? 0) < maxVis) {
-      return {
-        block: true,
-        kind: "visual",
-        reason: `Tarefa VISUAL: você alterou o layout/posição/espaçamento, mas NÃO há evidência de MEDIÇÃO/RENDERIZAÇÃO real APÓS a última alteração. Não conclua apenas pelo código: abra/renderize o site (browser_open/browser_reload), use browser_measure (ou browser_inspect/browser_screenshot/visual_review) e confirme a geometria/posição real antes de chamar finish_task. Se a evidência mostrar que o problema não foi resolvido, faça uma nova correção e meça de novo.`,
-      };
+  const imageSwapTask = requestsImageSwap(opts.instruction ?? "");
+  const visualFilesChanged = !!opts.work?.visualEdit;
+  const browserRequired = taskClass === "visual" || imageSwapTask || visualFilesChanged;
+  if (opts.mode === "edit" && browserRequired && requestedChange && hasStart && changed && opts.work) {
+    if (!opts.work.renderVerifiedAfterLastEdit) {
+      const maxVis = opts.maxVisualIterations ?? MAX_VISUAL_ITERATIONS_DEFAULT;
+      const exhausted = (opts.visualIterations ?? 0) >= maxVis;
+      if (exhausted) {
+        // Esgotou os ciclos SEM obter evidência real → FAILED_TO_VERIFY (terminal):
+        // nunca "acabou as tentativas → pronto".
+        return { block: true, kind: "visual", terminal: true, reason: `Alteração VISUAL/ASSET${opts.work.assetEdit ? " (imagem)" : ""}: o limite de ${maxVis} ciclos foi atingido e NÃO foi possível obter RENDER/INSPEÇÃO real do navegador depois da última alteração. A verificação FALHOU — não é possível concluir com segurança.` };
+      }
+      return blocked("visual", `Esta alteração afeta a RENDERIZAÇÃO${opts.work.assetEdit ? " (imagem/asset)" : ""} e NÃO há evidência real do navegador DEPOIS da última alteração (evidência anterior à edição é STALE). Obrigatório: browser_reload/browser_open → browser_inspect/browser_console/browser_links (ou browser_screenshot/visual_review/browser_measure) e confirmar console sem erros e imagens carregando antes de chamar finish_task. Não conclua apenas porque o código/arquivo mudou.`);
     }
   }
 
-  // 4) REGRESSION GUARD (5.30, modo edit): EDITAR ≠ RECONSTRUIR. Uma edição não
-  //    pode desmontar o site existente (imagens, seções, nav, footer, CTAs,
-  //    efeitos, responsividade, conteúdo). Se houver regressão grave, bloqueia a
-  //    conclusão e o agente deve corrigir/restaurar antes de finalizar.
+  // 3c) CONSOLE ERRORS — bloqueiam conclusão quando há evidência real do browser.
+  if (Array.isArray(opts.consoleErrors) && opts.consoleErrors.length > 0) {
+    const sample = opts.consoleErrors.slice(0, 8).map((e) => `- ${e}`).join("\n");
+    return blocked("console", `O site renderizado apresenta ERROS DE CONSOLE (${opts.consoleErrors.length}). Não é possível declarar concluído com JavaScript/assets/módulos quebrados. Use browser_console para os detalhes, corrija a causa e valide de novo antes de finish_task:\n${sample}`);
+  }
+
+  // 3d) IMAGENS QUEBRADAS — bloqueiam conclusão quando há evidência real do browser.
+  if (typeof opts.brokenImages === "number" && opts.brokenImages > 0) {
+    return blocked("images", `O site renderizado tem ${opts.brokenImages} imagem(ns) que NÃO carregaram (referência inexistente/404). Corrija ou remova a referência (use browser_links para a lista) antes de finalizar.`);
+  }
+
+  // 4) REGRESSION GUARD (5.30) — todas as tentativas. EDITAR ≠ RECONSTRUIR.
   if (opts.mode === "edit" && hasStart && changed && opts.startFiles) {
     const regressions = editRegressionIssues(opts.startFiles, files, opts.instruction ?? "");
     if (regressions.length > 0) {
-      return {
-        block: true,
-        kind: "regression",
-        reason: `REGRESSÃO detectada na edição — você NÃO pode finalizar assim. EDITAR ≠ RECONSTRUIR: preserve o trabalho existente e modifique só o necessário. Corrija/restaure antes de chamar finish_task novamente:\n${regressions.map((r) => `- ${r}`).join("\n")}`,
-      };
+      return blocked("regression", `REGRESSÃO detectada na edição — você NÃO pode finalizar assim. EDITAR ≠ RECONSTRUIR: preserve o trabalho existente e modifique só o necessário. Corrija/restaure antes de chamar finish_task novamente:\n${regressions.map((r) => `- ${r}`).join("\n")}`);
     }
   }
 
-  // 5) QUALITY GATE (generate): estrutura mínima obrigatória.
+  // 5) QUALITY GATE (generate) — todas as tentativas.
   if (opts.mode !== "generate") return { block: false };
   const gate = assertGenerationQuality(files, {
     segment: opts.segment ?? "",
@@ -196,9 +187,5 @@ export function decideFinishBlock(opts: {
     businessHas: (field) => (field === "hours" ? !!opts.businessHasHours : true),
   });
   if (gate.ok) return { block: false };
-  return {
-    block: true,
-    kind: "quality",
-    reason: `A revisão automática ainda detecta problemas obrigatórios antes de finalizar. Corrija TODOS e só então chame finish_task novamente:\n${gate.issues.map((i) => `- ${i}`).join("\n")}`,
-  };
+  return blocked("quality", `A revisão automática ainda detecta problemas obrigatórios antes de finalizar. Corrija TODOS e só então chame finish_task novamente:\n${gate.issues.map((i) => `- ${i}`).join("\n")}`);
 }

@@ -9,9 +9,9 @@ import { buildBrowserTools } from "./browser-tools.js";
 import { BrowserSession } from "./browser-session.js";
 import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
-import { decideFinishBlock, isBugReport, replyAsksForCode, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
+import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
 import { analyzeVisualEvidence } from "./visual-analysis.js";
-import { hasImageReferenceChange, requestsImageSwap } from "./regression-guard.js";
+import { hasImageReferenceChange, requestsImageSwap, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
 import { computeWorkEvidence, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
@@ -120,6 +120,15 @@ export class ProspectorSiteAgent {
   private currentInstruction = "";
   /** Sequência de tool-started da run atual — evidência real para o Depth Guard. */
   private currentToolEvents: WorkEventLike[] = [];
+  /** toolCallId → registro, para marcar falha em tool-finished (started ≠ success). */
+  private pendingToolRecords = new Map<string, WorkEventLike>();
+  /** Motivo do encerramento forçado por falha de verificação (FASE 7). */
+  private terminalReason: string | null = null;
+  /** Última inspeção real do browser (console/imagens) para o Completion Guard. */
+  private lastConsoleErrors: string[] | null = null;
+  private lastBrokenImages: number | null = null;
+  /** finish_task aceito pelos gates nesta missão (verificação final concluída). */
+  private finishCalled = false;
   /** Pesquisas web REALMENTE executadas nesta missão (prova de não-simulação). */
   private researchTrace: ResearchTraceItem[] = [];
 
@@ -156,6 +165,11 @@ export class ProspectorSiteAgent {
           options.business?.segment && `Segmento: ${options.business.segment}`,
           options.business?.city && `Cidade: ${options.business.city}/${options.business.state}`,
         ].filter(Boolean).join(" · "),
+        // FASE 7: última inspeção real (console/imagens) alimenta o Completion Guard.
+        onInspect: (insp) => {
+          this.lastConsoleErrors = Array.isArray(insp.consoleErrors) ? insp.consoleErrors : [];
+          this.lastBrokenImages = Array.isArray(insp.images) ? insp.images.length : 0;
+        },
         // Analisador PROVIDER-AGNOSTIC (FASE 4): usa o provider/modelo do USUÁRIO.
         // NUNCA usa Gemini como fallback; nunca afirma análise visual que não ocorreu.
         visualAnalyze: (ev, prompt) => analyzeVisualEvidence({
@@ -230,6 +244,25 @@ export class ProspectorSiteAgent {
           };
         }
       }
+
+      // GUARDA ESTRUTURAL (FASE 7): reescrever um ARQUIVO EXISTENTE removendo
+      // stylesheet/scripts/estrutura/imagens sem intenção explícita é bloqueado.
+      if (name === "write_file" && (options.mode !== "generate" || options.hasBase) && !REBUILD_RE.test(this.currentInstruction) && this.writeSkips < 4) {
+        const path = typeof input?.path === "string" ? input.path : "";
+        const content = typeof input?.content === "string" ? input.content : "";
+        const clean = path.replace(/^\/+/, "").replace(/\.\//, "");
+        const current = readWorkspace(options.workspaceRoot)[clean];
+        if (current !== undefined && content) {
+          const structural = editRegressionIssues({ [clean]: current }, { [clean]: content }, this.currentInstruction);
+          if (structural.length > 0) {
+            this.writeSkips += 1;
+            return {
+              skip: true,
+              reason: `"write_file" em ${clean} causaria REGRESSÃO estrutural (não é uma edição preservadora). Use "edit_file" para alterar SOMENTE o necessário — se a missão realmente pede reconstrução, diga explicitamente "reconstruir/reescrever do zero". Problemas:\n${structural.map((r) => `- ${r}`).join("\n")}`,
+            };
+          }
+        }
+      }
       if (name !== "finish_task") return undefined;
       const decision = decideFinishBlock({
         mode: options.mode ?? "edit",
@@ -242,13 +275,22 @@ export class ProspectorSiteAgent {
         work: this.currentToolEvents.length ? computeWorkEvidence(this.currentToolEvents) : undefined,
         visualIterations: this.visualCycles,
         maxVisualIterations: MAX_VISUAL_ITERATIONS_DEFAULT,
+        consoleErrors: this.lastConsoleErrors,
+        brokenImages: this.lastBrokenImages,
       });
       if (decision.block) {
         this.finishSkips += 1;
         if (decision.kind === "visual") this.visualCycles += 1;
         this.finishBlocked = true;
+        if (decision.terminal) {
+          // FASE 7: limite atingido SEM passar nos gates → NUNCA declarar sucesso.
+          // Encerra a run com uma resposta HONESTA (o texto do modelo é ignorado).
+          this.terminalReason = `⚠ Não consegui concluir esta alteração com segurança após ${this.finishSkips} verificação(ões). A alteração NÃO foi validada como concluída.\n\nMotivo: ${decision.reason ?? "a verificação final detectou problemas no site."}\n\nNada foi declarado como pronto. Revise o pedido e tente novamente (posso tentar uma abordagem diferente).`;
+          return { stop: true, reason: this.terminalReason };
+        }
         return { skip: true, reason: decision.reason ?? "Revisão automática reprovou a finalização." };
       }
+      this.finishCalled = true;
       return undefined;
     };
 
@@ -348,11 +390,24 @@ export class ProspectorSiteAgent {
       const ev = event as Partial<AgentRuntimeEvent> & WorkEventLike;
       const name = ev.toolName ?? ev.toolCall?.toolName ?? "";
       if (ev?.type === "tool-started" && name) {
-        this.currentToolEvents.push({ type: ev.type, toolName: ev.toolName, toolCall: ev.toolCall });
+        const id = ev.toolCall?.toolCallId ?? ev.toolCallId ?? "";
+        const record: WorkEventLike = { type: ev.type, toolName: ev.toolName, toolCall: ev.toolCall, toolCallId: id };
+        this.currentToolEvents.push(record);
+        if (id) this.pendingToolRecords.set(id, record);
         timing.tools[name] ??= { count: 0, ms: 0 };
         timing.tools[name].count += 1;
         toolStart = { name, at: Date.now() };
       } else if (ev?.type === "tool-finished") {
+        // FASE 7 — tool-started ≠ tool-success: marca falha para não contar como evidência.
+        const id = ev.toolCall?.toolCallId ?? ev.toolCallId ?? "";
+        const rec = id ? this.pendingToolRecords.get(id) : undefined;
+        if (rec) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const content = (ev as any)?.message?.content;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const isError = Array.isArray(content) && content.some((c: any) => c?.type === "tool-result" && c?.isError === true);
+          rec.ok = !isError;
+        }
         if (toolStart) {
           timing.tools[toolStart.name].ms += Date.now() - toolStart.at;
           toolStart = null;
@@ -369,6 +424,11 @@ export class ProspectorSiteAgent {
       this.writeSkips = 0;
       this.researchTrace = [];
       this.pendingScreenshotPath = null;
+      this.terminalReason = null;
+      this.pendingToolRecords.clear();
+      this.lastConsoleErrors = null;
+      this.lastBrokenImages = null;
+      this.finishCalled = false;
     }
     // Snapshot do início desta execução (para detectar "disse que alterou mas nada mudou").
     this.runStartFiles = readWorkspace(this.options.workspaceRoot);
@@ -395,11 +455,18 @@ export class ProspectorSiteAgent {
       const reply = extractLastAssistantText(result?.messages ?? []) || "Concluído.";
       const activity = ProspectorSiteAgent.operationalEvents(events as unknown as never[]);
       this.finalizeTiming(timing, tStart);
+      const terminal = this.terminalReason;
+      // FASE 7 — anti-falso-sucesso: se a missão pedia mudança/layout, a run só
+      // conta como concluída se o finish_task passou pelos gates (finishCalled).
+      const unverified = !terminal && instructionRequestsChange(this.currentInstruction) && !this.finishCalled;
+      const honest = terminal
+        ?? (unverified ? "Não concluí a VERIFICAÇÃO FINAL desta alteração (finish_task não foi executado com os gates aprovados). Por segurança, NÃO declaro a tarefa como concluída — revise ou refaça a alteração." : null);
       return {
-        ok: true,
-        reply: this.honestReply(reply, files, touched),
+        ok: terminal || unverified ? false : true,
+        reply: honest ?? this.honestReply(reply, files, touched),
         files, touched, iterations: 0, events, activity, timing,
-        finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
+        error: honest ?? undefined,
+        finishSkips: this.finishSkips, finishBlocked: this.finishBlocked || !!terminal || unverified,
         researchTrace: this.researchTrace.slice(),
         conversationMessages: result?.messages ?? [],
       };

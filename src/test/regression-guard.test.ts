@@ -105,3 +105,34 @@ describe("Edit Regression Guard — proteções de CSS/tema/estrutura (auditoria
     expect(m.scripts).toBe(1);
   });
 });
+
+describe("FASE 7 — bypass de reconstrução NÃO desliga checagens críticas de saúde", () => {
+  const SHELL = {
+    "index.html": `<html><head><link rel="stylesheet" href="src/site.css"></head><body><h1>X</h1><script>window.x=1</script></body></html>`,
+    "src/site.css": ".a{color:#111}",
+  };
+
+  it("reconstrução explícita AINDA bloqueia <link> de stylesheet removido", () => {
+    const after = { ...SHELL, "index.html": `<html><head></head><body><h1>Novo</h1><script>1</script></body></html>` };
+    expect(editRegressionIssues(SHELL, after, "reescreva o site do zero").join("\n")).toMatch(/link/i);
+  });
+
+  it("reconstrução explícita AINDA bloqueia CSS com chave desbalanceada", () => {
+    const after = { ...SHELL, "src/site.css": ".a{color:#111" };
+    expect(editRegressionIssues(SHELL, after, "reconstrua do zero").join("\n")).toMatch(/chaves/i);
+  });
+
+  it("reconstrução explícita AINDA bloqueia scripts removidos", () => {
+    const after = { ...SHELL, "index.html": `<html><head><link rel="stylesheet" href="src/site.css"></head><body><h1>Novo</h1></body></html>` };
+    expect(editRegressionIssues(SHELL, after, "reconstrua o site").join("\n")).toMatch(/script/i);
+  });
+
+  it("reconstrução explícita PODE remover conteúdo estrutural (não é saúde)", () => {
+    const rich = {
+      "index.html": `<html><body><nav><a>1</a><a>2</a><a>3</a></nav><section><h1>T</h1></section><img src="a.jpg"/><img src="b.jpg"/><img src="c.jpg"/><footer>f</footer></body></html>`,
+      "src/site.css": "@media(max-width:900px){.a{width:100%}}",
+    };
+    const after = { ...rich, "index.html": `<html><body><h1>Novo</h1></body></html>` };
+    expect(editRegressionIssues(rich, after, "reescreva do zero com nova identidade").length).toBe(0);
+  });
+});

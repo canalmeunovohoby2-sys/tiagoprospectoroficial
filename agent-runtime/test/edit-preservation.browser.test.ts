@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BrowserSession } from "../src/browser-session";
 import { buildSiteTools } from "../src/tools";
+import { readWorkspace } from "../src/workspace";
 import { editRegressionIssues } from "../../supabase/functions/_shared/regression-guard";
+import { decideFinishBlock } from "../src/completion-guard";
+import { computeWorkEvidence } from "../src/work-evidence";
 
 const HTML = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <title>Clínica Sorriso</title>
@@ -171,5 +174,77 @@ describe("E2E REAL (Chromium) — Regression Guard bloqueia regressões catastr�
     const after = { ...SHELL, "src/site.css": CSS.replace(".icon{width:24px;height:24px;display:inline-block}", ".icon{width:360px;height:360px") };
     const issues = editRegressionIssues(SHELL, after, "troque a cor do botão");
     expect(issues.join("\n")).toMatch(/chaves/i);
+  });
+});
+
+describe("FASE 7.1 — browser verification obrigatória (Chromium real + Completion Guard)", () => {
+  let r2 = "";
+  let s2: BrowserSession;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let t2: any;
+  const START = { "index.html": HTML, "src/site.css": CSS, "assets/a.svg": SVG_A, "assets/b.svg": SVG_B };
+
+  beforeAll(async () => {
+    r2 = mkdtempSync(join(tmpdir(), "fase71-"));
+    mkdirSync(join(r2, "src"), { recursive: true });
+    mkdirSync(join(r2, "assets"), { recursive: true });
+    writeFileSync(join(r2, "index.html"), HTML);
+    writeFileSync(join(r2, "src/site.css"), CSS);
+    writeFileSync(join(r2, "assets/a.svg"), SVG_A);
+    writeFileSync(join(r2, "assets/b.svg"), SVG_B);
+    s2 = new BrowserSession(r2);
+    t2 = buildSiteTools({ workspaceRoot: r2, business: { name: "Clínica Sorriso", segment: "Odontologia" } });
+  });
+
+  afterAll(async () => { await s2.close(); rmSync(r2, { recursive: true, force: true }); });
+
+  function run2(name: string, input: Record<string, unknown>): Promise<string> {
+    const t = t2.find((x: { name: string }) => x.name === name);
+    return t.execute(input);
+  }
+  const reopen = () => s2.open("/?t=" + Date.now(), { width: 1366, height: 768 });
+
+  it("imagem alterada SEM evidência do browser → finish BLOQUEADO", async () => {
+    await reopen();
+    await run2("edit_file", { path: "index.html", find: 'src="assets/a.svg"', replace: 'src="assets/b.svg"' });
+    const work = computeWorkEvidence([
+      { type: "tool-started", toolName: "read_file", toolCall: { toolName: "read_file", input: { path: "index.html" } } },
+      { type: "tool-started", toolName: "edit_file", toolCall: { toolName: "edit_file", input: { path: "index.html" } } },
+      // read-back após a edição (satisfaz o gate básico de verificação) — mas SEM browser.
+      { type: "tool-started", toolName: "read_file", toolCall: { toolName: "read_file", input: { path: "index.html" } } },
+    ]);
+    const d = decideFinishBlock({ mode: "edit", files: readWorkspace(r2), startFiles: START, instruction: "troque a imagem do hero", finishSkips: 0, work });
+    expect(d.block).toBe(true);
+    expect(d.kind).toBe("visual");
+  });
+
+  it("imagem alterada + BrowserSession real (reload + inspect, 0 quebradas) → finish PERMITIDO", async () => {
+    await reopen();
+    const insp = await s2.inspectCurrent();
+    const work = computeWorkEvidence([
+      { type: "tool-started", toolName: "read_file", toolCall: { toolName: "read_file", input: { path: "index.html" } } },
+      { type: "tool-started", toolName: "edit_file", toolCall: { toolName: "edit_file", input: { path: "index.html" } } },
+      { type: "tool-started", toolName: "browser_reload" },
+    ]);
+    const d = decideFinishBlock({ mode: "edit", files: readWorkspace(r2), startFiles: START, instruction: "troque a imagem do hero", finishSkips: 0, work, consoleErrors: insp.consoleErrors, brokenImages: insp.images.length });
+    expect(insp.images.length).toBe(0);
+    expect(d.block).toBe(false);
+  });
+
+  it("alteração de CSS com BrowserSession real → finish PERMITIDO", async () => {
+    await run2("edit_file", { path: "src/site.css", find: "padding:48px", replace: "padding:52px" });
+    await reopen();
+    const insp = await s2.inspectCurrent();
+    const work = computeWorkEvidence([
+      { type: "tool-started", toolName: "read_file", toolCall: { toolName: "read_file", input: { path: "src/site.css" } } },
+      { type: "tool-started", toolName: "edit_file", toolCall: { toolName: "edit_file", input: { path: "src/site.css" } } },
+      { type: "tool-started", toolName: "browser_reload" },
+    ]);
+    const d = decideFinishBlock({
+      mode: "edit", files: readWorkspace(r2), startFiles: { ...START, "src/site.css": CSS },
+      instruction: "ajuste o espaçamento do hero", finishSkips: 0, work,
+      consoleErrors: insp.consoleErrors, brokenImages: insp.images.length,
+    });
+    expect(d.block).toBe(false);
   });
 });

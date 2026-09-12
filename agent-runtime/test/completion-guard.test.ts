@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideFinishBlock, instructionRequestsChange, isBroadQualityRequest, MAX_FINISH_SKIPS_DEFAULT } from "../src/completion-guard";
+import { decideFinishBlock, instructionRequestsChange, isBroadQualityRequest, MAX_FINISH_SKIPS_DEFAULT, MAX_VISUAL_ITERATIONS_DEFAULT } from "../src/completion-guard";
 
 const GOOD = {
   "index.html": `<!doctype html><html><head><title>Academia Forte</title></head><body>
@@ -33,14 +33,22 @@ describe("Completion Guard (5.24) — conclusão com evidência", () => {
     expect(d.block).toBe(false);
   });
 
-  it("respeita o limite de retentativas (não vira loop infinito)", () => {
+  it("no limite de tentativas AINDA bloqueia e marca terminal (nunca vira sucesso)", () => {
     const d = decideFinishBlock({ mode: "generate", files: POOR, segment: "Academias", finishSkips: MAX_FINISH_SKIPS_DEFAULT });
-    expect(d.block).toBe(false);
+    expect(d.block).toBe(true);
+    expect(d.terminal).toBe(true);
   });
 
-  it("maxFinishSkips custom é respeitado", () => {
-    expect(decideFinishBlock({ mode: "generate", files: POOR, segment: "x", finishSkips: 1, maxFinishSkips: 1 }).block).toBe(false);
+  it("maxFinishSkips custom: bloqueia até o limite e marca terminal", () => {
+    const d1 = decideFinishBlock({ mode: "generate", files: POOR, segment: "x", finishSkips: 1, maxFinishSkips: 1 });
+    expect(d1.block).toBe(true);
+    expect(d1.terminal).toBe(true);
     expect(decideFinishBlock({ mode: "generate", files: POOR, segment: "x", finishSkips: 0, maxFinishSkips: 1 }).block).toBe(true);
+  });
+
+  it("quando o site finalmente passa nos gates, libera (mesmo após tentativas)", () => {
+    const d = decideFinishBlock({ mode: "generate", files: GOOD, segment: "Academias", name: "Academia Forte", finishSkips: 3 });
+    expect(d.block).toBe(false);
   });
 });
 
@@ -147,12 +155,111 @@ describe("Depth Guard (5.28) — pedidos amplos não finalizam com mínimo esfor
     expect(d.reason ?? "").toMatch(/NENHUM arquivo foi modificado/i);
   });
 
-  it("respeita o limite de retentativas também no Depth Guard", () => {
+  it("no limite, o Depth Guard continua bloqueando (terminal)", () => {
     const d = decideFinishBlock({
       mode: "edit", files: CHANGED, startFiles: POOR, instruction: "melhore esse site",
       finishSkips: MAX_FINISH_SKIPS_DEFAULT,
       work: { inspectedBeforeEdit: false, verifiedAfterLastEdit: false, editActionCount: 1, editedPaths: ["src/site.css"] },
     });
+    expect(d.block).toBe(true);
+    expect(d.terminal).toBe(true);
+  });
+});
+
+describe("FASE 7 — console/imagens/visual bloqueiam em TODAS as tentativas", () => {
+  const DONE = {
+    "index.html": `<!doctype html><html><head><link rel="stylesheet" href="src/site.css"></head><body><nav><a>a</a><a>b</a><a>c</a></nav><section class="hero"><h1>Loja</h1><img src="https://img.com/a.jpg"/></section><footer>f</footer></body></html>`,
+    "src/site.css": ".hero{background:#111}@media(max-width:900px){.hero{width:100%}}",
+  };
+  const work = { inspectedBeforeEdit: true, verifiedAfterLastEdit: true, renderVerifiedAfterLastEdit: true, editActionCount: 1, editedPaths: ["index.html"] };
+  const changed = { ...DONE, "index.html": DONE["index.html"].replace("Loja", "Loja Nova") };
+
+  it("console error BLOQUEIA e marca terminal no limite", () => {
+    const d = decideFinishBlock({ mode: "edit", files: changed, startFiles: DONE, instruction: "troque o texto do hero", finishSkips: 0, work, consoleErrors: ["TypeError: x is not a function"] });
+    expect(d.block).toBe(true);
+    expect(d.kind).toBe("console");
+    const t = decideFinishBlock({ mode: "edit", files: changed, startFiles: DONE, instruction: "troque o texto do hero", finishSkips: MAX_FINISH_SKIPS_DEFAULT, work, consoleErrors: ["TypeError: x"] });
+    expect(t.block).toBe(true);
+    expect(t.terminal).toBe(true);
+  });
+
+  it("imagem quebrada BLOQUEIA", () => {
+    const d = decideFinishBlock({ mode: "edit", files: changed, startFiles: DONE, instruction: "troque o texto do hero", finishSkips: 0, work, brokenImages: 2 });
+    expect(d.block).toBe(true);
+    expect(d.kind).toBe("images");
+  });
+
+  it("console limpo + imagens OK → não bloqueia", () => {
+    const d = decideFinishBlock({ mode: "edit", files: changed, startFiles: DONE, instruction: "troque o texto do hero", finishSkips: 0, work, consoleErrors: [], brokenImages: 0 });
+    expect(d.block).toBe(false);
+  });
+});
+
+describe("FASE 7.1 — browser verification OBRIGATÓRIA para alterações visuais/asset", () => {
+  const B = {
+    "index.html": `<!doctype html><html><head><link rel="stylesheet" href="src/site.css"></head><body><nav><a>a</a><a>b</a><a>c</a></nav><section class="hero"><h1>Loja</h1><img src="assets/a.jpg"/></section><footer>f</footer><script src="src/main.js"></script></body></html>`,
+    "src/site.css": ".hero{background:#111}@media(max-width:900px){.hero{width:100%}}",
+    "src/main.js": "document.addEventListener('click',()=>{});",
+    "src/data.json": "{\"a\":1}",
+  };
+  const CSS_AFTER = { ...B, "src/site.css": B["src/site.css"] + ".cta{color:#0af}" };
+  const IMG_AFTER = { ...B, "index.html": B["index.html"].replace("assets/a.jpg", "assets/b.jpg") };
+  const JS_AFTER = { ...B, "src/main.js": B["src/main.js"] + "window.__x=1;" };
+  const JSON_AFTER = { ...B, "src/data.json": "{\"a\":2}" };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const work = (over: Record<string, unknown> = {}): any => ({
+    inspectedBeforeEdit: true, verifiedAfterLastEdit: true, renderVerifiedAfterLastEdit: false,
+    editActionCount: 1, editedPaths: ["src/site.css"], visualEdit: true, assetEdit: false, ...over,
+  });
+
+  it("caso 1: editar IMAGEM sem browser → BLOQUEIA", () => {
+    const d = decideFinishBlock({ mode: "edit", files: IMG_AFTER, startFiles: B, instruction: "troque a imagem do hero", finishSkips: 0, work: work({ editedPaths: ["index.html"] }) });
+    expect(d.block).toBe(true);
+    expect(d.kind).toBe("visual");
+  });
+
+  it("caso 2: imagem + render real OK → PERMITE", () => {
+    const d = decideFinishBlock({ mode: "edit", files: IMG_AFTER, startFiles: B, instruction: "troque a imagem do hero", finishSkips: 0, work: work({ editedPaths: ["index.html"], renderVerifiedAfterLastEdit: true }), consoleErrors: [], brokenImages: 0 });
+    expect(d.block).toBe(false);
+  });
+
+  it("caso 3: imagem quebrada (brokenImages>0) → BLOQUEIA", () => {
+    const d = decideFinishBlock({ mode: "edit", files: IMG_AFTER, startFiles: B, instruction: "troque a imagem do hero", finishSkips: 0, work: work({ editedPaths: ["index.html"], renderVerifiedAfterLastEdit: true }), brokenImages: 1 });
+    expect(d.block).toBe(true);
+    expect(d.kind).toBe("images");
+  });
+
+  it("caso 4: editar CSS sem browser → BLOQUEIA", () => {
+    const d = decideFinishBlock({ mode: "edit", files: CSS_AFTER, startFiles: B, instruction: "ajuste o espaçamento do hero", finishSkips: 0, work: work() });
+    expect(d.block).toBe(true);
+    expect(d.kind).toBe("visual");
+  });
+
+  it("caso 5: CSS + render + console OK → PERMITE", () => {
+    const d = decideFinishBlock({ mode: "edit", files: CSS_AFTER, startFiles: B, instruction: "ajuste o espaçamento do hero", finishSkips: 0, work: work({ renderVerifiedAfterLastEdit: true }), consoleErrors: [], brokenImages: 0 });
+    expect(d.block).toBe(false);
+  });
+
+  it("caso 6: evidência ANTERIOR à última edição (stale) → BLOQUEIA", () => {
+    const d = decideFinishBlock({ mode: "edit", files: CSS_AFTER, startFiles: B, instruction: "ajuste o espaçamento do hero", finishSkips: 0, work: work({ renderVerifiedAfterLastEdit: false }) });
+    expect(d.block).toBe(true);
+  });
+
+  it("caso 7: editar JS com erro de console → BLOQUEIA", () => {
+    const d = decideFinishBlock({ mode: "edit", files: JS_AFTER, startFiles: B, instruction: "corrija o comportamento do menu", finishSkips: 0, work: work({ editedPaths: ["src/main.js"], renderVerifiedAfterLastEdit: true }), consoleErrors: ["TypeError: x is not a function"], brokenImages: 0 });
+    expect(d.block).toBe(true);
+    expect(d.kind).toBe("console");
+  });
+
+  it("caso 8: alteração visual sem nunca obter browser → limite marca terminal", () => {
+    const d = decideFinishBlock({ mode: "edit", files: CSS_AFTER, startFiles: B, instruction: "ajuste o espaçamento do hero", finishSkips: 0, work: work({ renderVerifiedAfterLastEdit: false }), visualIterations: MAX_VISUAL_ITERATIONS_DEFAULT });
+    expect(d.block).toBe(true);
+    expect(d.terminal).toBe(true);
+  });
+
+  it("edição NÃO visual (json auxiliar) NÃO exige browser", () => {
+    const d = decideFinishBlock({ mode: "edit", files: JSON_AFTER, startFiles: B, instruction: "atualize o arquivo de dados auxiliar", finishSkips: 0, work: work({ editedPaths: ["src/data.json"], visualEdit: false, renderVerifiedAfterLastEdit: false }) });
     expect(d.block).toBe(false);
   });
 });

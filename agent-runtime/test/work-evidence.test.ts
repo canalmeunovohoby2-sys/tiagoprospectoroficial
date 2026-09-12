@@ -68,4 +68,36 @@ describe("Work Evidence (5.28) — evidência real do trabalho na run", () => {
     expect(w.editActionCount).toBe(1);
     expect(w.editedPaths).toEqual(["assets/velha.jpg"]);
   });
+
+  it("FASE 7 — tool que FALHOU (ok:false) NÃO conta como evidência", () => {
+    const failed = (toolName: string, input?: { path?: string }): WorkEventLike => ({ type: "tool-started", toolName, toolCall: { toolName, input: input ?? {} }, ok: false });
+    const w = computeWorkEvidence([
+      failed("read_file", { path: "index.html" }),
+      failed("edit_file", { path: "index.html" }),
+      failed("browser_open"),
+    ]);
+    expect(w.editActionCount).toBe(0);
+    expect(w.editedPaths).toEqual([]);
+    expect(w.inspectedBeforeEdit).toBe(false);
+    expect(w.verifiedAfterLastEdit).toBe(false);
+  });
+
+  it("FASE 7.1 — marca visualEdit/assetEdit por extensão", () => {
+    const e = (path: string): WorkEventLike => ({ type: "tool-started", toolName: "edit_file", toolCall: { toolName: "edit_file", input: { path } } });
+    expect(computeWorkEvidence([e("src/site.css")]).visualEdit).toBe(true);
+    expect(computeWorkEvidence([e("index.html")]).visualEdit).toBe(true);
+    expect(computeWorkEvidence([e("src/main.js")]).visualEdit).toBe(true);
+    expect(computeWorkEvidence([e("assets/a.jpg")]).assetEdit).toBe(true);
+    expect(computeWorkEvidence([e("src/data.json")]).visualEdit).toBe(false);
+  });
+
+  it("FASE 7.1 — verificação ANTES da última edição é STALE (não conta como evidência final)", () => {
+    const ev: WorkEventLike[] = [
+      { type: "tool-started", toolName: "browser_reload" },
+      { type: "tool-started", toolName: "edit_file", toolCall: { toolName: "edit_file", input: { path: "src/site.css" } } },
+    ];
+    const w = computeWorkEvidence(ev);
+    expect(w.renderVerifiedAfterLastEdit).toBe(false);
+    expect(w.visualEdit).toBe(true);
+  });
 });

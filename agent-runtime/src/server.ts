@@ -691,6 +691,16 @@ DIRETRIZ DE DIVERSIDADE CRIATIVA (obrigatória — leia e aplique):
         // Diretiva da BASE TÉCNICA (só quando uma base foi pré-carregada).
         const baseDirective = baseUsed ? `\n${formatBaseDirective(baseUsed)}\n` : "";
 
+        // FASE 7 — quando há base, o fechamento da missão NÃO pode dizer "crie do
+        // zero"/"PRÓPRIOS": precisa mandar ADAPTAR a base existente.
+        const baseAwareImportant = baseUsed
+          ? `IMPORTANTE: ADAPTE a base técnica JÁ CARREGADA no workspace (index.html, src/site.css, src/main.js). Preserve a arquitetura, o sistema de CSS (classes/variáveis --c-*/tokens), o JS e a responsividade existentes e TRANSFORME-OS para ESTE negócio (identidade, paleta, tipografia, seções, composição, efeitos PRÓPRIOS). NÃO reconstrua o site do zero sem necessidade: use edit_file para o que for localizado e só reescreva um arquivo por inteiro quando a missão exigir. Sempre preserve o que não faz parte do pedido.`
+          : `IMPORTANTE: crie um site completo conforme o pedido, com identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS, responsivo. Use imagens contextuais reais quando fizer sentido. NUNCA deixe o site "de rascunho" — entregue código real dos arquivos necessários.`;
+
+        // FASE 7 — os ARQUIVOS atuais vencem qualquer memória/conversa.
+        const memoryDirective = `
+FONTE DE VERDADE DO PROJETO (obrigatória): os ARQUIVOS ATUAIS do workspace são a verdade absoluta. A conversa/memória serve para intenção e decisões anteriores, mas se ela CONTRADIZER o código/arquivos atuais, os ARQUIVOS vencem. Antes de editar algo "lembrado", releia o arquivo atual. Nunca reverta mudanças recentes por causa de memória antiga.`;
+
         const mission = userPrompt
           ? `${userPrompt}
 
@@ -704,9 +714,10 @@ ${formatCreativeBrief(creativeBrief)}
 ${tokenDirective}
 ${baseDirective}
 ${creativeDirective}
+${memoryDirective}
 
-IMPORTANTE: crie um site completo conforme o pedido, com identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS, responsivo. Use imagens contextuais reais quando fizer sentido. NUNCA deixe o site "de rascunho" — entregue código real dos arquivos necessários.`
-          : `Crie do zero o site deste negócio, seguindo o fluxo da sua instrução de sistema (analisar → pesquisar quando necessário → direcionar → estruturar → criar código real → auto-revisar → corrigir → finalizar).
+${baseAwareImportant}`
+          : `${baseUsed ? "Transforme a base técnica já carregada no site deste negócio, seguindo o fluxo da sua instrução de sistema (analisar → pesquisar quando necessário → direcionar → estruturar → adaptar o código real → auto-revisar → corrigir → finalizar)." : "Crie do zero o site deste negócio, seguindo o fluxo da sua instrução de sistema (analisar → pesquisar quando necessário → direcionar → estruturar → criar código real → auto-revisar → corrigir → finalizar)."}
 
 CONTEXTO REAL DO NEGÓCIO:
 ${ctxLines || "(apenas nome de arquivo/nenhum dado além do projeto)"}
@@ -717,8 +728,9 @@ ${formatCreativeBrief(creativeBrief)}
 ${tokenDirective}
 ${baseDirective}
 ${creativeDirective}
+${memoryDirective}
 
-IMPORTANTE: a "Direção criativa sugerida" é apenas um PONTO DE PARTIDA entre muitas direções possíveis — combine-a com a pesquisa e com o que encontrar no negócio. Cada site deve ter identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS (nunca copie o mesmo layout de outros projetos). Você tem liberdade para escolher o layout e a direção visual. Use imagens contextuais reais.`;
+${baseUsed ? baseAwareImportant : `IMPORTANTE: a "Direção criativa sugerida" é apenas um PONTO DE PARTIDA entre muitas direções possíveis — combine-a com a pesquisa e com o que encontrar no negócio. Cada site deve ter identidade, paleta, tipografia, arquitetura e efeitos PRÓPRIOS (nunca copie o mesmo layout de outros projetos). Você tem liberdade para escolher o layout e a direção visual. Use imagens contextuais reais.`}`;
 
         // STREAMING + HEARTBEAT: geração longa; sem bytes a conexão é morta pelo
         // transporte (~300s). Envia NDJSON com ping para manter viva.

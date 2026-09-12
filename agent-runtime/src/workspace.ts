@@ -9,7 +9,6 @@ import { createHash } from "node:crypto";
 export type FileMap = Record<string, string>;
 
 const MAX_FILE_BYTES = 2_000_000;
-const MAX_TOTAL_FILES = 400;
 
 function safeJoin(root: string, path: string): string | null {
   const clean = String(path ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
@@ -17,6 +16,8 @@ function safeJoin(root: string, path: string): string | null {
   if (parts.some((s) => s === "..")) return null;
   const abs = resolve(root, ...parts);
   if (abs !== root && !abs.startsWith(root + sep)) return null;
+  // FASE 7 — bloqueia .env/credenciais em QUALQUER nível (consistente com tools.ts).
+  if (parts.some((s) => /^\.env($|\.)/i.test(s))) return null;
   return abs;
 }
 

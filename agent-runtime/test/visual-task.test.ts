@@ -57,13 +57,15 @@ describe("Ciclo visual autônomo no completion guard (6.0)", () => {
     expect(d.block).toBe(false);
   });
 
-  it("tarefa visual atingiu o limite de iterações → não bloqueia (evita loop), mas honestReply cobre", () => {
+  it("tarefa visual atingiu o limite de iterações → BLOQUEIA com terminal (nunca declara sucesso sem render)", () => {
     const d = decideFinishBlock({
       mode: "edit", files: CHANGED, startFiles: START, instruction: "deixe o título mais próximo do botão",
       finishSkips: 0, work: visualVerify(1, ["src/site.css"], false),
       visualIterations: MAX_VISUAL_ITERATIONS_DEFAULT,
     });
-    expect(d.block).toBe(false);
+    expect(d.block).toBe(true);
+    expect(d.kind).toBe("visual");
+    expect(d.terminal).toBe(true);
   });
 
   it("tarefa CONTENT alterou arquivo → não exige ciclo visual (não renderiza)", () => {

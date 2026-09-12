@@ -63,6 +63,26 @@ function nthIndexOf(str: string, needle: string, n: number): number {
 }
 
 const MAX_FILE = 2_000_000;
+// FASE 7 — limite real de arquivos do workspace (evita criação infinita/acidental).
+const MAX_TOTAL_FILES = 400;
+// Arquivos ESTRUTURAIS do site que não podem ser excluídos por delete_file.
+const CRITICAL_SITE_FILES = new Set(["index.html", "src/site.css", "src/main.js", "src/site.json", "package.json"]);
+
+function countWorkspaceFiles(root: string): number {
+  let count = 0;
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name === ".git") continue;
+        walk(join(dir, entry.name));
+      } else if (entry.isFile()) {
+        count += 1;
+      }
+    }
+  };
+  try { walk(root); } catch { /* noop */ }
+  return count;
+}
 
 function safeJoin(root: string, path: string): string | null {
   const clean = String(path ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
@@ -70,7 +90,8 @@ function safeJoin(root: string, path: string): string | null {
   if (parts.some((s) => s === "..")) return null;
   const abs = resolve(root, ...parts);
   if (abs !== root && !abs.startsWith(root + sep)) return null;
-  if (/^\.env($|\.)/.test(clean)) return null;
+  // FASE 7 — bloqueia .env/credenciais em QUALQUER nível (não apenas na raiz).
+  if (parts.some((s) => /^\.env($|\.)/i.test(s))) return null;
   return abs;
 }
 
@@ -130,6 +151,9 @@ export function buildSiteTools(env: ToolEnv) {
       const abs = safeJoin(root, input.path);
       if (!abs) return JSON.stringify({ error: "caminho inválido (fora do workspace)" });
       if (input.content.length > MAX_FILE) return JSON.stringify({ error: "conteúdo grande demais" });
+      if (!existsSync(abs) && countWorkspaceFiles(root) >= MAX_TOTAL_FILES) {
+        return JSON.stringify({ error: `limite de ${MAX_TOTAL_FILES} arquivos do workspace atingido — remova arquivos obsoletos antes de criar novos.` });
+      }
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, input.content, "utf8");
       return JSON.stringify({ ok: true, path: relOf(root, abs) });
@@ -174,6 +198,10 @@ export function buildSiteTools(env: ToolEnv) {
     description: "Remove um arquivo do projeto.",
     inputSchema: z.object({ path: z.string() }),
     async execute(input) {
+      const clean = String(input.path ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+      if (CRITICAL_SITE_FILES.has(clean)) {
+        return JSON.stringify({ error: `"${clean}" é um arquivo ESTRUTURAL do site e não pode ser excluído. Use edit_file para alterar/remover apenas o conteúdo necessário (não apague o arquivo inteiro).` });
+      }
       const abs = safeJoin(root, input.path);
       if (!abs || !existsSync(abs)) return JSON.stringify({ error: "arquivo não encontrado" });
       rmSync(abs, { force: true });

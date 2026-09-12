@@ -9,8 +9,12 @@
 export interface WorkEventLike {
   type?: string;
   toolName?: string;
+  /** id do tool call (para correlacionar started→finished e marcar falha). */
+  toolCallId?: string;
+  /** false = a tool falhou/bloqueou → NÃO conta como trabalho concluído. */
+  ok?: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  toolCall?: { toolName?: string; input?: any };
+  toolCall?: { toolCallId?: string; toolName?: string; input?: any };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   input?: any;
 }
@@ -27,7 +31,16 @@ export interface WorkEvidence {
   editActionCount: number;
   /** Arquivos realmente alterados nesta run (paths distintos). */
   editedPaths: string[];
+  /** FASE 7.1 — algum arquivo alterado afeta a RENDERIZAÇÃO (html/css/js/jsx/ts/tsx)? */
+  visualEdit?: boolean;
+  /** FASE 7.1 — algum ASSET de imagem foi alterado/criado/removido? */
+  assetEdit?: boolean;
 }
+
+// Extensões que afetam a renderização da página (exigem browser verification).
+const VISUAL_EDIT_RE = /\.(html?|css|m?js|c?jsx?|tsx?)$/i;
+// Assets de imagem (referências que precisam resolver no navegador).
+const ASSET_EDIT_RE = /\.(png|jpe?g|webp|svg|gif|avif|ico)$/i;
 
 export const EDIT_TOOLS = new Set(["write_file", "edit_file", "delete_file"]);
 export const INSPECT_TOOLS = new Set([
@@ -69,7 +82,8 @@ export function workToolName(e: WorkEventLike): string {
 }
 
 export function isWorkToolStarted(e: WorkEventLike): boolean {
-  return e?.type === "tool-started" && !!workToolName(e);
+  // FASE 7 — tool-started ≠ tool-success: uma tool que falhou/bloqueou NÃO conta.
+  return e?.type === "tool-started" && !!workToolName(e) && e.ok !== false;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -90,18 +104,23 @@ export function computeWorkEvidence(events: WorkEventLike[]): WorkEvidence {
     }
   }
   if (editIdxs.length === 0) {
-    return { inspectedBeforeEdit: false, verifiedAfterLastEdit: false, renderVerifiedAfterLastEdit: false, editActionCount: 0, editedPaths: [] };
+    return { inspectedBeforeEdit: false, verifiedAfterLastEdit: false, renderVerifiedAfterLastEdit: false, editActionCount: 0, editedPaths: [], visualEdit: false, assetEdit: false };
   }
   const firstEdit = editIdxs[0];
   const lastEdit = editIdxs[editIdxs.length - 1];
   const inspectedBeforeEdit = seq.slice(0, firstEdit).some((s) => INSPECT_TOOLS.has(s.name));
   const verifiedAfterLastEdit = seq.slice(lastEdit + 1).some((s) => VERIFY_TOOLS.has(s.name));
   const renderVerifiedAfterLastEdit = seq.slice(lastEdit + 1).some((s) => RENDER_VERIFY_TOOLS.has(s.name));
+  const paths = [...editedPaths];
+  const visualEdit = paths.some((p) => VISUAL_EDIT_RE.test(p) || ASSET_EDIT_RE.test(p));
+  const assetEdit = paths.some((p) => ASSET_EDIT_RE.test(p));
   return {
     inspectedBeforeEdit,
     verifiedAfterLastEdit,
     renderVerifiedAfterLastEdit,
     editActionCount: editIdxs.length,
-    editedPaths: [...editedPaths].sort(),
+    editedPaths: paths.sort(),
+    visualEdit,
+    assetEdit,
   };
 }

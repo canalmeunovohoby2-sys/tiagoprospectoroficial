@@ -19,6 +19,8 @@ export interface BrowserToolOptions {
   projectId?: string;
   /** Analisador provider-agnostic injetado (usa o provider/modelo do usuário). */
   visualAnalyze?: (ev: VisualEvidence, prompt: string) => Promise<VisualAnalysisResult>;
+  /** Registra a última inspeção real (console/imagens) para o Completion Guard. */
+  onInspect?: (insp: BrowserInspection) => void;
 }
 
 export function buildBrowserTools(
@@ -40,6 +42,12 @@ export function buildBrowserTools(
     return file;
   };
 
+  // Propaga a última inspeção real (console/imagens quebradas) para o guard.
+  const recordInspection = (insp: BrowserInspection): BrowserInspection => {
+    try { options?.onInspect?.(insp); } catch { /* noop */ }
+    return insp;
+  };
+
   // Rotula um elemento medido (identificação compacta).
   const labelOf = (el: MeasuredElement, i: number) => {
     const name = el.id || el.classes || el.tag;
@@ -59,7 +67,7 @@ export function buildBrowserTools(
       const s = session();
       const vp = input.viewport === "mobile" ? MOBILE_VIEWPORT : DESKTOP_VIEWPORT;
       const insp = await s.open(input.path ?? "", vp);
-      return s.formatInspection(insp);
+      return s.formatInspection(recordInspection(insp));
     },
   });
 
@@ -71,7 +79,7 @@ export function buildBrowserTools(
     async execute() {
       const s = session();
       const insp = await s.inspectCurrent();
-      return s.formatInspection(insp);
+      return s.formatInspection(recordInspection(insp));
     },
   });
 
@@ -81,7 +89,7 @@ export function buildBrowserTools(
     inputSchema: z.object({}),
     async execute() {
       const s = session();
-      const insp = await s.inspectCurrent();
+      const insp = recordInspection(await s.inspectCurrent());
       const errs = insp.consoleErrors;
       const warns = insp.consoleWarnings;
       const failed = insp.failedRequests;
@@ -100,7 +108,7 @@ export function buildBrowserTools(
     inputSchema: z.object({}),
     async execute() {
       const s = session();
-      const insp = await s.inspectCurrent();
+      const insp = recordInspection(await s.inspectCurrent());
       const lines: string[] = [];
       if (insp.brokenAnchors.length) lines.push(`Anchors quebrados (${insp.brokenAnchors.length}):`, ...insp.brokenAnchors.map((b) => `- ${b} não existe no DOM`));
       else lines.push("Anchors internos OK (nenhum quebrado).");
@@ -160,7 +168,7 @@ export function buildBrowserTools(
       const vp = input.viewport === "mobile" ? MOBILE_VIEWPORT : DESKTOP_VIEWPORT;
       await s.setViewport(vp.width, vp.height);
       const insp = await s.inspectCurrent();
-      return s.formatInspection(insp);
+      return s.formatInspection(recordInspection(insp));
     },
   });
 
@@ -244,7 +252,7 @@ export function buildBrowserTools(
     async execute() {
       const s = session();
       const insp = await s.reload();
-      return s.formatInspection(insp);
+      return s.formatInspection(recordInspection(insp));
     },
   });
 

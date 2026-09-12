@@ -84,4 +84,36 @@ describe("ProspectorSiteAgent — workspace (Cline SDK runtime)", () => {
     expect(res.name).toBe("Empresa X");
     expect(res.segment).toBe("Advocacia");
   });
+
+  it("FASE 7 — .env em SUBDIRETÓRIO é bloqueado (não só na raiz)", async () => {
+    const out = await run("write_file", { path: "config/.env.local", content: "SECRET=x" });
+    expect(out).toContain("caminho inválido");
+    const rd = await run("read_file", { path: "config/.env.local" });
+    expect(rd).toContain("não encontrado");
+  });
+
+  it("FASE 7 — delete_file protege arquivos ESTRUTURAIS do site", async () => {
+    const out = await run("delete_file", { path: "index.html" });
+    expect(out).toContain("ESTRUTURAL");
+    expect(existsSync(join(root, "index.html"))).toBe(true);
+    const css = await run("delete_file", { path: "src/site.css" });
+    expect(css).toContain("ESTRUTURAL");
+    expect(existsSync(join(root, "src/site.css"))).toBe(true);
+  });
+
+  it("FASE 7 — delete_file remove arquivo NÃO-crítico normalmente", async () => {
+    await run("write_file", { path: "src/tmp.txt", content: "x" });
+    const out = await run("delete_file", { path: "src/tmp.txt" });
+    expect(out).toContain("ok");
+    expect(existsSync(join(root, "src/tmp.txt"))).toBe(false);
+  });
+
+  it("FASE 7 — limite de 400 arquivos do workspace é aplicado", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { writeFileSync, mkdirSync } = require("node:fs");
+    mkdirSync(join(root, "many"), { recursive: true });
+    for (let i = 0; i < 420; i++) writeFileSync(join(root, "many", `f${i}.txt`), "x");
+    const out = await run("write_file", { path: "src/excedente.txt", content: "x" });
+    expect(out).toContain("limite de 400 arquivos");
+  });
 });

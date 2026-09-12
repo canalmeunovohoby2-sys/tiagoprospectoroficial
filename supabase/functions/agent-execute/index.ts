@@ -1,6 +1,13 @@
 // agent-execute (5.13) — executa o Web Design Agent DIRETAMENTE sobre os
 // arquivos reais do Site Project (workspace), não apenas sobre a SiteSpec.
 //
+// ⚠ LEGADO / DEPRECADO (FASE 7 — auditoria): o MOTOR OFICIAL de geração/edição é
+// o Agent Runtime Node (`agent-runtime`: /generate e /run → Cline SDK → tools).
+// O frontend NÃO chama esta função (`invokeAgentExecute` está importado e sem uso).
+// Mantida apenas por compatibilidade; NÃO deve virar fallback automático nem
+// introduzir segunda IA/regra de segurança. Se for removida no futuro, garantir
+// que não existe consumidor real.
+//
 // Ciclo: IA lê arquivos → planeja → devolve operações de arquivo (write/edit
 // multi-arquivo) → runtime aplica com segurança (agent-workspace) → validação
 // (StaticProjectRuntime) → se falhar, devolve erros à IA para corrigir →
