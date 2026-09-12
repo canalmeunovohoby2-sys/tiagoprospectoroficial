@@ -192,8 +192,7 @@ describe("gmaps — priorização", () => {
   });
 });
 
-describe("gmaps — imagem real do estabelecimento", () => {
-  it("prioriza thumbnail", () => {
+describe("gmaps — imagem real do estabelecimento", () => {  it("prioriza thumbnail", () => {
     expect(selectLeadImage({ thumbnail: "https://x/t.jpg", images: ["https://x/i.jpg"] })).toBe("https://x/t.jpg");
   });
 
@@ -216,6 +215,23 @@ describe("gmaps — imagem real do estabelecimento", () => {
     expect(leads[0].photoUrl).toBe("https://x/a.jpg");
     const shape = toPublicLeadShape(leads[0]) as Record<string, unknown>;
     expect(shape.photo_name).toBe("https://x/a.jpg");
+  });
+});
+
+describe("gmaps — merge entre fontes", () => {
+  const base = { city: "Curitiba", state: "PR", priority: 0, reasons: [], raw: {} } as const;
+
+  it("marca a fonte no lead normalizado", () => {
+    const leads = normalizeGmapsResults([{ title: "Alfa", place_id: "p" }], "Curitiba", "PR", "mapscraper");
+    expect(leads[0].source).toBe("mapscraper");
+  });
+
+  it("deduplica por place_id entre fontes mantendo o registro com mais campos (foto)", () => {
+    const a = { ...base, source: "mapscraper", sourceId: "p1", name: "X", phone: "4130000000", website: null, email: null, address: null, category: null, rating: null, reviews: 0, lat: null, lng: null, photoUrl: null };
+    const b = { ...base, source: "google_maps_scraper", sourceId: "p1", name: "X", phone: "4130000000", website: null, email: null, address: null, category: null, rating: null, reviews: 0, lat: null, lng: null, photoUrl: "https://x/p.jpg" };
+    const { leads } = dedupeGmapsLeads([a, b] as unknown as Parameters<typeof dedupeGmapsLeads>[0]);
+    expect(leads).toHaveLength(1);
+    expect(leads[0].photoUrl).toBe("https://x/p.jpg");
   });
 });
 

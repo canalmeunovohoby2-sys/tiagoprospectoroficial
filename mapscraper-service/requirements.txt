@@ -1,0 +1,5 @@
+fastapi==0.115.6
+uvicorn==0.34.0
+aiohttp==3.11.11
+tqdm==4.67.1
+Brotli==1.1.0

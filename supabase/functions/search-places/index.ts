@@ -10,15 +10,26 @@ import {
   sortGmapsByPriority,
   toPublicLeadShape,
   type GmapsNormalizedLead,
+  type GmapsScraperPlace,
+  type LeadSource,
 } from "../_shared/gmaps.ts";
+import { callMapScraper } from "../_shared/mapscraper.ts";
 
 // Supabase Edge Functions expõem EdgeRuntime.waitUntil para trabalho em
 // background que continua após a resposta HTTP.
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 const GMAPS_SCRAPER_URL = (Deno.env.get("GMAPS_SCRAPER_URL") ?? "").trim();
-const GMAPS_SCRAPER_ENABLED = (Deno.env.get("GMAPS_SCRAPER_ENABLED") ?? "false").trim().toLowerCase() === "true";
+const GMAPS_SCRAPER_ENABLED = ((Deno.env.get("GMAPS_SCRAPER_ENABLED") ?? Deno.env.get("ENABLE_GMAPS_SCRAPER") ?? "false").trim().toLowerCase() === "true");
 const GMAPS_SCRAPER_API_KEY = (Deno.env.get("GMAPS_SCRAPER_API_KEY") ?? "").trim();
 const GMAPS_SCRAPER_TIMEOUT_MS = Number(Deno.env.get("GMAPS_SCRAPER_TIMEOUT_MS") ?? "300000");
+
+// Segunda fonte: mapScraper (christivn/mapScraper) via microserviço HTTP.
+const MAP_SCRAPER_URL = (Deno.env.get("MAP_SCRAPER_URL") ?? "").trim();
+const MAP_SCRAPER_ENABLED = ((Deno.env.get("MAP_SCRAPER_ENABLED") ?? Deno.env.get("ENABLE_MAP_SCRAPER") ?? "false").trim().toLowerCase() === "true");
+const MAP_SCRAPER_API_KEY = (Deno.env.get("MAP_SCRAPER_API_KEY") ?? "").trim();
+const MAP_SCRAPER_TIMEOUT_MS = Number(Deno.env.get("MAP_SCRAPER_TIMEOUT_MS") ?? "300000");
+const MAP_SCRAPER_LANG = (Deno.env.get("MAP_SCRAPER_LANG") ?? "pt").trim();
+const MAP_SCRAPER_COUNTRY = (Deno.env.get("MAP_SCRAPER_COUNTRY") ?? "br").trim();
 
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
@@ -37,6 +48,8 @@ const SOURCE_LABELS = {
   googleNew: "google_places_new",
   googleLegacy: "google_places_legacy",
   geoapify: "geoapify",
+  gmapsScraper: "google_maps_scraper",
+  mapScraper: "mapscraper",
   nominatim: "openstreetmap_nominatim",
   overpass: "openstreetmap_overpass",
   overpassRecovery: "openstreetmap_overpass_recovery",
@@ -2190,33 +2203,51 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
   try {
     const query = `${p.segment} em ${p.city}, ${p.state}`;
     const maxPlaces = Math.max(1, p.maxPages * 20);
-    const scraped = await callGmapsScraper({
-      baseUrl: GMAPS_SCRAPER_URL,
-      query,
-      maxPlaces,
-      apiKey: GMAPS_SCRAPER_API_KEY || undefined,
-      timeoutMs: Number.isFinite(GMAPS_SCRAPER_TIMEOUT_MS) ? GMAPS_SCRAPER_TIMEOUT_MS : 300000,
-    });
 
-    if (scraped.error) {
-      warnings.push({ source: "google_maps_scraper", code: "SCRAPER_FAILED", message: scraped.error });
-      errorMsg = scraped.error;
-      // Fallback: Geoapify (mantém a busca funcionando sem o scraper).
-      const gp = await searchGeoapifyLeads(p.segment, p.city, p.state);
-      if (gp.error) warnings.push({ source: "geoapify", code: "GEOAPIFY_FAILED", message: gp.error });
-      if (gp.leads.length > 0) {
-        status = "PARTIAL_RESULTS";
-        resultSource = "geoapify";
-        counters.final = gp.leads.length;
-        counters.comTelefone = gp.leads.filter((l) => !!l.phone).length;
-        counters.comWhatsapp = gp.leads.filter((l) => !!l.whatsapp).length;
-        finalLeads = gp.leads as unknown as Record<string, unknown>[];
-      } else {
-        status = "EXTERNAL_FAILURE";
+    // Fontes habilitadas são consultadas EM PARALELO e os resultados mesclados.
+    type SourceRun = { key: LeadSource; places: GmapsScraperPlace[]; error?: string };
+    const tasks: Array<Promise<SourceRun>> = [];
+    if (GMAPS_SCRAPER_ENABLED) {
+      tasks.push(
+        callGmapsScraper({
+          baseUrl: GMAPS_SCRAPER_URL,
+          query,
+          maxPlaces,
+          apiKey: GMAPS_SCRAPER_API_KEY || undefined,
+          timeoutMs: Number.isFinite(GMAPS_SCRAPER_TIMEOUT_MS) ? GMAPS_SCRAPER_TIMEOUT_MS : 300000,
+        }).then((r) => ({ key: "google_maps_scraper" as LeadSource, places: r.results, error: r.error })),
+      );
+    }
+    if (MAP_SCRAPER_ENABLED) {
+      tasks.push(
+        callMapScraper({
+          baseUrl: MAP_SCRAPER_URL,
+          query,
+          maxPlaces,
+          lang: MAP_SCRAPER_LANG,
+          country: MAP_SCRAPER_COUNTRY,
+          apiKey: MAP_SCRAPER_API_KEY || undefined,
+          timeoutMs: Number.isFinite(MAP_SCRAPER_TIMEOUT_MS) ? MAP_SCRAPER_TIMEOUT_MS : 300000,
+        }).then((r) => ({ key: "mapscraper" as LeadSource, places: r.places, error: r.error })),
+      );
+    }
+
+    const sourceRuns: SourceRun[] = tasks.length > 0 ? await Promise.all(tasks) : [];
+    const failedSources = sourceRuns.filter((r) => !!r.error);
+    for (const r of failedSources) {
+      warnings.push({ source: r.key, code: "SOURCE_FAILED", message: r.error! });
+    }
+    if (failedSources.length > 0) errorMsg = failedSources.map((r) => `${r.key}: ${r.error}`).join(" | ");
+
+    const consulted = sourceRuns.filter((r) => !r.error).map((r) => r.key);
+    const withPlaces = sourceRuns.filter((r) => !r.error && r.places.length > 0);
+
+    if (withPlaces.length > 0) {
+      const normalized: GmapsNormalizedLead[] = [];
+      for (const r of withPlaces) {
+        normalized.push(...normalizeGmapsResults(r.places, p.city, p.state, r.key));
       }
-    } else {
-      counters.bruto = scraped.results.length;
-      const normalized: GmapsNormalizedLead[] = normalizeGmapsResults(scraped.results, p.city, p.state);
+      counters.bruto = normalized.length;
       counters.normalizado = normalized.length;
       const deduped = dedupeGmapsLeads(normalized);
       counters.deduplicado = deduped.leads.length;
@@ -2227,11 +2258,27 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
       counters.comTelefone = sorted.filter((l) => !!l.phone).length;
       counters.comWhatsapp = sorted.filter((l) => inferWhatsapp(l.phone ?? undefined) !== null).length;
       finalLeads = sorted.map((l) => toPublicLeadShape(l));
+      resultSource = consulted.length > 0 ? consulted.join(",") : withPlaces.map((r) => r.key).join(",");
       if (validated.rejected.length > 0) {
         warnings.push({ source: "validation", code: "REJECTED", message: `${validated.rejected.length} lead(s) descartado(s) na validação` });
       }
-      status = sorted.length > 0 ? "SUCCESS" : "EMPTY_REAL";
-      resultSource = "google_maps_scraper";
+      status = failedSources.length > 0 ? "PARTIAL_RESULTS" : "SUCCESS";
+    } else {
+      // Nenhum resultado das fontes primárias → fallback Geoapify.
+      const gp = await searchGeoapifyLeads(p.segment, p.city, p.state);
+      if (gp.error) warnings.push({ source: "geoapify", code: "GEOAPIFY_FAILED", message: gp.error });
+      if (gp.leads.length > 0) {
+        status = "PARTIAL_RESULTS";
+        resultSource = "geoapify";
+        counters.final = gp.leads.length;
+        counters.comTelefone = gp.leads.filter((l) => !!l.phone).length;
+        counters.comWhatsapp = gp.leads.filter((l) => !!l.whatsapp).length;
+        finalLeads = gp.leads as unknown as Record<string, unknown>[];
+      } else if (sourceRuns.length > 0 && failedSources.length === sourceRuns.length) {
+        status = "EXTERNAL_FAILURE";
+      } else {
+        status = "EMPTY_REAL";
+      }
     }
 
     if (finalLeads.length > 0) {
@@ -2260,7 +2307,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
           longitude: (lead.longitude as number) ?? null,
           email: (lead.email as string) ?? null,
           photo_name: (lead.photo_name as string) ?? null,
-          source: resultSource ?? "google_maps_scraper",
+          source: (lead.source as string) ?? resultSource ?? null,
         };
       });
       const { error: insertErr } = await p.admin.from("leads").insert(rows);
@@ -2451,7 +2498,7 @@ Deno.serve(async (req) => {
     // Cria o registro da busca, processa em background e devolve 202 com
     // search_id. O front consulta get-search-status até o status final.
     // ────────────────────────────────────────────────────────────
-    if (GMAPS_SCRAPER_ENABLED) {
+    if (GMAPS_SCRAPER_ENABLED || MAP_SCRAPER_ENABLED) {
       const supaUrl = Deno.env.get("SUPABASE_URL");
       const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
       const anonKey = Deno.env.get("SUPABASE_ANON_KEY");

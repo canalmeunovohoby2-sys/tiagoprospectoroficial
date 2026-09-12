@@ -110,6 +110,7 @@ const SOURCE_LABEL: Record<string, string> = {
   google_places_legacy: "Google Places (Legacy)",
   geoapify: "Geoapify",
   google_maps_scraper: "Google Maps (scraper)",
+  mapscraper: "mapScraper",
   openstreetmap: "OpenStreetMap",
   openstreetmap_nominatim: "OpenStreetMap/Nominatim",
   openstreetmap_overpass: "OpenStreetMap/Overpass",
@@ -149,13 +150,15 @@ type SearchSourceInfo = { source: string; status: SearchStatus; warnings: Search
 // Fontes reais do motor atual: scraper self-hosted do Google Maps como
 // principal, Geoapify (OpenStreetMap) como fallback automático.
 const CASCADE_SOURCES: Array<{ key: string; label: string; primary: boolean; desc: string }> = [
-  { key: "google_maps_scraper", label: "Google Maps", primary: true, desc: "fonte principal (scraper self-hosted) — nome, telefone, site, categoria e coordenadas" },
-  { key: "geoapify", label: "Geoapify (OpenStreetMap)", primary: false, desc: "fallback automático quando o Google Maps não responde" },
+  { key: "google_maps_scraper", label: "Google Maps", primary: true, desc: "fonte principal (scraper self-hosted) — nome, telefone, site, categoria, coordenadas e foto" },
+  { key: "mapscraper", label: "mapScraper", primary: false, desc: "segunda fonte (scraper self-hosted) — amplia a cobertura em paralelo" },
+  { key: "geoapify", label: "Geoapify (OpenStreetMap)", primary: false, desc: "fallback automático quando os scrapers não respondem" },
 ];
 
 function sourceRunState(info: SearchSourceInfo | null, key: string): "used" | "failed" | "skipped" | "unknown" {
   if (!info) return "unknown";
-  if (info.source === key) return "used";
+  const sources = info.source.split(",").map((s) => s.trim()).filter(Boolean);
+  if (sources.includes(key)) return "used";
   if (info.warnings.some((w) => w.source.includes(key))) return "failed";
   return "skipped";
 }
@@ -617,7 +620,7 @@ export function LeadSearchForm({
             <div className="space-y-2">
               <p><strong className="text-foreground">{sourceInfo ? "Fontes consultadas nesta busca:" : "Fontes consultadas em cascata:"}</strong></p>
               <ul className="space-y-1">
-                {CASCADE_SOURCES.map((s) => {
+                {CASCADE_SOURCES.map((s, i) => {
                   const state = sourceRunState(sourceInfo, s.key);
                   const stateClass =
                     state === "used"
@@ -627,8 +630,7 @@ export function LeadSearchForm({
                         : "text-muted-foreground/70";
                   return (
                     <li key={s.key}>
-                      {s.primary ? "1. " : "2. "}
-                      <strong className="text-foreground">{s.label}</strong>
+                      {i + 1}. <strong className="text-foreground">{s.label}</strong>
                       {s.primary ? " (principal)" : ""} — {s.desc}
                       {sourceInfo && (
                         <span className={`ml-1 font-medium ${stateClass}`}>({SOURCE_STATE_LABEL[state]})</span>

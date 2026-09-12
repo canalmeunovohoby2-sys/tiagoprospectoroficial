@@ -28,6 +28,7 @@ function rowToLead(r: Record<string, unknown>): Record<string, unknown> {
     website: r.website ?? null,
     email: r.email ?? null,
     photo_name: r.photo_name ?? null,
+    source: r.source ?? null,
     google_url: r.google_url ?? null,
     instagram: r.instagram ?? null,
     facebook: r.facebook ?? null,

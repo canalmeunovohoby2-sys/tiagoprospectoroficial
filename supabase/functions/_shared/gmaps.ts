@@ -27,8 +27,10 @@ export type GmapsScraperPlace = {
   [key: string]: unknown;
 };
 
+export type LeadSource = "google_maps_scraper" | "mapscraper";
+
 export type GmapsNormalizedLead = {
-  source: "google_maps_scraper";
+  source: LeadSource;
   sourceId: string;
   name: string;
   phone: string | null;
@@ -152,6 +154,7 @@ export function normalizeGmapsResults(
   results: GmapsScraperPlace[],
   city: string,
   state: string,
+  source: LeadSource = "google_maps_scraper",
 ): GmapsNormalizedLead[] {
   const out: GmapsNormalizedLead[] = [];
   const seen = new Set<string>();
@@ -184,7 +187,7 @@ export function normalizeGmapsResults(
     const { score, reasons } = priorityScore(base);
 
     out.push({
-      source: "google_maps_scraper",
+      source,
       sourceId,
       name,
       phone,
@@ -208,7 +211,7 @@ export function normalizeGmapsResults(
 }
 
 function filledCount(lead: GmapsNormalizedLead): number {
-  return [lead.phone, lead.website, lead.email, lead.address, lead.category, lead.rating, lead.lat].filter(
+  return [lead.phone, lead.website, lead.email, lead.address, lead.category, lead.rating, lead.lat, lead.photoUrl].filter(
     (v) => v !== null && v !== undefined && v !== "",
   ).length;
 }
@@ -363,6 +366,7 @@ export function toPublicLeadShape(lead: GmapsNormalizedLead): Record<string, unk
   const lng = lead.lng;
   return {
     external_id: lead.sourceId,
+    source: lead.source,
     name: lead.name,
     category: lead.category,
     address: lead.address,
