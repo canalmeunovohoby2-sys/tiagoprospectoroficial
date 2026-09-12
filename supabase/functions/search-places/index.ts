@@ -2403,11 +2403,6 @@ Deno.serve(async (req) => {
     // ────────────────────────────────────────────────────────────
     if (body?.mode === "enrich") {
       const searchId = String(body?.search_id ?? "").trim();
-      if (!searchId) {
-        return new Response(JSON.stringify({ error: "search_id obrigatório" }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
       const supaUrl = Deno.env.get("SUPABASE_URL");
       const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
       if (!supaUrl || !supaKey) {
@@ -2416,18 +2411,49 @@ Deno.serve(async (req) => {
         });
       }
       const admin = createClient(supaUrl, supaKey);
-      const { data: rows, error: selErr } = await admin
-        .from("leads")
-        .select("id,name,city,state,website,has_website,instagram")
-        .eq("search_id", searchId);
-      if (selErr) {
-        console.error("[search-places][enrich] select failed", selErr);
-        return new Response(JSON.stringify({ error: selErr.message }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      const ENRICH_COLS = "id,name,city,state,website,has_website,instagram,photo_name";
+      let dbRows: any[] = [];
+      if (searchId) {
+        const { data: rows, error: selErr } = await admin.from("leads").select(ENRICH_COLS).eq("search_id", searchId);
+        if (selErr) {
+          console.error("[search-places][enrich] select failed", selErr);
+          return new Response(JSON.stringify({ error: selErr.message }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        dbRows = Array.isArray(rows) ? rows : [];
+      } else {
+        // Sem search_id: backfill de FOTO para a base do usuário (leads que têm
+        // site mas ainda estão sem foto). É o que recompõe as fotos em "Meus Leads".
+        const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+        const authHeader = req.headers.get("Authorization") ?? "";
+        if (!anonKey) {
+          return new Response(JSON.stringify({ error: "Backend indisponível" }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const userClient = createClient(supaUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
+        const { data: userData } = await userClient.auth.getUser();
+        if (!userData?.user?.id) {
+          return new Response(JSON.stringify({ error: "Não autenticado" }), {
+            status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        const { data: rows, error: selErr } = await admin
+          .from("leads")
+          .select(ENRICH_COLS)
+          .eq("user_id", userData.user.id)
+          .is("photo_name", null)
+          .not("website", "is", null)
+          .limit(MAP_PHOTO_ENRICH_BUDGET);
+        if (selErr) {
+          console.error("[search-places][enrich] user select failed", selErr);
+          return new Response(JSON.stringify({ error: selErr.message }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        dbRows = Array.isArray(rows) ? rows : [];
       }
-      const dbRows = Array.isArray(rows) ? rows : [];
-      // Adapta rows -> PublicLead shape (apenas campos usados pelo discovery).
       const pseudoLeads: PublicLead[] = dbRows.map((r: any) => ({
         external_id: r.id,
         name: r.name ?? "",
@@ -2456,6 +2482,24 @@ Deno.serve(async (req) => {
       const firstState = pseudoLeads.find((l) => l.state)?.state ?? "";
       await runWebsiteDiscovery(pseudoLeads, firstCity, firstState);
       await enrichLeadsWithInstagram(pseudoLeads);
+
+      // Backfill de FOTO para quem ainda não tem (imagem do próprio site).
+      const photoTargets = dbRows
+        .map((row: any, i: number) => ({ row, lead: pseudoLeads[i] }))
+        .filter(({ row, lead }) => !row.photo_name && !!lead.website)
+        .map(({ row, lead }) => ({ id: String(row.id), website: lead.website ?? null, photoUrl: null as string | null }));
+      const photoResult = await enrichLeadsWithWebsiteImages(photoTargets, {
+        budget: MAP_PHOTO_ENRICH_BUDGET,
+        concurrency: MAP_PHOTO_ENRICH_CONCURRENCY,
+        timeoutMs: MAP_PHOTO_ENRICH_TIMEOUT_MS,
+      });
+      let photoUpdated = 0;
+      for (const t of photoTargets) {
+        if (!t.photoUrl) continue;
+        const { error: phErr } = await admin.from("leads").update({ photo_name: t.photoUrl }).eq("id", t.id);
+        if (!phErr) photoUpdated++;
+        else console.warn("[search-places][enrich] photo update failed", t.id, phErr.message);
+      }
 
       // Persiste apenas os que mudaram website/has_website/instagram.
       let updated = 0;
@@ -2486,7 +2530,7 @@ Deno.serve(async (req) => {
       }
 
       console.info("[search-places][enrich] summary", {
-        searchId, totalRows: dbRows.length, updated,
+        searchId, totalRows: dbRows.length, updated, photoUpdated, photoAttempted: photoResult.attempted,
       });
 
       return new Response(JSON.stringify({
@@ -2494,6 +2538,8 @@ Deno.serve(async (req) => {
         search_id: searchId,
         total: dbRows.length,
         updated,
+        photo_updated: photoUpdated,
+        photo_attempted: photoResult.attempted,
       }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
