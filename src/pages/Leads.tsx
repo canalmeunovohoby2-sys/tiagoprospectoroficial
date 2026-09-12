@@ -206,6 +206,19 @@ export default function Leads() {
     }
   }
 
+  async function openSite(lead: Lead) {
+    if (!user) return;
+    setOpeningSiteId(lead.id);
+    try {
+      const projectId = await openOrCreateSiteProject(user.id, lead);
+      navigate(`/sites/${projectId}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao criar projeto de site");
+    } finally {
+      setOpeningSiteId(null);
+    }
+  }
+
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-start justify-between gap-4 flex-wrap">
@@ -258,20 +271,7 @@ export default function Leads() {
                 {chips.map(([k, label, tip, royalCls]) => {
                   const active = filter === k;
                   const isRoyal = k === "royal";
-  async function openSite(lead: Lead) {
-    if (!user) return;
-    setOpeningSiteId(lead.id);
-    try {
-      const projectId = await openOrCreateSiteProject(user.id, lead);
-      navigate(`/sites/${projectId}`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao criar projeto de site");
-    } finally {
-      setOpeningSiteId(null);
-    }
-  }
-
-  return (
+                  return (
                     <Tooltip key={k}>
                       <TooltipTrigger asChild>
                         <Button

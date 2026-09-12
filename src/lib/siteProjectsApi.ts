@@ -4,6 +4,7 @@ import type { LeadSource, SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { pickLeadForSpec } from "@/data/siteProjects";
 import { getAgentTicket } from "./agentTicket";
 import { parseGenerateResponse } from "./generateStream";
+import { friendlyAiError } from "./friendlyAiError";
 
 function rowToProject(row: unknown): SiteProjectRow | null {
   if (!row || typeof row !== "object") return null;

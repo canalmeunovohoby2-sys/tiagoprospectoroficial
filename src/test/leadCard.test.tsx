@@ -114,6 +114,19 @@ describe("LeadCard — ações continuam funcionando", () => {
     expect(onContacted).toHaveBeenCalledTimes(1);
   });
 
+  it("botão Google Maps usa a URL (place_id) do lead", () => {
+    render(
+      <LeadCard
+        lead={makeLead({ google_url: "https://www.google.com/maps/place/?q=place_id:ChIJ1" })}
+        onFavorite={() => {}}
+        onContacted={() => {}}
+      />,
+    );
+    const el = screen.getByTitle("Google Maps");
+    const a = el.tagName === "A" ? el : el.closest("a");
+    expect(a?.getAttribute("href")).toBe("https://www.google.com/maps/place/?q=place_id:ChIJ1");
+  });
+
   it("botão 'Gerar Site' existe e chama o callback", () => {
     const onGenerateSite = vi.fn();
     render(<LeadCard lead={makeLead()} onFavorite={() => {}} onContacted={() => {}} onGenerateSite={onGenerateSite} />);

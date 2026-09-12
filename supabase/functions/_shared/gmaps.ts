@@ -45,6 +45,8 @@ export type GmapsNormalizedLead = {
   rating: number | null;
   reviews: number;
   photoUrl: string | null;
+  placeId: string | null;
+  googleUrl: string | null;
   priority: number;
   reasons: string[];
   raw: GmapsScraperPlace;
@@ -150,6 +152,61 @@ export function priorityScore(lead: Pick<GmapsNormalizedLead, "phone" | "website
   return { score: Math.max(0, Math.min(100, s)), reasons };
 }
 
+// ── URL do Google Maps do estabelecimento ────────────────────────────────
+// Prioridade: link oficial do scraper → place_id/cid → coordenadas → nome+endereço.
+export function isGoogleMapsUrl(value: string): boolean {
+  try {
+    const u = new URL(value.trim());
+    if (u.protocol !== "https:" && u.protocol !== "http:") return false;
+    const host = u.hostname.replace(/^www\./, "").toLowerCase();
+    return host === "google.com" || host.endsWith(".google.com") || host === "goo.gl" || host === "maps.app.goo.gl";
+  } catch {
+    return false;
+  }
+}
+
+export function placeIdMapsUrl(placeId: string): string {
+  return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(placeId.trim())}`;
+}
+
+export function coordsMapsUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+}
+
+export function textMapsUrl(parts: Array<string | null | undefined>): string {
+  const query = parts.filter((p) => typeof p === "string" && p.trim().length > 0).join(", ");
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+type GoogleUrlInput = {
+  link?: string | null;
+  placeId?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  name?: string | null;
+  address?: string | null;
+  city?: string | null;
+  state?: string | null;
+};
+
+// Nunca reconstrói por nome quando existe identificador mais confiável.
+export function buildGoogleMapsUrl(input: GoogleUrlInput): string | null {
+  const link = typeof input.link === "string" ? input.link.trim() : "";
+  if (link && isGoogleMapsUrl(link)) return link;
+  const id = typeof input.placeId === "string" ? input.placeId.trim() : "";
+  if (id) return placeIdMapsUrl(id);
+  if (
+    typeof input.lat === "number" && Number.isFinite(input.lat) &&
+    typeof input.lng === "number" && Number.isFinite(input.lng)
+  ) {
+    return coordsMapsUrl(input.lat, input.lng);
+  }
+  if (input.name && input.name.trim()) {
+    return textMapsUrl([input.name, input.address, input.city, input.state]);
+  }
+  return null;
+}
+
 export function normalizeGmapsResults(
   results: GmapsScraperPlace[],
   city: string,
@@ -183,6 +240,18 @@ export function normalizeGmapsResults(
       Array.isArray(place.categories) ? place.categories[0] : place.categories,
     );
 
+    const placeId = firstNonEmpty(place.place_id, place.cid);
+    const googleUrl = buildGoogleMapsUrl({
+      link: place.link,
+      placeId,
+      lat,
+      lng,
+      name,
+      address,
+      city: city || null,
+      state: state || null,
+    });
+
     const base = { phone, website, rating, reviews, address, lat, lng };
     const { score, reasons } = priorityScore(base);
 
@@ -202,6 +271,8 @@ export function normalizeGmapsResults(
       rating,
       reviews,
       photoUrl: selectLeadImage(place),
+      placeId,
+      googleUrl,
       priority: score,
       reasons,
       raw: place,
@@ -249,7 +320,7 @@ export type DedupeResult = {
 // Ordem exata: ID → telefone → nome+rua → nome+cidade → coordenadas.
 export function dedupeGmapsLeads(input: GmapsNormalizedLead[]): DedupeResult {
   const removed: DedupeResult["removed"] = [];
-  const byId = new Map<string, GmapsNormalizedLead>();
+  const byId = new Map<string, string>();
   const byPhone = new Map<string, string>();
   const byNameStreet = new Map<string, string>();
   const byNameCity = new Map<string, string>();
@@ -376,7 +447,7 @@ export function toPublicLeadShape(lead: GmapsNormalizedLead): Record<string, unk
     whatsapp: inferWhatsapp(lead.phone),
     website: lead.website,
     email: lead.email,
-    google_url: lat !== null && lng !== null ? `https://www.google.com/maps/search/?api=1&query=${lat},${lng}` : null,
+    google_url: lead.googleUrl ?? (lat !== null && lng !== null ? coordsMapsUrl(lat, lng) : null),
     instagram: null,
     facebook: null,
     rating: lead.rating,

@@ -7,6 +7,7 @@ import {
   priorityScore,
   toPublicLeadShape,
   selectLeadImage,
+  buildGoogleMapsUrl,
   callGmapsScraper,
 } from "../../supabase/functions/_shared/gmaps";
 
@@ -91,7 +92,7 @@ describe("gmaps — normalização", () => {
 });
 
 describe("gmaps — deduplicação (ordem ID → telefone → nome+rua → nome+cidade → coords)", () => {
-  const base = { source: "google_maps_scraper" as const, city: "Bauru", state: "SP", priority: 0, reasons: [], raw: {} };
+  const base = { source: "google_maps_scraper" as const, city: "Bauru", state: "SP", priority: 0, reasons: [], raw: {}, photoUrl: null, placeId: null, googleUrl: null };
 
   it("deduplica por sourceId", () => {
     const leads = [
@@ -219,7 +220,7 @@ describe("gmaps — imagem real do estabelecimento", () => {  it("prioriza thumb
 });
 
 describe("gmaps — merge entre fontes", () => {
-  const base = { city: "Curitiba", state: "PR", priority: 0, reasons: [], raw: {} } as const;
+  const base = { city: "Curitiba", state: "PR", priority: 0, reasons: [], raw: {}, placeId: null, googleUrl: null } as const;
 
   it("marca a fonte no lead normalizado", () => {
     const leads = normalizeGmapsResults([{ title: "Alfa", place_id: "p" }], "Curitiba", "PR", "mapscraper");
@@ -232,6 +233,52 @@ describe("gmaps — merge entre fontes", () => {
     const { leads } = dedupeGmapsLeads([a, b] as unknown as Parameters<typeof dedupeGmapsLeads>[0]);
     expect(leads).toHaveLength(1);
     expect(leads[0].photoUrl).toBe("https://x/p.jpg");
+  });
+});
+
+describe("gmaps — URL do Google Maps do estabelecimento", () => {
+  it("1) usa o link oficial do scraper quando existir", () => {
+    const link = "https://www.google.com/maps/place/Clinica+X/data=!4m7!3m6!1s0x1:0x2";
+    expect(buildGoogleMapsUrl({ link, placeId: "ChIJ1" })).toBe(link);
+  });
+
+  it("2) usa place_id quando não há link oficial", () => {
+    expect(buildGoogleMapsUrl({ placeId: "ChIJabc" })).toBe("https://www.google.com/maps/place/?q=place_id:ChIJabc");
+  });
+
+  it("3) usa coordenadas quando não há link nem place_id", () => {
+    const url = buildGoogleMapsUrl({ lat: -22.314999, lng: -49.061111 });
+    expect(url).toContain("https://www.google.com/maps/search/?api=1&query=-22.314999,-49.061111");
+  });
+
+  it("4) fallback nome+endereço com encoding de acentos/espacos", () => {
+    const url = buildGoogleMapsUrl({ name: "Clínica São João", address: "Rua Dr. X, 123", city: "São Paulo", state: "SP" });
+    expect(url).toContain("https://www.google.com/maps/search/?api=1&query=");
+    expect(url).not.toContain(" ");
+    expect(url).toContain("%C3%AD"); // acento í codificado
+  });
+
+  it("5) dois leads com nomes parecidos geram URLs distintas (por place_id)", () => {
+    const a = buildGoogleMapsUrl({ placeId: "ChIJaaa", name: "Clínica X" });
+    const b = buildGoogleMapsUrl({ placeId: "ChIJbbb", name: "Clínica X" });
+    expect(a).not.toBe(b);
+    expect(a).toContain("ChIJaaa");
+    expect(b).toContain("ChIJbbb");
+  });
+
+  it("6) ignora link que não é do Google Maps e cai no place_id", () => {
+    expect(buildGoogleMapsUrl({ link: "https://example.com/loja", placeId: "ChIJz" }))
+      .toBe("https://www.google.com/maps/place/?q=place_id:ChIJz");
+  });
+
+  it("toPublicLeadShape expõe a URL em google_url", () => {
+    const leads = normalizeGmapsResults(
+      [{ name: "Clinica X", place_id: "ChIJ1", link: "https://www.google.com/maps/place/?q=place_id:ChIJ1" }],
+      "Bauru",
+      "SP",
+    );
+    const shape = toPublicLeadShape(leads[0]) as Record<string, unknown>;
+    expect(shape.google_url).toBe("https://www.google.com/maps/place/?q=place_id:ChIJ1");
   });
 });
 
