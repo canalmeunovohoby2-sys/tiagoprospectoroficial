@@ -455,7 +455,7 @@ function LeadCard({
 }) {
   const isHot = (lead.final_score ?? 0) >= 80;
   const [photoFailed, setPhotoFailed] = useState(false);
-  const photo = leadPhotoUrl(lead.photo_name, 640);
+  const photo = leadPhotoUrl(lead.photo_name);
   const showPhoto = !!photo && !photoFailed;
   const temp = getLeadTemperature(lead.final_score);
   const website = (lead.website ?? "").trim();

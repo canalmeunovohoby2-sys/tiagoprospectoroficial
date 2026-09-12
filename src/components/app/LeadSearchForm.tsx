@@ -27,6 +27,8 @@ type SearchPlacesLead = {
   website?: string | null;
   google_url?: string | null;
   photo_name?: string | null;
+  photo_url?: string | null;
+  photo_source?: string | null;
   instagram?: string | null;
   facebook?: string | null;
   rating?: number | null;
@@ -346,7 +348,7 @@ export function LeadSearchForm({
         whatsapp: l.whatsapp ?? null,
         website: l.website ?? null,
         google_url: l.google_url ?? null,
-        photo_name: l.photo_name ?? null,
+        photo_name: l.photo_url ?? l.photo_name ?? null,
         instagram: l.instagram ?? null,
         facebook: l.facebook ?? null,
         rating: l.rating ?? null,
