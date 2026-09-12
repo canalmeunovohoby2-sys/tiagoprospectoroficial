@@ -502,7 +502,7 @@ export function LeadCard({
           <Badge variant="outline" title={`Temperatura do lead · ${lead.final_score ?? 0}/100`} className={`${temperature.badgeClass} bg-black/30`}>
             {temperature.label}
           </Badge>
-          <ConfidenceBadge confidence={lead.confidence} />
+          {lead.confidence && <ConfidenceBadge confidence={lead.confidence} />}
           <RoiBadge lead={lead} />
           {!lead.has_website && <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-300 bg-black/30">Sem site</Badge>}
           {lead.is_contacted && <Badge variant="outline" className="text-[10px] border-blue-500/40 text-blue-300 bg-black/30">Contatado</Badge>}
@@ -514,7 +514,7 @@ export function LeadCard({
           <div className="text-[11px] text-white/85 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
             {lead.segment && <span className="truncate max-w-full">{lead.segment}</span>}
             {lead.city && <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{lead.city}/{lead.state}</span>}
-            {lead.rating != null ? <span>★ {lead.rating} ({lead.reviews_count})</span> : <span className="opacity-70">Sem avaliações</span>}
+            {lead.rating != null && <span>★ {lead.rating} ({lead.reviews_count})</span>}
             <span className="opacity-90">Score {lead.final_score ?? 0}/100</span>
           </div>
 
@@ -697,12 +697,12 @@ function LeadDetail({
           )}
 
           <div className="grid grid-cols-2 gap-2 text-sm">
-            <Info label="Endereço" value={lead.address ?? "Não disponível"} />
-            <Info label="Telefone" value={lead.phone ?? "Não disponível"} copyable={!!lead.phone} />
-            <Info label="WhatsApp" value={lead.whatsapp ?? "Não disponível"} copyable={!!lead.whatsapp} />
-            <Info label="Site" value={lead.website ?? "Não disponível"} link={!!lead.website} />
-            <Info label="Avaliação Google" value={lead.rating != null ? `★ ${lead.rating} (${lead.reviews_count} reviews)` : "Não disponível"} />
-            <Info label="Confiabilidade" value={lead.confidence ? confidenceLabel(lead.confidence) : "Não avaliada"} />
+            {lead.address && <Info label="Endereço" value={lead.address} />}
+            {lead.phone && <Info label="Telefone" value={lead.phone} copyable />}
+            {lead.whatsapp && <Info label="WhatsApp" value={lead.whatsapp} copyable />}
+            {lead.website && <Info label="Site" value={lead.website} link />}
+            {lead.rating != null && <Info label="Avaliação Google" value={`★ ${lead.rating} (${lead.reviews_count} reviews)`} />}
+            {lead.confidence && <Info label="Confiabilidade" value={confidenceLabel(lead.confidence)} />}
           </div>
 
           {lead.opening_hours && lead.opening_hours.length > 0 && (

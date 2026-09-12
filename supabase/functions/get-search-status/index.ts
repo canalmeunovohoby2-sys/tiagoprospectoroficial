@@ -45,6 +45,15 @@ function rowToLead(r: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
+function enabledSourceKeys(): string[] {
+  const on = (v?: string) => (v ?? "false").trim().toLowerCase() === "true";
+  const keys: string[] = [];
+  if (on(Deno.env.get("GMAPS_SCRAPER_ENABLED")) || on(Deno.env.get("ENABLE_GMAPS_SCRAPER"))) keys.push("google_maps_scraper");
+  if (on(Deno.env.get("MAP_SCRAPER_ENABLED")) || on(Deno.env.get("ENABLE_MAP_SCRAPER"))) keys.push("mapscraper");
+  if ((Deno.env.get("GEOAPIFY_API_KEY") ?? "").trim()) keys.push("geoapify");
+  return keys;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -105,6 +114,7 @@ Deno.serve(async (req) => {
       search_id: searchId,
       status,
       source: search.source ?? null,
+      sources_configured: enabledSourceKeys(),
       counters,
       warnings,
       leads,

@@ -139,13 +139,14 @@ type SearchStatusResponse = {
   search_id: string;
   status: SearchStatus;
   source?: string | null;
+  sources_configured?: string[];
   counters?: Record<string, number>;
   warnings?: SearchWarning[];
   leads?: SearchPlacesLead[];
   error?: string | null;
 };
 
-type SearchSourceInfo = { source: string; status: SearchStatus; warnings: SearchWarning[] };
+type SearchSourceInfo = { source: string; status: SearchStatus; warnings: SearchWarning[]; configured: string[] };
 
 // Fontes reais do motor atual: scraper self-hosted do Google Maps como
 // principal, Geoapify (OpenStreetMap) como fallback automático.
@@ -336,11 +337,13 @@ export function LeadSearchForm({
       // processa em background. Aqui aguardamos o status final via polling.
       let data: SearchPlacesResponse | undefined = startData as SearchPlacesResponse | undefined;
       let asyncSearchId: string | null = null;
+      let configuredSources: string[] = [];
       if (startData?.search_id) {
         asyncSearchId = startData.search_id;
         const polled = await pollGmapsSearch(startData.search_id, (attempt) => {
           setProgress((p) => Math.max(p, Math.min(95, 10 + attempt * 2)));
         });
+        configuredSources = polled.sources_configured ?? [];
         data = {
           leads: polled.leads ?? [],
           search_status: polled.status,
@@ -363,7 +366,7 @@ export function LeadSearchForm({
         sources_status: data?.sources_status,
         leads: realLeads.length,
       });
-      setSourceInfo({ source: usedSource, status: searchStatus, warnings });
+      setSourceInfo({ source: usedSource, status: searchStatus, warnings, configured: configuredSources });
       const isEmptyWithLimitations =
         searchStatus === "EMPTY_WITH_LIMITATIONS" || searchStatus === "EXTERNAL_FAILURE";
       const isEmptyReal = searchStatus === "EMPTY_REAL" || searchStatus === "EMPTY";
@@ -613,14 +616,20 @@ export function LeadSearchForm({
         )}
       </Card>
 
-      {showSourcesCard && (
+      {showSourcesCard && (() => {
+        // Mostra SOMENTE fontes realmente configuradas/consultadas nesta busca.
+        const configuredKeys = sourceInfo?.configured?.length ? sourceInfo.configured : ["google_maps_scraper", "geoapify"];
+        const enabled = CASCADE_SOURCES.filter((s) => configuredKeys.includes(s.key));
+        const participated = sourceInfo ? enabled.filter((s) => sourceRunState(sourceInfo, s.key) !== "skipped") : [];
+        const list = participated.length > 0 ? participated : enabled;
+        return (
         <Card className="p-5 border-border/50 bg-muted/30">
           <div className="flex items-start gap-3 text-sm text-muted-foreground">
             <ShieldCheck className="h-4 w-4 text-primary mt-0.5 shrink-0" />
             <div className="space-y-2">
-              <p><strong className="text-foreground">{sourceInfo ? "Fontes consultadas nesta busca:" : "Fontes consultadas em cascata:"}</strong></p>
+              <p><strong className="text-foreground">{sourceInfo ? "Fontes consultadas nesta busca:" : "Fontes disponíveis:"}</strong></p>
               <ul className="space-y-1">
-                {CASCADE_SOURCES.map((s, i) => {
+                {list.map((s, i) => {
                   const state = sourceRunState(sourceInfo, s.key);
                   const stateClass =
                     state === "used"
@@ -640,7 +649,7 @@ export function LeadSearchForm({
                   );
                 })}
               </ul>
-              <p className="pt-1">A fonte principal é tentada primeiro; se falhar, o fallback é acionado automaticamente. Campos sem informação pública aparecem como <em>"Não disponível"</em> — nunca inventamos dados.</p>
+              <p className="pt-1">A fonte principal é tentada primeiro; se falhar, o fallback é acionado automaticamente.</p>
             </div>
           </div>
           <div className="flex gap-4 mt-3 text-[11px] text-muted-foreground">
@@ -649,7 +658,8 @@ export function LeadSearchForm({
             <span className="inline-flex items-center gap-1"><ShieldAlert className="h-3 w-3 text-red-500" /> Baixa</span>
           </div>
         </Card>
-      )}
+        );
+      })()}
     </>
   );
 }
