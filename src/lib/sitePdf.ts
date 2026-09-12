@@ -5,6 +5,7 @@
 // Nenhum texto vaza de cards; todo texto é medido e quebrado pela largura.
 import { jsPDF } from "jspdf";
 import { sanitizeSlug } from "./siteExportCore";
+import { renderProposalMockups, IPHONE } from "./proposalMockups";
 
 interface PdfInput {
   business?: Record<string, unknown>;
@@ -120,76 +121,21 @@ function drawImageContain(doc: jsPDF, dataUrl: string, x: number, y: number, box
   if (h > boxH) { h = boxH; w = h * (ar ?? boxW / boxH); }
   try { doc.addImage(dataUrl, fmt, x + (boxW - w) / 2, y + (boxH - h) / 2, w, h); } catch { /* sem imagem */ }
 }
-
-// ─── Notebook realista (corpo metálico, bisel, dobradiça, deck) ─────────────
-function drawLaptop(doc: jsPDF, cx: number, cy: number, w: number, img?: string | null) {
-  const lidH = w * 0.66;
-  const x = cx - w / 2;
-  // sombra suave
-  rrect(doc, x + 7, cy + 10, w, lidH, 16, { r: 214, g: 219, b: 225 });
-  // tampa traseira (alumínio escuro)
-  rrect(doc, x, cy, w, lidH, 16, { r: 49, g: 53, b: 59 });
-  // laterais em tom mais claro (aresta)
-  line(doc, x + 2, cy + 4, x + 2, cy + lidH - 4, { r: 120, g: 125, b: 132 }, 1.4);
-  line(doc, x + w - 2, cy + 4, x + w - 2, cy + lidH - 4, { r: 120, g: 125, b: 132 }, 1.4);
-  // bisel preto
-  const bezel = w * 0.035;
-  rrect(doc, x + bezel, cy + bezel, w - bezel * 2, lidH - bezel * 2, 10, { r: 12, g: 14, b: 17 });
-  // webcam + barra
-  rrect(doc, x + w / 2 - 6, cy + bezel - 1.5, 12, 3, 1.5, { r: 28, g: 31, b: 35 });
-  doc.setFillColor(28, 30, 34);
-  doc.circle(x + w / 2, cy + bezel, 0.9, "F");
-  doc.setFillColor(90, 95, 100);
-  doc.circle(x + w / 2, cy + bezel, 0.4, "F");
-  // TELA (screenshot real)
-  const sx = x + bezel + 5;
-  const sy = cy + bezel + 6;
-  const sw = w - bezel * 2 - 10;
-  const sh = lidH - bezel * 2 - 10;
-  rrect(doc, sx, sy, sw, sh, 4, NIGHT);
-  if (img) drawImageContain(doc, img, sx + 1.5, sy + 1.5, sw - 3, sh - 3);
-  // dobradiça
-  rrect(doc, x + w * 0.06, cy + lidH - 3, w * 0.88, 4, 2, { r: 90, g: 95, b: 102 });
-  // deck (base)
-  const deckY = cy + lidH;
-  const deckH = w * 0.075;
-  rrect(doc, x - w * 0.03, deckY, w * 1.06, deckH, 8, { r: 70, g: 74, b: 80 });
-  // teclado implícito (faixas)
-  for (let i = 0; i < 6; i++) {
-    doc.setFillColor(120 + i * 4, 124 + i * 4, 130 + i * 4);
-    doc.rect(x + w * 0.06, deckY + 4 + i * (deckH - 8) / 6, w * 0.88 - (i % 2) * 4, (deckH - 8) / 7, "F");
-  }
-  // trackpad
-  rrect(doc, x + w * 0.4, deckY + 4, w * 0.2, deckH * 0.45, 3, { r: 52, g: 55, b: 60 });
+// Igual ao anterior, porém SEM fundo (para o PNG do mockup, que tem transparência).
+function drawImageFit(doc: jsPDF, dataUrl: string, x: number, y: number, boxW: number, boxH: number) {
+  const fmt = dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
+  const ar = imgAspect(doc, dataUrl);
+  let w = boxW;
+  let h = w / (ar ?? boxW / boxH);
+  if (h > boxH) { h = boxH; w = h * (ar ?? boxW / boxH); }
+  try { doc.addImage(dataUrl, fmt, x + (boxW - w) / 2, y + (boxH - h) / 2, w, h); } catch { /* sem imagem */ }
 }
 
-// ─── Smartphone realista (titânio, cantos, ilha dinâmica, tela real) ────────
-function drawPhone(doc: jsPDF, cx: number, cy: number, w: number, img?: string | null) {
-  const h = w * 2.08;
-  const x = cx - w / 2;
-  // sombra
-  rrect(doc, x + 4, cy + 8, w, h, w * 0.2, { r: 208, g: 213, b: 220 });
-  // frame metálico (contorno)
-  rrect(doc, x, cy, w, h, w * 0.18, { r: 86, g: 90, b: 96 });
-  // corpo
-  const insetF = w * 0.022;
-  rrect(doc, x + insetF, cy + insetF, w - insetF * 2, h - insetF * 2, w * 0.16, { r: 12, g: 13, b: 16 });
-  // botões laterais
-  doc.setFillColor(120, 123, 128);
-  doc.rect(x - 2, cy + h * 0.15, 3, w * 0.09, "F");
-  doc.rect(x - 2, cy + h * 0.26, 3, w * 0.16, "F");
-  doc.rect(x + w - 1, cy + h * 0.18, 3, w * 0.1, "F");
-  // tela
-  const inset = w * 0.05;
-  const sx = x + inset;
-  const sy = cy + inset;
-  const sw = w - inset * 2;
-  const sh = h - inset * 2;
-  rrect(doc, sx, sy, sw, sh, w * 0.1, NIGHT);
-  if (img) drawImageContain(doc, img, sx + 2, sy + 2, sw - 4, sh - 4);
-  // ilha dinâmica (status)
-  rrect(doc, x + w * 0.27, cy + inset + 6, w * 0.46, w * 0.075, w * 0.037, { r: 8, g: 9, b: 11 });
-}
+// ─── Mockups de dispositivo ─────────────────────────────────────────────────
+// Os antigos desenhos vetoriais (drawLaptop/drawPhone) foram REMOVIDOS: agora a
+// proposta usa frames REAIS de dispositivo (public/mockups/, MIT) com a captura
+// real composta dentro da tela — ver `src/lib/proposalMockups.ts`. Em falha de
+// composição, o chamador usa a captura ORIGINAL (nunca volta ao mockup vetorial).
 
 // Quebra texto por largura e desenha com espaçamento seguro; retorna altura.
 function drawParagraph(doc: jsPDF, t: string, x: number, y: number, w: number, size: number, color: Rgb, lineH = 1.38): number {
@@ -248,6 +194,14 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   const screens = screenshots ?? [];
   const desktopShot = screens[0] ?? null;
   const mobileShot = screens[1] ?? null;
+
+  // Mockups realistas (frames locais em public/mockups/ + captura REAL dentro da
+  // tela). Zero IA, zero rede. Em falha → null e o PDF usa a captura original.
+  const mockups = await renderProposalMockups({
+    desktopScreenshot: desktopShot,
+    mobileScreenshot: mobileShot,
+    onError: (e) => console.warn("[proposta] mockup indisponível; usando captura original", e),
+  });
 
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
@@ -339,8 +293,20 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   }
   const lapSectionY = y + rowHByRow.reduce((a, b) => a + b, 0) + 10;
   text(doc, "Tela do computador — captura real do site", M, lapSectionY, 12, ink, "bold");
-  const lapW = Math.min(CW, 430);
-  drawLaptop(doc, MID, lapSectionY + 30, lapW, desktopShot);
+  const lapW = Math.min(CW, 460);
+  const lapTop = lapSectionY + 26;
+  const lapMaxH = 748 - lapTop; // não invade o rodapé
+  if (mockups.laptop) {
+    // Notebook REAL (frame local) com a captura dentro da tela.
+    drawImageFit(doc, mockups.laptop, MID - lapW / 2, lapTop, lapW, lapMaxH);
+  } else if (desktopShot) {
+    // Fallback: captura ORIGINAL dentro de um quadro discreto (nunca mockup vetorial).
+    const ar = imgAspect(doc, desktopShot) ?? 1.6;
+    let h = Math.min(lapMaxH, lapW / ar);
+    const w = h * ar;
+    rrect(doc, MID - w / 2 - 6, lapTop - 6, w + 12, h + 12, 10, { r: 12, g: 14, b: 17 });
+    drawImageContain(doc, desktopShot, MID - w / 2, lapTop, w, h);
+  }
   footerPage(doc, W, company, 2);
 
   // ============ PÁGINA 3 — CELULAR (screenshot mobile real) ============
@@ -348,11 +314,25 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   pageBg(doc, W, H, brand);
   sectionTitle(doc, M, 78, "Experiência mobile", "Seu site na palma da mão", brand, ink, CW);
 
-  const phoneW = 172;
-  drawPhone(doc, M + 118, 128, phoneW, mobileShot);
-  text(doc, "Captura real da versão mobile", M + 118, 128 + phoneW * 2.08 + 22, 8.5, MUT, "normal", "center");
+  const phoneW = 190;
+  const phoneTop = 128;
+  const phoneAspect = IPHONE.height / IPHONE.width; // proporção REAL do frame
+  const phoneDrawH = Math.min(432, phoneW * phoneAspect);
+  if (mockups.iphone) {
+    // iPhone REAL (frame local) com a captura dentro da tela.
+    drawImageFit(doc, mockups.iphone, M + 118 - phoneW / 2, phoneTop, phoneW, phoneDrawH);
+  } else if (mobileShot) {
+    // Fallback: captura ORIGINAL dentro de um quadro discreto (nunca mockup vetorial).
+    const ar = imgAspect(doc, mobileShot) ?? 0.5;
+    let h = phoneDrawH;
+    let w = h * ar;
+    if (w > phoneW) { w = phoneW; h = w / ar; }
+    rrect(doc, M + 118 - w / 2 - 7, phoneTop - 2, w + 14, h + 14, 16, { r: 12, g: 14, b: 17 });
+    drawImageContain(doc, mobileShot, M + 118 - w / 2, phoneTop + 5, w, h);
+  }
+  text(doc, "Captura real da versão mobile", M + 118, phoneTop + phoneDrawH + 20, 8.5, MUT, "normal", "center");
 
-  const phoneBottom = 128 + phoneW * 2.08 + 40;
+  const phoneBottom = phoneTop + phoneDrawH + 40;
   const rx = M + 280;
   const rw = W - M - 48 - rx;
   text(doc, "Experiência pensada para o celular", rx, 128, 12.5, ink, "bold");
@@ -456,7 +436,7 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   pageBg(doc, W, H, brand);
   sectionTitle(doc, M, 78, "Investimento", "Valor claro, sem surpresas", brand, ink, CW);
   const rows: Array<[string, string, string]> = [
-    ["Desenvolvimento do site", "Investimento único", "R$ 499,00"],
+    ["Desenvolvimento do site", "Investimento único", "R$ 380,00"],
     ["Hospedagem", "Inclusa no primeiro ano", "R$ 0,00"],
     ["Mensalidade", "Não existe", "R$ 0,00"],
     ["Publicação e configuração", "Incluso", "R$ 0,00"],
@@ -474,10 +454,10 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
     let ny = ry + (nameLines.length === 1 ? 18 : 14);
     for (const n of nameLines) { text(doc, n, M + 22, ny, 10.5, ink, "bold"); ny += 13; }
     text(doc, r[1], M + CW * 0.5, ry + (nameLines.length === 1 ? 18 : 24), 8.5, MUT);
-    text(doc, r[2], W - M - 22, ry + 18, 11.5, r[2] === "R$ 499,00" ? brand : ink, "bold", "right");
+    text(doc, r[2], W - M - 22, ry + 18, 11.5, r[2] === "R$ 380,00" ? brand : ink, "bold", "right");
   }
   const investY = ty2 + rows.length * rowH2 + 34;
-  const invTitle = "INVESTIMENTO ÚNICO DE R$ 499,00";
+  const invTitle = "INVESTIMENTO ÚNICO DE R$ 380,00";
   const invBody = "Sem mensalidade, sem taxa escondida. Você recebe site pronto, publicado e com ajustes incluídos.";
   const ivt = fitText(doc, invTitle, CW - 44, 1, 12.5, "bold");
   const ivb = fitText(doc, invBody, CW - 44, 3, 10, "normal");

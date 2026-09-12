@@ -1,0 +1,20 @@
+Asssets de mockup de dispositivo (frames) usados na PROPOSTA em PDF.
+
+Fonte: https://github.com/Alqemist-labs/mockup-studio
+Licenca do projeto: MIT
+Autor: Alqemist Studio (https://www.alqemist.com/)
+
+Arquivos incorporados:
+- apple-macbookpro14-front.png         (3944x2564)
+- apple-iphone-15-pro-black-titanium-portrait.png (1419x2796)
+
+Restricoes / observacoes:
+- MIT permite uso, copia, modificacao e redistribuicao (com o aviso de copyright).
+- As marcas e os modelos de dispositivos citados (Apple, MacBook, iPhone) pertencem
+  a Apple Inc. Os frames sao usados apenas para ILUSTRAR uma interface/produto e nao
+  representam produto ou parceria oficial.
+- Nao ha exigencia de atribuicao visivel na proposta; este arquivo mantem o credito
+  e a licenca junto dos assets, como exige a MIT.
+
+Composicao: feita localmente no navegador (canvas), de forma deterministica, com a
+captura REAL do site dentro da tela do aparelho. Sem IA, sem chamadas externas.
