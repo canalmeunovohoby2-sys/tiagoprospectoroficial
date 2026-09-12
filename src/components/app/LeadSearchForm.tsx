@@ -97,11 +97,11 @@ const nativeSelectClassName =
   "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
 const STAGES = [
-  "Conectando às fontes de dados…",
-  "Tentando Google Places…",
-  "Caso falhe, tentando OpenStreetMap…",
-  "Coletando telefones, sites e avaliações…",
+  "Conectando ao servidor de busca…",
+  "Coletando estabelecimentos no Google Maps…",
+  "Limpando e removendo duplicados…",
   "Validando endereço e cidade…",
+  "Gravando os leads encontrados…",
   "Finalizando resultados…",
 ];
 
@@ -137,10 +137,34 @@ function uniqueWarnings(warnings: SearchWarning[]) {
 type SearchStatusResponse = {
   search_id: string;
   status: SearchStatus;
+  source?: string | null;
   counters?: Record<string, number>;
   warnings?: SearchWarning[];
   leads?: SearchPlacesLead[];
   error?: string | null;
+};
+
+type SearchSourceInfo = { source: string; status: SearchStatus; warnings: SearchWarning[] };
+
+// Fontes reais do motor atual: scraper self-hosted do Google Maps como
+// principal, Geoapify (OpenStreetMap) como fallback automático.
+const CASCADE_SOURCES: Array<{ key: string; label: string; primary: boolean; desc: string }> = [
+  { key: "google_maps_scraper", label: "Google Maps", primary: true, desc: "fonte principal (scraper self-hosted) — nome, telefone, site, categoria e coordenadas" },
+  { key: "geoapify", label: "Geoapify (OpenStreetMap)", primary: false, desc: "fallback automático quando o Google Maps não responde" },
+];
+
+function sourceRunState(info: SearchSourceInfo | null, key: string): "used" | "failed" | "skipped" | "unknown" {
+  if (!info) return "unknown";
+  if (info.source === key) return "used";
+  if (info.warnings.some((w) => w.source.includes(key))) return "failed";
+  return "skipped";
+}
+
+const SOURCE_STATE_LABEL: Record<string, string> = {
+  used: "consultada",
+  failed: "falhou",
+  skipped: "não consultada",
+  unknown: "",
 };
 
 const TERMINAL_SEARCH_STATUS = new Set<SearchStatus>([
@@ -227,6 +251,7 @@ export function LeadSearchForm({
   const [stageIdx, setStageIdx] = useState(0);
   const [progress, setProgress] = useState(0);
   const [notice, setNotice] = useState<SearchNotice | null>(null);
+  const [sourceInfo, setSourceInfo] = useState<SearchSourceInfo | null>(null);
   const stageTimer = useRef<number | null>(null);
 
   const loadCities = useCallback((uf: string, signal?: AbortSignal) => {
@@ -316,7 +341,7 @@ export function LeadSearchForm({
         data = {
           leads: polled.leads ?? [],
           search_status: polled.status,
-          source: "google_maps_scraper",
+          source: polled.source ?? "none",
           warnings: polled.warnings ?? [],
           error: polled.error ?? undefined,
         } as SearchPlacesResponse;
@@ -335,6 +360,7 @@ export function LeadSearchForm({
         sources_status: data?.sources_status,
         leads: realLeads.length,
       });
+      setSourceInfo({ source: usedSource, status: searchStatus, warnings });
       const isEmptyWithLimitations =
         searchStatus === "EMPTY_WITH_LIMITATIONS" || searchStatus === "EXTERNAL_FAILURE";
       const isEmptyReal = searchStatus === "EMPTY_REAL" || searchStatus === "EMPTY";
@@ -588,13 +614,31 @@ export function LeadSearchForm({
         <Card className="p-5 border-border/50 bg-muted/30">
           <div className="flex items-start gap-3 text-sm text-muted-foreground">
             <ShieldCheck className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-            <div className="space-y-1">
-              <p><strong className="text-foreground">Fontes consultadas em cascata:</strong></p>
-              <p>1. <strong className="text-foreground">Google Places API (New)</strong> — quando a chave estiver configurada e ativa.</p>
-              <p>2. <strong className="text-foreground">Google Places (Legacy)</strong> — fallback automático.</p>
-              <p>3. <strong className="text-foreground">OpenStreetMap / Nominatim</strong> — fonte pública gratuita para endereços e locais.</p>
-              <p>4. <strong className="text-foreground">OpenStreetMap / Overpass</strong> — busca por categorias oficiais do mapa quando as outras fontes falham.</p>
-              <p className="pt-1">Se uma fonte falhar, a próxima é tentada automaticamente. Campos sem informação pública aparecem como <em>"Não disponível"</em> — nunca inventamos dados.</p>
+            <div className="space-y-2">
+              <p><strong className="text-foreground">{sourceInfo ? "Fontes consultadas nesta busca:" : "Fontes consultadas em cascata:"}</strong></p>
+              <ul className="space-y-1">
+                {CASCADE_SOURCES.map((s) => {
+                  const state = sourceRunState(sourceInfo, s.key);
+                  const stateClass =
+                    state === "used"
+                      ? "text-emerald-500"
+                      : state === "failed"
+                        ? "text-amber-500"
+                        : "text-muted-foreground/70";
+                  return (
+                    <li key={s.key}>
+                      {s.primary ? "1. " : "2. "}
+                      <strong className="text-foreground">{s.label}</strong>
+                      {s.primary ? " (principal)" : ""} — {s.desc}
+                      {sourceInfo && (
+                        <span className={`ml-1 font-medium ${stateClass}`}>({SOURCE_STATE_LABEL[state]})</span>
+                      )}
+                      .
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="pt-1">A fonte principal é tentada primeiro; se falhar, o fallback é acionado automaticamente. Campos sem informação pública aparecem como <em>"Não disponível"</em> — nunca inventamos dados.</p>
             </div>
           </div>
           <div className="flex gap-4 mt-3 text-[11px] text-muted-foreground">

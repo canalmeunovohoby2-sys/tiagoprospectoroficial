@@ -2184,6 +2184,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
   const warnings: Array<{ source: string; code?: string; message: string }> = [];
   let status: "SUCCESS" | "EMPTY_REAL" | "PARTIAL_RESULTS" | "EXTERNAL_FAILURE" = "SUCCESS";
   let errorMsg: string | null = null;
+  let resultSource: string | null = null;
   let finalLeads: Record<string, unknown>[] = [];
 
   try {
@@ -2205,6 +2206,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
       if (gp.error) warnings.push({ source: "geoapify", code: "GEOAPIFY_FAILED", message: gp.error });
       if (gp.leads.length > 0) {
         status = "PARTIAL_RESULTS";
+        resultSource = "geoapify";
         counters.final = gp.leads.length;
         counters.comTelefone = gp.leads.filter((l) => !!l.phone).length;
         counters.comWhatsapp = gp.leads.filter((l) => !!l.whatsapp).length;
@@ -2229,6 +2231,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
         warnings.push({ source: "validation", code: "REJECTED", message: `${validated.rejected.length} lead(s) descartado(s) na validação` });
       }
       status = sorted.length > 0 ? "SUCCESS" : "EMPTY_REAL";
+      resultSource = "google_maps_scraper";
     }
 
     if (finalLeads.length > 0) {
@@ -2256,7 +2259,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
           latitude: (lead.latitude as number) ?? null,
           longitude: (lead.longitude as number) ?? null,
           email: (lead.email as string) ?? null,
-          source: "google_maps_scraper",
+          source: resultSource ?? "google_maps_scraper",
         };
       });
       const { error: insertErr } = await p.admin.from("leads").insert(rows);
@@ -2274,6 +2277,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
         warnings,
         results_count: finalLeads.length,
         module: p.module,
+        source: resultSource,
         error: errorMsg,
         updated_at: new Date().toISOString(),
       })
@@ -2293,6 +2297,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
         status: "EXTERNAL_FAILURE",
         counters,
         warnings,
+        source: null,
         error: e instanceof Error ? e.message : String(e),
         updated_at: new Date().toISOString(),
       })

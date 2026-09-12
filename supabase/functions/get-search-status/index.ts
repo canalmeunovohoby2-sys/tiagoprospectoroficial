@@ -102,6 +102,7 @@ Deno.serve(async (req) => {
     return json({
       search_id: searchId,
       status,
+      source: search.source ?? null,
       counters,
       warnings,
       leads,
