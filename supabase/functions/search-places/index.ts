@@ -13,7 +13,7 @@ import {
   type GmapsScraperPlace,
   type LeadSource,
 } from "../_shared/gmaps.ts";
-import { callMapScraper } from "../_shared/mapscraper.ts";
+import { buildQueryVariants, callMapScraperVariants } from "../_shared/mapscraper.ts";
 
 // Supabase Edge Functions expõem EdgeRuntime.waitUntil para trabalho em
 // background que continua após a resposta HTTP.
@@ -30,6 +30,15 @@ const MAP_SCRAPER_API_KEY = (Deno.env.get("MAP_SCRAPER_API_KEY") ?? "").trim();
 const MAP_SCRAPER_TIMEOUT_MS = Number(Deno.env.get("MAP_SCRAPER_TIMEOUT_MS") ?? "300000");
 const MAP_SCRAPER_LANG = (Deno.env.get("MAP_SCRAPER_LANG") ?? "pt").trim();
 const MAP_SCRAPER_COUNTRY = (Deno.env.get("MAP_SCRAPER_COUNTRY") ?? "br").trim();
+
+// Orçamentos de resultados POR FONTE. O gmaps-scraper (Playwright) é lento
+// (~2s/resultado) — cap baixo para não estourar o tempo da função. O mapScraper
+// (aiohttp) faz ~500 resultados em ~18s — piso alto para maximizar a cobertura.
+const GMAPS_SCRAPER_MAX = Math.max(10, Number(Deno.env.get("GMAPS_SCRAPER_MAX") ?? "40"));
+// Nº de variantes de query no mapScraper (cada uma yield ~20 distintos; variar
+// termos multiplica a cobertura) e teto de resultados por variante.
+const MAP_SCRAPER_VARIANTS = Math.max(1, Math.min(10, Number(Deno.env.get("MAP_SCRAPER_VARIANTS") ?? "8")));
+const MAP_SCRAPER_PER_VARIANT = Math.max(20, Number(Deno.env.get("MAP_SCRAPER_PER_VARIANT") ?? "40"));
 
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
@@ -2202,37 +2211,48 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
 
   try {
     const query = `${p.segment} em ${p.city}, ${p.state}`;
-    const maxPlaces = Math.max(1, p.maxPages * 20);
+    // Requisitado pela UI (maxPages*20) + pisos/tetos por fonte. Em cidades
+    // grandes o gmaps sozinho fica lento; o mapScraper cobre volume rapidamente.
+    const requested = Math.max(1, p.maxPages * 20);
+    const gmapsBudget = Math.max(20, Math.min(requested, GMAPS_SCRAPER_MAX));
 
     // Fontes habilitadas são consultadas EM PARALELO e os resultados mesclados.
-    type SourceRun = { key: LeadSource; places: GmapsScraperPlace[]; error?: string };
+    type SourceRun = { key: LeadSource; places: GmapsScraperPlace[]; error?: string; raw?: number };
     const tasks: Array<Promise<SourceRun>> = [];
     if (GMAPS_SCRAPER_ENABLED) {
       tasks.push(
         callGmapsScraper({
           baseUrl: GMAPS_SCRAPER_URL,
           query,
-          maxPlaces,
+          maxPlaces: gmapsBudget,
           apiKey: GMAPS_SCRAPER_API_KEY || undefined,
           timeoutMs: Number.isFinite(GMAPS_SCRAPER_TIMEOUT_MS) ? GMAPS_SCRAPER_TIMEOUT_MS : 300000,
         }).then((r) => ({ key: "google_maps_scraper" as LeadSource, places: r.results, error: r.error })),
       );
     }
     if (MAP_SCRAPER_ENABLED) {
+      const mapVariants = buildQueryVariants(p.segment, p.city, p.state, MAP_SCRAPER_VARIANTS);
       tasks.push(
-        callMapScraper({
+        callMapScraperVariants({
           baseUrl: MAP_SCRAPER_URL,
-          query,
-          maxPlaces,
+          variants: mapVariants,
+          maxPlacesPerVariant: MAP_SCRAPER_PER_VARIANT,
           lang: MAP_SCRAPER_LANG,
           country: MAP_SCRAPER_COUNTRY,
           apiKey: MAP_SCRAPER_API_KEY || undefined,
           timeoutMs: Number.isFinite(MAP_SCRAPER_TIMEOUT_MS) ? MAP_SCRAPER_TIMEOUT_MS : 300000,
-        }).then((r) => ({ key: "mapscraper" as LeadSource, places: r.places, error: r.error })),
+        }).then((r) => ({ key: "mapscraper" as LeadSource, places: r.places, error: r.places.length ? undefined : r.errors[0], raw: r.rawCount })),
       );
     }
 
     const sourceRuns: SourceRun[] = tasks.length > 0 ? await Promise.all(tasks) : [];
+    const perSource: Record<string, number> = {};
+    const perSourceRaw: Record<string, number> = {};
+    for (const r of sourceRuns) { perSource[r.key] = r.places.length; if (typeof r.raw === "number") perSourceRaw[r.key] = r.raw; }
+    (counters as unknown as Record<string, unknown>).sources = perSource;
+    (counters as unknown as Record<string, unknown>).sourcesRaw = perSourceRaw;
+    (counters as unknown as Record<string, unknown>).budgets = { gmaps: gmapsBudget, mapVariants: MAP_SCRAPER_VARIANTS, mapPerVariant: MAP_SCRAPER_PER_VARIANT, requested: p.maxPages * 20 };
+    console.info("[search-places][gmaps] sources", JSON.stringify({ query, perSource, budgets: { gmapsBudget, MAP_SCRAPER_VARIANTS, MAP_SCRAPER_PER_VARIANT } }));
     const failedSources = sourceRuns.filter((r) => !!r.error);
     for (const r of failedSources) {
       warnings.push({ source: r.key, code: "SOURCE_FAILED", message: r.error! });
@@ -2466,7 +2486,7 @@ Deno.serve(async (req) => {
     const segment = String(body?.segment ?? "").trim();
     const city = String(body?.city ?? "").trim();
     const state = String(body?.state ?? "").trim().toUpperCase();
-    const maxPages = Math.min(Math.max(Number(body?.maxPages ?? 2), 1), 3);
+    const maxPages = Math.min(Math.max(Number(body?.maxPages ?? 3), 1), 10);
     const module: "orvix" | "landing_pages" = body?.module === "orvix" ? "orvix" : "landing_pages";
 
     console.info("[search-places] request params", {

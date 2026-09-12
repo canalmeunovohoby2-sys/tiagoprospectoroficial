@@ -96,7 +96,7 @@ export type MapScraperCallOpts = {
   fetchImpl?: typeof fetch;
 };
 
-export async function callMapScraper(opts: MapScraperCallOpts): Promise<{ places: GmapsScraperPlace[]; error?: string }> {
+export async function callMapScraper(opts: MapScraperCallOpts): Promise<{ places: GmapsScraperPlace[]; error?: string; rawCount?: number }> {
   const {
     baseUrl,
     query,
@@ -128,11 +128,118 @@ export async function callMapScraper(opts: MapScraperCallOpts): Promise<{ places
       : Array.isArray((data as { results?: unknown })?.results)
         ? ((data as { results: MapScraperRecord[] }).results)
         : [];
-    return { places: mapMapScraperRecords(records) };
+    console.info("[mapscraper] response", JSON.stringify({ requested: maxPlaces, rawRecords: records.length, status: res.status }));
+    return { places: mapMapScraperRecords(records), rawCount: records.length };
   } catch (e) {
     const isAbort = e instanceof DOMException && e.name === "AbortError";
     return { places: [], error: isAbort ? "mapScraper timeout" : `mapScraper: ${e instanceof Error ? e.message : String(e)}` };
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ── Variantes de query ───────────────────────────────────────────────────
+// O mapScraper repete ~os mesmos 20 resultados numa query ampla (a paginação
+// não avança além disso). Testado: variantes (sinônimos/singular-plural)
+// elevam muito o nº de estabelecimentos DISTINTOS (ex.: pet shops SP: 20 → 89).
+const SEGMENT_SYNONYMS: Array<{ re: RegExp; terms: string[] }> = [
+  { re: /pet|petshop|banho e tosa|animal/, terms: ["pet shop", "petshop", "banho e tosa", "loja de animais"] },
+  { re: /advog|advocacia|juridic/, terms: ["advogado", "advocacia", "escritório de advocacia"] },
+  { re: /dentist|odont/, terms: ["dentista", "odontologia", "clínica odontológica"] },
+  { re: /restaurant|pizz|lanch|comida|burger/, terms: ["restaurante", "pizzaria", "lanchonete", "hamburgueria"] },
+  { re: /academia|fitness|ginastica|crossfit/, terms: ["academia", "academia de ginástica", "crossfit"] },
+  { re: /veterin/, terms: ["veterinário", "clínica veterinária"] },
+  { re: /salao|cabel|barbear|estetic|beleza/, terms: ["salão de beleza", "cabeleireiro", "barbearia"] },
+  { re: /contab|contador/, terms: ["contabilidade", "escritório de contabilidade"] },
+  { re: /imobili|corretor|imovel/, terms: ["imobiliária", "corretor de imóveis"] },
+  { re: /arquitet/, terms: ["arquiteto", "escritório de arquitetura"] },
+  { re: /farmac|drogari/, terms: ["farmácia", "drogaria"] },
+  { re: /supermerc|mercado|mercearia/, terms: ["supermercado", "mercado"] },
+  { re: /oficina|mecanic|auto ?center|autopec/, terms: ["oficina mecânica", "auto center", "autopeças"] },
+  { re: /escola|colegio|curso/, terms: ["escola", "colégio", "curso"] },
+];
+
+function normTerm(value: string): string {
+  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Gera variantes de busca determinísticas para ampliar a cobertura (mesmo
+ * segmento, termos equivalentes). A 1ª é sempre a query base do app.
+ */
+export function buildQueryVariants(segment: string, city: string, state: string, max = 8): string[] {
+  const seg = String(segment ?? "").trim();
+  const c = String(city ?? "").trim();
+  const uf = String(state ?? "").trim();
+  if (!seg || !c) return [`${seg} em ${c}${uf ? ", " + uf : ""}`.trim()];
+
+  const base = `${seg} em ${c}, ${uf}`;
+  const out = [base];
+  const seen = new Set([base]);
+  const push = (q: string) => {
+    const clean = q.replace(/\s+/g, " ").trim();
+    if (out.length < max && clean && !seen.has(clean)) { seen.add(clean); out.push(clean); }
+  };
+
+  const terms = new Set<string>();
+  const n = normTerm(seg);
+  for (const entry of SEGMENT_SYNONYMS) if (entry.re.test(n)) for (const t of entry.terms) terms.add(t);
+  const singular = /s$/i.test(seg) && seg.length > 3 ? seg.replace(/s$/i, "") : seg;
+  const plural = /s$/i.test(seg) ? seg : `${seg}s`;
+  terms.add(seg);
+  terms.add(singular);
+  terms.add(plural);
+
+  // Intercala formatos diferentes (com "em ... UF" e só "cidade") — o Google
+  // devolve conjuntos distintos conforme o formato, ampliando a cobertura.
+  for (const t of terms) {
+    push(`${t} em ${c}, ${uf}`);
+    push(`${t} ${c}`);
+    if (out.length >= max) break;
+  }
+  return out.slice(0, max);
+}
+
+/**
+ * Executa VÁRIAS queries no mapScraper (sequencial) e devolve os resultados
+ * mesclados/deduplicados por place_id. É rápido (~3-4s por variante), então dá
+ * para cobrir muito mais estabelecimentos do que uma única query de 20.
+ */
+export async function callMapScraperVariants(opts: {
+  baseUrl: string;
+  variants: string[];
+  maxPlacesPerVariant: number;
+  lang?: string;
+  country?: string;
+  apiKey?: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<{ places: GmapsScraperPlace[]; rawCount: number; errors: string[] }> {
+  const places: GmapsScraperPlace[] = [];
+  const errors: string[] = [];
+  let rawCount = 0;
+  for (const query of opts.variants) {
+    const r = await callMapScraper({
+      baseUrl: opts.baseUrl,
+      query,
+      maxPlaces: opts.maxPlacesPerVariant,
+      lang: opts.lang,
+      country: opts.country,
+      apiKey: opts.apiKey,
+      timeoutMs: opts.timeoutMs,
+      fetchImpl: opts.fetchImpl,
+    });
+    if (r.error) errors.push(r.error);
+    rawCount += r.rawCount ?? r.places.length;
+    for (const p of r.places) places.push(p);
+  }
+  const seen = new Set<string>();
+  const out: GmapsScraperPlace[] = [];
+  for (const p of places) {
+    const key = String(p.place_id ?? `${p.name ?? ""}|${p.address ?? ""}`);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return { places: out, rawCount, errors };
 }

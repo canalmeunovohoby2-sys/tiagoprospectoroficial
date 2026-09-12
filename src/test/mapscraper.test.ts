@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { mapMapScraperRecords, callMapScraper } from "../../supabase/functions/_shared/mapscraper";
+import { mapMapScraperRecords, callMapScraper, buildQueryVariants, callMapScraperVariants } from "../../supabase/functions/_shared/mapscraper";
 
 describe("mapScraper — mapeamento para o shape compartilhado", () => {
   it("mapeia os campos do CSV do mapScraper", () => {
@@ -85,5 +85,41 @@ describe("mapScraper — cliente HTTP", () => {
   it("erro explícito quando a URL não está configurada", async () => {
     const out = await callMapScraper({ baseUrl: "", query: "q", maxPlaces: 5 });
     expect(out.error).toContain("MAP_SCRAPER_URL");
+  });
+});
+
+describe("mapScraper — variantes de query (ampliar cobertura)", () => {
+  it("gera a base + sinônimos/singular-plural, sem repetir", () => {
+    const v = buildQueryVariants("pet shops", "São Paulo", "SP", 5);
+    expect(v[0]).toBe("pet shops em São Paulo, SP");
+    expect(v.length).toBeGreaterThan(1);
+    expect(new Set(v).size).toBe(v.length);
+    expect(v.join(" | ")).toMatch(/pet shop|petshop|banho e tosa/i);
+  });
+
+  it("respeita o teto de variantes", () => {
+    expect(buildQueryVariants("dentistas", "Curitiba", "PR", 3)).toHaveLength(3);
+  });
+
+  it("sem cidade, devolve apenas a query base", () => {
+    expect(buildQueryVariants("pet shops", "", "SP")).toHaveLength(1);
+  });
+
+  it("mescla variantes e deduplica por place_id", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      const q = decodeURIComponent(url);
+      const items = q.includes("pet shop em")
+        ? [{ id: "p1", title: "Alfa" }, { id: "p2", title: "Beta" }]
+        : [{ id: "p2", title: "Beta" }, { id: "p3", title: "Gama" }];
+      return new Response(JSON.stringify(items), { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await callMapScraperVariants({
+      baseUrl: "https://mapscraper.test",
+      variants: ["pet shop em X, SP", "petshop em X, SP"],
+      maxPlacesPerVariant: 40,
+      fetchImpl,
+    });
+    expect(out.places.map((p) => p.place_id).sort()).toEqual(["p1", "p2", "p3"]);
+    expect(out.rawCount).toBe(4);
   });
 });

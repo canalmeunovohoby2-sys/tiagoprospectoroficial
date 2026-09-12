@@ -322,7 +322,7 @@ export function LeadSearchForm({
       const { data: startData, error } = await supabase.functions.invoke<
         SearchPlacesResponse & { search_id?: string; status?: string }
       >("search-places", {
-        body: { state: safeState, city: safeCity, segment: safeSegment, maxPages: 1, module },
+        body: { state: safeState, city: safeCity, segment: safeSegment, maxPages: 3, module },
       });
       console.info("[LeadSearchForm] resposta da busca", {
         durationMs: Math.round(performance.now() - startedAt),
