@@ -57,6 +57,21 @@ describe("ProspectorSiteAgent — workspace (Cline SDK runtime)", () => {
     expect(readFileSync(join(root, "src/site.css"), "utf8")).toContain("color:blue");
   });
 
+  it("edit_file RECUSA find ambíguo (múltiplas ocorrências) e não altera nada", async () => {
+    await run("write_file", { path: "src/amb.css", content: ".x{color:red}\n.y{color:red}" });
+    const out = await run("edit_file", { path: "src/amb.css", find: "color:red", replace: "color:blue" });
+    expect(out).toContain("AMBÍGUO");
+    expect(readFileSync(join(root, "src/amb.css"), "utf8")).toBe(".x{color:red}\n.y{color:red}");
+  });
+
+  it("edit_file com occurrence troca APENAS a ocorrência indicada", async () => {
+    await run("write_file", { path: "src/amb2.css", content: ".x{color:red}\n.y{color:red}" });
+    const out = await run("edit_file", { path: "src/amb2.css", find: "color:red", replace: "color:blue", occurrence: 2 });
+    expect(out).toContain("ok");
+    const after = readFileSync(join(root, "src/amb2.css"), "utf8");
+    expect(after).toBe(".x{color:red}\n.y{color:blue}");
+  });
+
   it("bloqueia path traversal e .env", async () => {
     const out = await run("write_file", { path: "../../fora.txt", content: "x" });
     expect(out).toContain("fora do workspace");

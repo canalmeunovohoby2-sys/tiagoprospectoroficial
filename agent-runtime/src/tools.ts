@@ -39,6 +39,29 @@ export interface ToolEnv {
 // site (evita o agente criar identidade visual standalone e inflar/atrasar a geração).
 const GENERATE_EXCLUDED_TOOLS = new Set(["branding", "mockup", "brand_pdf", "brand_package", "site_video"]);
 
+function countOccurrences(str: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let pos = 0;
+  for (;;) {
+    const found = str.indexOf(needle, pos);
+    if (found === -1) break;
+    count++;
+    pos = found + needle.length;
+  }
+  return count;
+}
+
+function nthIndexOf(str: string, needle: string, n: number): number {
+  let idx = -1;
+  for (let i = 0; i < n; i++) {
+    const found = str.indexOf(needle, idx + 1);
+    if (found === -1) return -1;
+    idx = found;
+  }
+  return idx;
+}
+
 const MAX_FILE = 2_000_000;
 
 function safeJoin(root: string, path: string): string | null {
@@ -115,17 +138,29 @@ export function buildSiteTools(env: ToolEnv) {
 
   const edit = createTool({
     name: "edit_file",
-    description: "Substitui um trecho exato em um arquivo (find deve existir literalmente).",
+    description:
+      "Substitui um trecho EXATO e ÚNICO em um arquivo (alteração localizada; nunca reescreve o arquivo inteiro). Se o trecho aparecer mais de uma vez, a edição é RECUSADA por ambiguidade — inclua mais contexto/âncora estrutural ao redor do alvo para torná-lo único ou informe occurrence (1..N). Para trocar imagem/texto/ícone, altere SOMENTE o trecho do alvo e preserve CSS/tema/classes existentes.",
     inputSchema: z.object({
       path: z.string(),
-      find: z.string(),
+      find: z.string().describe("trecho exato e ÚNICO a localizar (inclua contexto/âncora ao redor do alvo)"),
       replace: z.string(),
+      occurrence: z.number().int().positive().optional().describe("Qual ocorrência (1..N) quando o trecho se repete; sem ele, o trecho precisa ser único"),
     }),
     async execute(input) {
       const abs = safeJoin(root, input.path);
       if (!abs || !existsSync(abs)) return JSON.stringify({ error: "arquivo não encontrado" });
       const current = readFileSync(abs, "utf8");
-      const idx = current.indexOf(input.find);
+      const total = countOccurrences(current, input.find);
+      if (total === 0) return JSON.stringify({ error: "trecho find não encontrado no arquivo" });
+      let idx: number;
+      if (typeof input.occurrence === "number" && input.occurrence >= 1) {
+        if (input.occurrence > total) return JSON.stringify({ error: `find aparece ${total}× ; occurrence=${input.occurrence} é inválido` });
+        idx = nthIndexOf(current, input.find, input.occurrence);
+      } else if (total > 1) {
+        return JSON.stringify({ error: `trecho find é AMBÍGUO: aparece ${total}× no arquivo. Inclua mais contexto/âncora para torná-lo único ou use occurrence (1..${total}).` });
+      } else {
+        idx = current.indexOf(input.find);
+      }
       if (idx === -1) return JSON.stringify({ error: "trecho find não encontrado no arquivo" });
       const next = current.slice(0, idx) + input.replace + current.slice(idx + input.find.length);
       if (next.length > MAX_FILE) return JSON.stringify({ error: "resultado grande demais" });

@@ -16,6 +16,7 @@ import type { BusinessContext } from "./tools.js";
 import { assertGenerationQuality } from "./generation-gate.js";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js";
 import { buildGenerationSeed, formatBaseDirective } from "./site-bases.js";
+import { buildGenerateSystemPrompt } from "./agent-identity.js";
 import { materializeAttachments, type ChatAttachment } from "./attachments.js";
 import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
 import { trimConversationWindow } from "./conversation-window.js";
@@ -377,11 +378,23 @@ async function prepareExec(body: Record<string, unknown>, authUid?: string, iden
   };
 }
 
-async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>, exec?: ResolvedExec): Promise<ProspectorSiteAgent> {
+// Log objetivo de geração (server-side; não vai para o usuário). Permite medir
+// BASE/AI/BUILD e confirmar que a base é o workspace inicial do agente.
+function genLog(genId: string, event: string, data: Record<string, unknown> = {}): void {
+  try {
+    console.log(JSON.stringify({ scope: "generate", generation_id: genId, event, ts: Date.now(), ...data }));
+  } catch { /* noop */ }
+}
+
+async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>, exec?: ResolvedExec, opts?: { hasBase?: boolean }): Promise<ProspectorSiteAgent> {
   const root = ensureWorkspaceDir(projectId, files);
   const resolved = exec ?? await prepareExec(body, undefined);
   const apiKey = resolved.apiKey ?? (typeof body.apiKey === "string" ? body.apiKey : undefined);
   const baseUrl = resolved.baseUrl ?? (typeof body.baseUrl === "string" ? body.baseUrl : undefined);
+  const mode = typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit";
+  // Em GERAÇÃO, o system prompt precisa saber se há base pré-carregada — senão o
+  // modelo é instruído a "criar do zero" e descarta a base (bug de integração).
+  const systemPrompt = mode === "generate" ? buildGenerateSystemPrompt({ hasBase: !!opts?.hasBase }) : undefined;
 
   return new ProspectorSiteAgent({
     workspaceRoot: root,
@@ -391,9 +404,11 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
     baseUrl,
     modelId: resolved.modelId,
     providerId: resolved.providerId,
+    systemPrompt,
     maxIterations: typeof body.maxIterations === "number" ? body.maxIterations : Math.min(80, Math.max(8, Number(process.env.AGENT_MAX_ITERATIONS ?? 40))),
     initialFiles: files,
-    mode: typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit",
+    mode,
+    hasBase: !!opts?.hasBase,
     enableBrowser: body.enableBrowser !== false,
     initialMessages: resolved.initialMessages?.length ? trimConversationWindow(resolved.initialMessages) : undefined,
   });
@@ -475,6 +490,8 @@ export function startServer(port = PORT, host = HOST) {
       if (url.pathname === "/generate" && req.method === "POST") {
         const body = (await readJson(req)) as Record<string, unknown>;
         const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
+        const genId = `gen_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        const t0 = Date.now();
         const identity = await resolveIdentity(req.headers.authorization, projectId || undefined);
         if (!identity) { sendDenied(res, "Autenticação necessária para gerar o site.", 401); return; }
         if (!projectId) { send(res, 400, { error: "projectId é obrigatório" }); return; }
@@ -496,6 +513,12 @@ export function startServer(port = PORT, host = HOST) {
           business,
           brief: creativeBrief,
           briefing,
+        });
+        genLog(genId, "BASE_SELECTED", {
+          base: baseUsed,
+          incoming_files: Object.keys(incomingSeed).length,
+          staged_files: Object.keys(seed).length,
+          ms: Date.now() - t0,
         });
         const gExec = executionConfig(body);
         if (gExec.provider && !["deepseek", "openai", "nvidia", "openrouter", "gemini", "ollama"].includes(gExec.provider)) {
@@ -536,9 +559,30 @@ export function startServer(port = PORT, host = HOST) {
         const genProviderChanged = !!(existingGen?.agent && existingGen.execKey !== genExec.key);
         const agent = (existingGen?.agent && !genProviderChanged)
           ? existingGen.agent
-          : await makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser }, genExec);
+          : await makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser }, genExec, { hasBase: !!baseUsed });
         sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
         sessions.set(editKey(identity.uid, projectId), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
+
+        // Evidência objetiva: quais arquivos existem no workspace ANTES da IA agir.
+        {
+          const genRoot = resolveWorkspaceRoot(projectId);
+          const initialWorkspaceFiles = Object.keys(readWorkspace(genRoot));
+          genLog(genId, "BASE_WORKSPACE_PREPARED", {
+            base: baseUsed,
+            root: genRoot,
+            files: initialWorkspaceFiles.length,
+            reused_session: !!(existingGen?.agent && !genProviderChanged),
+            ms: Date.now() - t0,
+          });
+          genLog(genId, "BASE_FILES_PRESENT", {
+            base: baseUsed,
+            has_index: initialWorkspaceFiles.includes("index.html"),
+            has_css: initialWorkspaceFiles.some((f) => f.endsWith(".css")),
+            has_js: initialWorkspaceFiles.some((f) => f.endsWith(".js")),
+            files: initialWorkspaceFiles.slice(0, 12),
+            ms: Date.now() - t0,
+          });
+        }
 
         // ANEXOS (5.26) na geração: materializa no workspace (ex.: logo/foto real do cliente).
         const attachResult = materializeAttachments(resolveWorkspaceRoot(projectId), (body.attachments ?? []) as ChatAttachment[]);
@@ -548,6 +592,7 @@ export function startServer(port = PORT, host = HOST) {
 
         const activity: Array<{ phase: string; detail: string }> = [];
         const events: string[] = [];
+        let firstToolAt = 0, firstChangeAt = 0, firstRenderAt = 0, toolCount = 0, writeCount = 0;
         agent.subscribe((event) => {
           try {
             events.push((event as { type: string }).type);
@@ -559,6 +604,18 @@ export function startServer(port = PORT, host = HOST) {
               const path = typeof input?.path === "string" ? input.path : "";
               const tool = e.toolCall?.toolName ?? "";
               const detail = path ? `${path}` : "";
+              if (tool) {
+                toolCount++;
+                if (!firstToolAt) { firstToolAt = Date.now(); genLog(genId, "FIRST_TOOL", { tool, path, ms: firstToolAt - t0 }); }
+                if (["write_file", "edit_file", "delete_file"].includes(tool)) {
+                  writeCount++;
+                  if (!firstChangeAt) { firstChangeAt = Date.now(); genLog(genId, "FIRST_FILE_CHANGE", { tool, path, ms: firstChangeAt - t0 }); }
+                }
+                if ((/^browser_/.test(tool) || /^visual_/.test(tool)) && !firstRenderAt) {
+                  firstRenderAt = Date.now();
+                  genLog(genId, "FIRST_RENDER", { tool, ms: firstRenderAt - t0 });
+                }
+              }
               if (tool === "read_file" || tool === "list_files" || tool === "get_site_context") {
                 activity.push({ phase: detail ? "reading" : "analyzing", detail: detail ? `Analisando ${detail}` : "Analisando o negócio…" });
               } else if (tool === "write_file") {
@@ -673,6 +730,7 @@ IMPORTANTE: a "Direção criativa sugerida" é apenas um PONTO DE PARTIDA entre 
         genStreamStarted = true;
         genStreamFinish = finishGenerate;
 
+        genLog(genId, "AGENT_STARTED", { base: baseUsed, reused_session: !!existingGen, ms: Date.now() - t0 });
         const outcome = await agent.runTask(mission, { continueSession: !!existingGen });
         // ===== QUALITY GATE PÓS-GERAÇÃO (5.21) =====
         // A qualidade passa a ser consequência do processo: se a primeira versão
@@ -712,6 +770,18 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         sessions.delete(genKey);
         sessions.set(editKey(identity.uid, projectId), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
 
+        genLog(genId, "GENERATION_COMPLETED", {
+          base: baseUsed,
+          ok: finalOutcome.ok,
+          gate_ok: gateResult.ok,
+          interaction_ok: interaction.ok,
+          tools: toolCount,
+          file_changes: writeCount,
+          first_tool_ms: firstToolAt ? firstToolAt - t0 : null,
+          first_file_change_ms: firstChangeAt ? firstChangeAt - t0 : null,
+          first_render_ms: firstRenderAt ? firstRenderAt - t0 : null,
+          total_ms: Date.now() - t0,
+        });
         finishGenerate({
           status: genBlocked ? "error" : (finalOutcome.ok ? "ok" : "error"),
           reply: finalOutcome.reply,
@@ -787,7 +857,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
       if (url.pathname === "/run" && req.method === "POST") {
           const body = await readJson(req);
           const instruction = String(body.instruction ?? "").trim();
-          const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
+        const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
           const conversationId = typeof body.conversationId === "string" && body.conversationId.trim() ? body.conversationId.trim() : "";
           const identity = await resolveIdentity(req.headers.authorization, projectId || undefined);
           if (!identity) { sendDenied(res, "Autenticação necessária para executar o agente.", 401); return; }

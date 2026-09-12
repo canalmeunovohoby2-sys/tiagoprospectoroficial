@@ -62,4 +62,19 @@ describe("Agent Identity central (5.27) — profissional permanente", () => {
     expect(AGENT_IDENTITY).toContain("CÓDIGO INTEGRAL");
     expect(AGENT_IDENTITY).toContain("psicologia das cores");
   });
+
+  it("prompt de geração COM base instrui ADAPTAR a base (não reconstruir do zero)", () => {
+    const withBase = buildGenerateSystemPrompt({ hasBase: true });
+    expect(withBase).toContain("BASE JÁ NO WORKSPACE");
+    expect(withBase).toContain("PARTIR DA BASE");
+    expect(withBase.toLowerCase()).toContain("não recrie os arquivos do zero");
+    expect(withBase).toContain("edit_file");
+    // A missão "criar do zero" NÃO pode aparecer quando há base.
+    expect(withBase).not.toContain("MISSÃO AGORA: criar o site do zero");
+  });
+
+  it("prompt de geração SEM base mantém a instrução de criar do zero", () => {
+    const noBase = buildGenerateSystemPrompt();
+    expect(noBase).toContain("MISSÃO AGORA: criar o site do zero");
+  });
 });

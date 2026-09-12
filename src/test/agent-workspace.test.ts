@@ -48,6 +48,19 @@ describe("Agent Workspace (5.12) — ferramentas de arquivo", () => {
     expect(Object.keys(files).length).toBe(0);
   });
 
+  it("editFile recusa find AMBÍGUO e só edita com occurrence", () => {
+    const start: Record<string, string> = { "src/a.css": ".x{color:red}.y{color:red}" };
+    const amb = editFile(start, "src/a.css", { find: "color:red", replace: "color:blue" });
+    expect(amb.ok).toBe(false);
+    expect(amb.error ?? "").toMatch(/AMBÍGUO/i);
+    expect(amb.files["src/a.css"]).toBe(".x{color:red}.y{color:red}"); // não alterou nada
+    const ok = editFile(start, "src/a.css", { find: "color:red", replace: "color:blue", occurrence: 2 });
+    expect(ok.ok).toBe(true);
+    expect(ok.files["src/a.css"]).toBe(".x{color:red}.y{color:blue}");
+    const over = editFile(start, "src/a.css", { find: "color:red", replace: "x", occurrence: 5 });
+    expect(over.ok).toBe(false);
+  });
+
   it("protege contra escrita de caminhos inválidos e tamanho", () => {
     const r = writeFile({}, "../fora.ts", "x");
     expect(r.ok).toBe(false);

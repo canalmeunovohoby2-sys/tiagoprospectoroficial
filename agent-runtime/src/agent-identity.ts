@@ -184,16 +184,38 @@ ${BROWSER_QA_INSTRUCTIONS}
 O site DEVE continuar válido: index.html com <!doctype html>, <style> balanceado, src/site.json JSON válido.`;
 }
 
-// Prompt-base do modo GERAÇÃO (missão de criar do zero, com direção própria).
-export function buildGenerateSystemPrompt(): string {
-  return `${AGENT_IDENTITY}
+// Prompt-base do modo GERAÇÃO. Quando uma BASE TÉCNICA já está no workspace
+// (site-bases), o prompt instrui a ADAPTAR a base em vez de reconstruir do zero.
+export function buildGenerateSystemPrompt(opts?: { hasBase?: boolean }): string {
+  const hasBase = !!opts?.hasBase;
+  const missionHeader = hasBase
+    ? `MISSÃO AGORA: TRANSFORMAR a base técnica pré-carregada no site DESTE cliente (geração inicial).
 
-MISSÃO AGORA: criar o site do zero (geração inicial). O workspace pode estar vazio.
+BASE JÁ NO WORKSPACE (leia antes de editar):
+- O workspace JÁ CONTÉM index.html, src/site.css, src/main.js e src/site.json — uma base estrutural funcional e responsiva. Isso é o PONTO DE PARTIDA.
+- PARTIR DA BASE é obrigatório: preserve a arquitetura, o sistema de CSS (classes/variáveis --c-*/tokens), o JS e a responsividade existentes e ADAPTE-os ao briefing.
+- NÃO recrie os arquivos do zero nem substitua a estrutura por inércia. Use edit_file para mudanças localizadas; use write_file no arquivo inteiro SOMENTE quando a missão exigir reestruturação deliberada — e, nesse caso, preserve TUDO que não faz parte do pedido (seções, classes, tokens, scripts, @media, footer, nav).
+- A identidade visual (paleta, tipografia, composição) nasce DESTE cliente — mas aplicada EVOLUINDO o sistema da base, não descartando-o.
+- Liberdade criativa é TOTAL (layout, cores, tipografia, imagens, seções, componentes); o proibido é jogar a base fora sem necessidade.`
+    : `MISSÃO AGORA: criar o site do zero (geração inicial). O workspace pode estar vazio.`;
 
-EFICIÊNCIA DE GERAÇÃO (obrigatório):
+  const efficiency = hasBase
+    ? `EFICIÊNCIA DE GERAÇÃO (obrigatório):
+- Comece LENDO a base (list_files + read_file dos 4 arquivos) e entenda a estrutura ANTES de editar — não adivinhe.
+- Faça a MAIOR PARTE das mudanças com edit_file pontual (preserva o resto). Evite reescrever index.html/site.css inteiros.
+- Aplique os DESIGN TOKENS ajustando as variáveis CSS da base (--c-*, --font-*) e a composição, sem trocar o sistema de layout.
+- Auto-revisão limitada: no MÁXIMO 2 ciclos curtos de ajuste e finalize.
+- Se a missão exigir, valide no navegador uma vez (desktop e mobile) e corrija; depois finalize.`
+    : `EFICIÊNCIA DE GERAÇÃO (obrigatório):
 - Escreva cada arquivo COMPLETO de uma vez — um write_file por arquivo (index.html, src/site.css, src/main.js, src/site.json). Evite micro-edições repetidas no mesmo arquivo.
 - Auto-revisão limitada: no MÁXIMO 2 ciclos curtos de ajuste (ex.: 1 revisão técnica + 1 checagem visual no navegador) e finalize. NÃO fique polindo por dezenas de turnos nem reescreva o arquivo inteiro a cada ajuste — prefira edit_file pontual nos ajustes.
-- Se a missão exigir, valide no navegador uma vez (desktop e mobile) e corrija o que aparecer; depois finalize.
+- Se a missão exigir, valide no navegador uma vez (desktop e mobile) e corrija o que aparecer; depois finalize.`;
+
+  return `${AGENT_IDENTITY}
+
+${missionHeader}
+
+${efficiency}
 
 GOOGLE MAPS EM TODA GERAÇÃO (obrigatório — não é opcional):
 - Toda landing page gerada DEVE ter uma seção de localização ("Como chegar"/"Localização") com o Google Maps embutido em <iframe>, responsivo (largura 100%), com title acessível e loading="lazy".

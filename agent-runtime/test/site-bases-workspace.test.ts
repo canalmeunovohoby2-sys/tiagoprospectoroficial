@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { materializeWorkspace, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace } from "../src/workspace";
-import { loadSiteBase, prepareBaseWorkspace, resolveBasesDir } from "../src/site-bases";
+import { materializeWorkspace, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace, ensureWorkspaceDir } from "../src/workspace";
+import { loadSiteBase, prepareBaseWorkspace, resolveBasesDir, buildGenerationSeed } from "../src/site-bases";
 import { buildCreativeBrief } from "../src/creative-direction";
 
 // Prova de isolamento REAL em disco: dois projetos criados a partir da MESMA
@@ -76,5 +76,24 @@ describe("Site Bases — cópia independente em disco", () => {
         expect(content).not.toMatch(/\{\{[A-Z0-9_]+\}\}/);
       }
     }
+  });
+
+  it("ensureWorkspaceDir materializa a base no disco (workspace inicial do agente)", () => {
+    const business = { name: "Clínica Alfa", segment: "Clínica", city: "Bauru", state: "SP" };
+    const { seed, baseUsed } = buildGenerationSeed({
+      files: {},
+      business,
+      brief: buildCreativeBrief("Clínica Alfa", "Clínica"),
+      briefing: { user_prompt: "site institucional, sóbrio e tradicional" },
+    });
+    expect(baseUsed).toBe("editorial");
+    const root = ensureWorkspaceDir("base-disk-test", seed);
+    const files = readWorkspace(root);
+    expect(Object.keys(files)).toContain("index.html");
+    expect(Object.keys(files)).toContain("src/site.css");
+    expect(Object.keys(files)).toContain("src/main.js");
+    expect(files["index.html"]).toContain("Clínica Alfa");
+    expect(files["index.html"]).not.toContain("{{");
+    cleanupWorkspace("base-disk-test");
   });
 });

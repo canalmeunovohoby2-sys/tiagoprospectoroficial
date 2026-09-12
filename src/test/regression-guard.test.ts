@@ -61,3 +61,47 @@ describe("Edit Regression Guard (5.30) — EDITAR ≠ RECONSTRUIR", () => {
     expect(m.hasH1).toBe(true);
   });
 });
+
+describe("Edit Regression Guard — proteções de CSS/tema/estrutura (auditoria de edição)", () => {
+  const SHELL = {
+    "index.html": `<html><head><link rel="stylesheet" href="src/site.css"></head><body><h1>Clínica X</h1><script>window.x=1</script></body></html>`,
+    "src/site.css": ":root{--cor-a:#111;--cor-b:#222;--cor-c:#333}.hero{color:var(--cor-a)}.btn{background:var(--cor-b)}",
+  };
+
+  it("edição de TEXTO preservando CSS/link/vars/script NÃO acusa regressão", () => {
+    const after = { ...SHELL, "index.html": SHELL["index.html"].replace("Clínica X", "Clínica Y") };
+    expect(editRegressionIssues(SHELL, after, "troque o texto do título para Clínica Y")).toEqual([]);
+  });
+
+  it("remoção do <link rel='stylesheet'> é detectada", () => {
+    const after = { ...SHELL, "index.html": SHELL["index.html"].replace(/<link[^>]*>/, "") };
+    const issues = editRegressionIssues(SHELL, after, "mude o texto do título");
+    expect(issues.join("\n")).toMatch(/link/i);
+  });
+
+  it("CSS com chave desbalanceada é detectado", () => {
+    const after = { ...SHELL, "src/site.css": ".hero{color:var(--cor-a)" };
+    const issues = editRegressionIssues(SHELL, after, "mude a cor do hero");
+    expect(issues.join("\n")).toMatch(/chaves/i);
+  });
+
+  it("remoção de variáveis CSS do tema é detectada", () => {
+    const after = { ...SHELL, "src/site.css": ":root{}.hero{color:#111}.btn{background:#222}" };
+    const issues = editRegressionIssues(SHELL, after, "alinhe o botão");
+    expect(issues.join("\n")).toMatch(/vari[áa]veis/i);
+  });
+
+  it("remoção de scripts é detectada", () => {
+    const after = { ...SHELL, "index.html": SHELL["index.html"].replace(/<script[\s\S]*?<\/script>/, "") };
+    const issues = editRegressionIssues(SHELL, after, "mude o texto do título");
+    expect(issues.join("\n")).toMatch(/script/i);
+  });
+
+  it("siteMetrics expõe styleLinks/cssVars/braceBalance/scripts", () => {
+    const m = siteMetrics(SHELL);
+    expect(m.styleLinks).toBe(1);
+    expect(m.cssVars).toBe(3);
+    expect(m.braceBalance).toBe(0);
+    expect(m.scripts).toBe(1);
+  });
+});

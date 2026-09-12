@@ -89,6 +89,8 @@ export interface ProspectorAgentOptions {
   systemPrompt?: string;
   /** mode de missão: "edit" (padrão) ou "generate" (criação inicial). */
   mode?: "edit" | "generate";
+  /** geração partiu de uma BASE técnica pré-carregada (protege contra reescrita destrutiva). */
+  hasBase?: boolean;
   /** habilita browser tools (Playwright) — browser real para QA do site. */
   enableBrowser?: boolean;
   /** habilita a tool web_search (quando há chave de pesquisa configurada). */
@@ -207,14 +209,15 @@ export class ProspectorSiteAgent {
 
     // COMPLETION GUARD (arquitetural): impede finish_task sem evidência/qualidade.
     // No modo generate, bloqueia a conclusão enquanto o Quality Gate falhar.
-    // (5.30) BARREIRA ANTI-REESCRITA: em EDIÇÃO, um write_file que reduziria
-    // drasticamente um arquivo existente é bloqueado — EDITAR ≠ RECONSTRUIR.
+    // (5.30) BARREIRA ANTI-REESCRITA: em EDIÇÃO (ou em GERAÇÃO que partiu de uma
+    // base técnica), um write_file que reduziria drasticamente um arquivo
+    // existente é bloqueado — EDITAR ≠ RECONSTRUIR.
     const REBUILD_RE = /reconstru|reescrev[ae]|refa[çc]a|do zero|rewrite/i;
     const beforeTool = async (ctx: { tool?: { name?: string } | undefined; toolCall?: { name?: string } | undefined; toolName?: string }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const input: any = (ctx as { toolCall?: { input?: unknown } }).toolCall?.input ?? (ctx as { input?: unknown }).input ?? {};
       const name = ctx?.tool?.name ?? (ctx as { toolCall?: { toolName?: string } }).toolCall?.toolName ?? ctx?.toolName ?? "";
-      if (name === "write_file" && options.mode !== "generate" && !REBUILD_RE.test(this.currentInstruction) && this.writeSkips < 4) {
+      if (name === "write_file" && (options.mode !== "generate" || options.hasBase) && !REBUILD_RE.test(this.currentInstruction) && this.writeSkips < 4) {
         const path = typeof input?.path === "string" ? input.path : "";
         const content = typeof input?.content === "string" ? input.content : "";
         const clean = path.replace(/^\/+/, "").replace(/\.\//, "");

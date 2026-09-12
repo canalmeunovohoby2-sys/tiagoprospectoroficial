@@ -81,12 +81,43 @@ export function editFile(
   if (current === undefined) return { ok: false, error: `Arquivo não encontrado: ${p}`, files };
   const { find, replace } = opts;
   if (typeof find !== "string" || find === "") return { ok: false, error: "find (trecho a substituir) é obrigatório.", files };
-  const idx = opts.occurrence && opts.occurrence > 1 ? nthIndex(current, find, opts.occurrence) : current.indexOf(find);
+
+  const total = countOccurrences(current, find);
+  if (total === 0) return { ok: false, error: `Trecho não encontrado em ${p}.`, files };
+
+  let idx: number;
+  if (typeof opts.occurrence === "number" && opts.occurrence >= 1) {
+    if (opts.occurrence > total) {
+      return { ok: false, error: `find aparece ${total}× em ${p}; occurrence=${opts.occurrence} é inválido.`, files };
+    }
+    idx = nthIndex(current, find, opts.occurrence);
+  } else if (total > 1) {
+    return {
+      ok: false,
+      error: `find é AMBÍGUO: aparece ${total}× em ${p}. Forneça um trecho ÚNICO (mais contexto/âncora estrutural ao redor do alvo) ou informe occurrence (1..${total}) para indicar qual ocorrência.`,
+      files,
+    };
+  } else {
+    idx = current.indexOf(find);
+  }
   if (idx === -1) return { ok: false, error: `Trecho não encontrado em ${p}.`, files };
   const nextContent = current.slice(0, idx) + replace + current.slice(idx + find.length);
   if (nextContent.length > MAX_FILE_BYTES) return { ok: false, error: "Arquivo resultante grande demais.", files };
   const next = { ...files, [p]: nextContent };
   return { ok: true, files: next, message: `Editado: ${p}` };
+}
+
+function countOccurrences(str: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let pos = 0;
+  for (;;) {
+    const found = str.indexOf(needle, pos);
+    if (found === -1) break;
+    count++;
+    pos = found + needle.length;
+  }
+  return count;
 }
 
 function nthIndex(str: string, needle: string, n: number): number {

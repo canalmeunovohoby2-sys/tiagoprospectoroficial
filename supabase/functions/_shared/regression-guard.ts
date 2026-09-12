@@ -55,6 +55,10 @@ export interface SiteMetrics {
   hasH1: boolean;
   ctaLinks: number;
   colorCount: number;
+  styleLinks: number;
+  cssVars: number;
+  braceBalance: number;
+  scripts: number;
 }
 
 function fileOf(files: SiteFiles, suffix: string): string {
@@ -89,11 +93,17 @@ function responsiveIntent(instruction: string): boolean {
 
 export function siteMetrics(files: SiteFiles): SiteMetrics {
   const html = fileOf(files, "index.html");
-  const css = fileOf(files, "site.css");
+  // Qualquer arquivo .css do projeto (não só "site.css") + <style> inline.
+  const css = Object.entries(files ?? {})
+    .filter(([k]) => /\.css$/i.test(k))
+    .map(([, v]) => v)
+    .join("\n");
   const inlineStyles = (html.match(/<style[^>]*>([\s\S]*?)<\/style>/gi) ?? []).join("\n");
   const body = html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, " ");
   const text = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   const styleSheet = `${css}\n${inlineStyles.replace(/<style[^>]*>/gi, "").replace(/<\/style>/gi, "")}`;
+  const opens = (styleSheet.match(/\{/g) ?? []).length;
+  const closes = (styleSheet.match(/\}/g) ?? []).length;
   return {
     contentLen: text.length,
     imgTags: (html.match(/<img[^>]+src=/gi) ?? []).length,
@@ -107,6 +117,10 @@ export function siteMetrics(files: SiteFiles): SiteMetrics {
     hasH1: /<h1[\s>]/i.test(html),
     ctaLinks: (html.match(/(class="[^"]*(cta|btn)[^"]*"|href="[^"]*(whatsapp|wa\.me|agendar|reservar|matricul)[^"]*")/gi) ?? []).length,
     colorCount: new Set((styleSheet.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []).map((c) => c.toLowerCase())).size,
+    styleLinks: (html.match(/<link[^>]+rel=["']stylesheet["']/gi) ?? []).length,
+    cssVars: (styleSheet.match(/--[a-z0-9_-]+\s*:/gi) ?? []).length,
+    braceBalance: opens - closes,
+    scripts: (html.match(/<script[\s>]/gi) ?? []).length,
   };
 }
 
@@ -166,5 +180,25 @@ export function editRegressionIssues(before: SiteFiles, after: SiteFiles, instru
     issues.push("O título principal (h1/hero) foi removido. Restaure o título principal do site.");
   }
 
-  return issues.slice(0, 4);
+  // 9) <link rel="stylesheet"> removido — sem ele o CSS/tema inteiro deixa de aplicar.
+  if (b.styleLinks >= 1 && a.styleLinks === 0 && !REMOVAL.test(ins)) {
+    issues.push(`O <link rel="stylesheet"> foi removido (${b.styleLinks} → 0). Restaure o vínculo com o CSS — sem ele o layout/tema para de aplicar.`);
+  }
+
+  // 10) Chaves CSS desbalanceadas (regra quebrada derruba o layout a partir do erro).
+  if (b.braceBalance === 0 && a.braceBalance !== 0) {
+    issues.push(`O CSS ficou com chaves desbalanceadas (${a.braceBalance > 0 ? "+" : ""}${a.braceBalance}). Corrija a regra quebrada — a partir do erro o CSS deixa de aplicar e ícones/seções quebram.`);
+  }
+
+  // 11) Variáveis CSS do tema (--...) removidas.
+  if (b.cssVars >= 3 && a.cssVars < b.cssVars && !/variave|token|tema|remov|apag|delete|tirar/i.test(ins)) {
+    issues.push(`Variáveis CSS (--...) do tema foram removidas (${b.cssVars} → ${a.cssVars}). Restaure as variáveis (cores/tokens) para preservar a identidade visual.`);
+  }
+
+  // 12) Scripts existentes removidos.
+  if (b.scripts >= 1 && a.scripts === 0 && !/script|remov|apag|delete|tirar/i.test(ins)) {
+    issues.push("Os scripts (<script>) do site foram removidos. Restaure os comportamentos existentes.");
+  }
+
+  return issues.slice(0, 6);
 }
