@@ -113,4 +113,18 @@ describe("LeadCard — ações continuam funcionando", () => {
     expect(onFavorite).toHaveBeenCalledTimes(1);
     expect(onContacted).toHaveBeenCalledTimes(1);
   });
+
+  it("botão 'Gerar Site' existe e chama o callback", () => {
+    const onGenerateSite = vi.fn();
+    render(<LeadCard lead={makeLead()} onFavorite={() => {}} onContacted={() => {}} onGenerateSite={onGenerateSite} />);
+    const btn = screen.getByRole("button", { name: /gerar site/i });
+    expect(btn).toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(onGenerateSite).toHaveBeenCalledTimes(1);
+  });
+
+  it("botão 'Gerar Site' fica desabilitado enquanto abre o projeto", () => {
+    render(<LeadCard lead={makeLead()} onFavorite={() => {}} onContacted={() => {}} onGenerateSite={() => {}} openingSite />);
+    expect(screen.getByRole("button", { name: /gerar site/i })).toBeDisabled();
+  });
 });

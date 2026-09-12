@@ -1,11 +1,11 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Star, Globe, MapPin, Phone, MessageSquare, Sparkles, ImageOff, Check,
   Search as SearchIcon, Trash2, Loader2, Instagram, Facebook, ExternalLink, Map as MapIcon, Copy, Plus,
 
-  ShieldCheck, Shield, ShieldAlert, Clock, Download, ClipboardCopy,
+  ShieldCheck, Shield, ShieldAlert, Clock, Download, ClipboardCopy, FileCode2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/card";
@@ -26,6 +26,7 @@ import { LandingPromptButton } from "@/components/app/LandingPromptButton";
 import { RoiBadge } from "@/components/app/RoiBadge";
 import { getLeadTemperature, enrichLeadWithScores } from "@/lib/leadScoring";
 import { resolveLeadImage } from "@/lib/leadImage";
+import { openOrCreateSiteProject } from "@/lib/siteProjectsApi";
 
 import { WhatsAppTemplatePicker, TEMPLATE_TEXTS, type WaTemplate } from "@/components/app/WhatsAppTemplatePicker";
 import { OfferCard } from "@/components/app/OfferCard";
@@ -73,6 +74,7 @@ function normalizeLeadRows(rows: unknown): Lead[] {
 
 export default function Leads() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const searchId = params.get("search");
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -84,6 +86,7 @@ export default function Leads() {
   const [websiteFilter, setWebsiteFilter] = useState<"all" | "yes" | "no">("all");
   const [selected, setSelected] = useState<Lead | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [openingSiteId, setOpeningSiteId] = useState<string | null>(null);
 
   async function load() {
     if (!user) return;
@@ -255,7 +258,20 @@ export default function Leads() {
                 {chips.map(([k, label, tip, royalCls]) => {
                   const active = filter === k;
                   const isRoyal = k === "royal";
-                  return (
+  async function openSite(lead: Lead) {
+    if (!user) return;
+    setOpeningSiteId(lead.id);
+    try {
+      const projectId = await openOrCreateSiteProject(user.id, lead);
+      navigate(`/sites/${projectId}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao criar projeto de site");
+    } finally {
+      setOpeningSiteId(null);
+    }
+  }
+
+  return (
                     <Tooltip key={k}>
                       <TooltipTrigger asChild>
                         <Button
@@ -332,6 +348,8 @@ export default function Leads() {
               key={l.id} lead={l}
               onFavorite={() => updateLead(l.id, { is_favorite: !l.is_favorite })}
               onContacted={() => updateLead(l.id, { is_contacted: !l.is_contacted })}
+              onGenerateSite={() => openSite(l)}
+              openingSite={openingSiteId === l.id}
             />
           ))}
         </div>
@@ -433,9 +451,9 @@ function CardActionLink({ title, href, external, children }: { title: string; hr
  * botões explícitos de ação são interativos.
  */
 export function LeadCard({
-  lead, onFavorite, onContacted,
+  lead, onFavorite, onContacted, onGenerateSite, openingSite = false,
 }: {
-  lead: Lead; onFavorite: () => void; onContacted: () => void;
+  lead: Lead; onFavorite: () => void; onContacted: () => void; onGenerateSite?: () => void; openingSite?: boolean;
 }) {
   const isHot = (lead.final_score ?? 0) >= 80;
   const [imgError, setImgError] = useState(false);
@@ -532,6 +550,21 @@ export function LeadCard({
               <Check className={`h-4 w-4 ${lead.is_contacted ? "text-blue-400" : ""}`} />
             </CardActionIcon>
           </div>
+
+          {onGenerateSite && (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={onGenerateSite}
+              disabled={openingSite}
+              className="mt-1 h-8 w-full"
+              title="Gerar Site"
+            >
+              {openingSite ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <FileCode2 className="h-3.5 w-3.5 mr-1" />}
+              Gerar Site
+            </Button>
+          )}
         </div>
       </div>
     </Card>
