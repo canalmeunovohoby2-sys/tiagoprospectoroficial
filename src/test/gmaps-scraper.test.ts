@@ -6,6 +6,7 @@ import {
   sortGmapsByPriority,
   priorityScore,
   toPublicLeadShape,
+  selectLeadImage,
   callGmapsScraper,
 } from "../../supabase/functions/_shared/gmaps";
 
@@ -188,6 +189,33 @@ describe("gmaps — priorização", () => {
     expect(shape.whatsapp).toBe("551432438321");
     expect(shape.has_website).toBe(false);
     expect(typeof shape.score).toBe("number");
+  });
+});
+
+describe("gmaps — imagem real do estabelecimento", () => {
+  it("prioriza thumbnail", () => {
+    expect(selectLeadImage({ thumbnail: "https://x/t.jpg", images: ["https://x/i.jpg"] })).toBe("https://x/t.jpg");
+  });
+
+  it("usa a primeira imagem válida de images quando não há thumbnail", () => {
+    expect(selectLeadImage({ thumbnail: null, images: ["", "https://x/i1.jpg", "https://x/i2.jpg"] })).toBe("https://x/i1.jpg");
+  });
+
+  it("retorna null quando não há imagem", () => {
+    expect(selectLeadImage({})).toBeNull();
+    expect(selectLeadImage({ thumbnail: "" })).toBeNull();
+  });
+
+  it("ignora URLs inválidas/protocolos não http(s)", () => {
+    expect(selectLeadImage({ thumbnail: "javascript:alert(1)" })).toBeNull();
+    expect(selectLeadImage({ thumbnail: "not-a-url" })).toBeNull();
+  });
+
+  it("normaliza e expõe photoUrl/photo_name a partir do thumbnail", () => {
+    const leads = normalizeGmapsResults([{ title: "Alfa", place_id: "p", thumbnail: "https://x/a.jpg" }], "Bauru", "SP");
+    expect(leads[0].photoUrl).toBe("https://x/a.jpg");
+    const shape = toPublicLeadShape(leads[0]) as Record<string, unknown>;
+    expect(shape.photo_name).toBe("https://x/a.jpg");
   });
 });
 

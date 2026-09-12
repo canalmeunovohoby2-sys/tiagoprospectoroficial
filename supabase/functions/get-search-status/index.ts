@@ -27,6 +27,7 @@ function rowToLead(r: Record<string, unknown>): Record<string, unknown> {
     whatsapp: r.whatsapp ?? null,
     website: r.website ?? null,
     email: r.email ?? null,
+    photo_name: r.photo_name ?? null,
     google_url: r.google_url ?? null,
     instagram: r.instagram ?? null,
     facebook: r.facebook ?? null,

@@ -20,6 +20,8 @@ export type GmapsScraperPlace = {
   coordinates?: { latitude?: number | string | null; longitude?: number | string | null } | null;
   place_id?: string | null;
   cid?: string | null;
+  thumbnail?: string | null;
+  images?: string[] | string | null;
   hours?: string[] | string | null;
   link?: string | null;
   [key: string]: unknown;
@@ -40,6 +42,7 @@ export type GmapsNormalizedLead = {
   category: string | null;
   rating: number | null;
   reviews: number;
+  photoUrl: string | null;
   priority: number;
   reasons: string[];
   raw: GmapsScraperPlace;
@@ -89,6 +92,37 @@ function toNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const n = typeof value === "number" ? value : Number(String(value).replace(",", "."));
   return Number.isFinite(n) ? n : null;
+}
+
+// Valida a URL da imagem real do estabelecimento. Prioriza HTTPS.
+function sanitizeImageUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (u.protocol === "http:") u.protocol = "https:";
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+// Prioridade: thumbnail → primeira imagem válida de images → null.
+export function selectLeadImage(place: GmapsScraperPlace): string | null {
+  const thumb = sanitizeImageUrl(place.thumbnail);
+  if (thumb) return thumb;
+  const images = Array.isArray(place.images)
+    ? place.images
+    : typeof place.images === "string"
+      ? [place.images]
+      : [];
+  for (const candidate of images) {
+    const ok = sanitizeImageUrl(candidate);
+    if (ok) return ok;
+  }
+  return null;
 }
 
 function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
@@ -164,6 +198,7 @@ export function normalizeGmapsResults(
       category,
       rating,
       reviews,
+      photoUrl: selectLeadImage(place),
       priority: score,
       reasons,
       raw: place,
@@ -345,6 +380,7 @@ export function toPublicLeadShape(lead: GmapsNormalizedLead): Record<string, unk
     has_website: !!lead.website,
     score: lead.priority,
     score_reasons: lead.reasons,
+    photo_name: lead.photoUrl,
     opening_hours: null,
     latitude: lat,
     longitude: lng,

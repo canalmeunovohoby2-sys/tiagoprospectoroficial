@@ -2259,6 +2259,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
           latitude: (lead.latitude as number) ?? null,
           longitude: (lead.longitude as number) ?? null,
           email: (lead.email as string) ?? null,
+          photo_name: (lead.photo_name as string) ?? null,
           source: resultSource ?? "google_maps_scraper",
         };
       });

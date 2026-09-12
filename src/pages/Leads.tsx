@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Star, Globe, MapPin, Phone, MessageSquare, Sparkles, Eye, Check,
+  Star, Globe, MapPin, Phone, MessageSquare, Sparkles, ImageOff, Check,
   Search as SearchIcon, Trash2, Loader2, Instagram, Facebook, ExternalLink, Map as MapIcon, Copy, Plus,
 
   ShieldCheck, Shield, ShieldAlert, Clock, Download, ClipboardCopy,
@@ -24,7 +24,8 @@ import type { Lead, CrmStatus } from "@/data/types";
 import { CRM_COLUMNS } from "@/data/brazil";
 import { LandingPromptButton } from "@/components/app/LandingPromptButton";
 import { RoiBadge } from "@/components/app/RoiBadge";
-import { getLeadTemperature, buildScoreReasons, enrichLeadWithScores } from "@/lib/leadScoring";
+import { getLeadTemperature, enrichLeadWithScores } from "@/lib/leadScoring";
+import { resolveLeadImage } from "@/lib/leadImage";
 
 import { WhatsAppTemplatePicker, TEMPLATE_TEXTS, type WaTemplate } from "@/components/app/WhatsAppTemplatePicker";
 import { OfferCard } from "@/components/app/OfferCard";
@@ -325,14 +326,12 @@ export default function Leads() {
           <p className="text-muted-foreground">Nenhum lead aqui ainda. Faça uma pesquisa para começar.</p>
         </Card>
       ) : (
-        <div className="grid gap-3">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
           {filtered.map((l) => (
-            <LeadRow
+            <LeadCard
               key={l.id} lead={l}
-              onOpen={() => setSelected(l)}
               onFavorite={() => updateLead(l.id, { is_favorite: !l.is_favorite })}
               onContacted={() => updateLead(l.id, { is_contacted: !l.is_contacted })}
-              onSendToCrm={() => updateLead(l.id, { in_crm: true, crm_status: l.crm_status || "new" })}
             />
           ))}
         </div>
@@ -402,138 +401,140 @@ function ScoreStars({ score }: { score: number }) {
   );
 }
 
-function LeadRow({
-  lead, onOpen, onFavorite, onContacted, onSendToCrm,
+function CardActionIcon({ title, onClick, children }: { title: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <Button
+      type="button"
+      size="icon"
+      variant="ghost"
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+      className="h-8 w-8 text-white/90 hover:bg-white/20 hover:text-white"
+    >
+      {children}
+    </Button>
+  );
+}
+
+function CardActionLink({ title, href, external, children }: { title: string; href: string; external?: boolean; children: ReactNode }) {
+  return (
+    <Button size="icon" variant="ghost" asChild title={title} className="h-8 w-8 text-white/90 hover:bg-white/20 hover:text-white">
+      <a href={href} aria-label={title} {...(external ? { target: "_blank", rel: "noreferrer" } : {})}>
+        {children}
+      </a>
+    </Button>
+  );
+}
+
+/**
+ * Card quadrado com a foto real do estabelecimento (thumbnail do Google Maps).
+ * Clicar no card, na foto ou no nome NÃO executa nenhuma ação — apenas os
+ * botões explícitos de ação são interativos.
+ */
+export function LeadCard({
+  lead, onFavorite, onContacted,
 }: {
-  lead: Lead; onOpen: () => void; onFavorite: () => void; onContacted: () => void; onSendToCrm: () => void;
+  lead: Lead; onFavorite: () => void; onContacted: () => void;
 }) {
   const isHot = (lead.final_score ?? 0) >= 80;
+  const [imgError, setImgError] = useState(false);
+  const { url: photoUrl, hasImage } = resolveLeadImage(lead.photo_name);
+  const showPhoto = hasImage && !!photoUrl && !imgError;
+  const temperature = getLeadTemperature(lead.final_score);
+
   return (
     <Card
-      className={`group relative p-4 border-border/50 transition-all duration-300 ease-out hover:border-primary hover:-translate-y-0.5 hover:shadow-[0_0_0_1px_hsl(0_84%_55%/0.6),0_0_28px_-2px_hsl(0_84%_55%/0.55),0_0_60px_-12px_hsl(0_84%_55%/0.7)] hover:bg-primary/[0.04] ${
-        isHot
-          ? "border-l-4 border-l-emerald-500 ring-1 ring-emerald-500/30 shadow-[0_0_18px_-6px_hsl(160_84%_45%/0.55)]"
-          : ""
+      className={`group relative aspect-square overflow-hidden border-border/50 p-0 transition-all duration-300 ${
+        isHot ? "ring-1 ring-emerald-500/40" : ""
       }`}
     >
-      <div className="flex items-start gap-4 flex-wrap">
-        <div className="flex-1 min-w-[260px]">
-          <div className="flex items-center gap-2 flex-wrap">
-            {isHot && (
-              <HoverInfo
-                content="Lead com altíssimo potencial de fechamento (score final ≥ 80). Priorize o contato — combina capacidade financeira, dor digital e intenção de compra."
-              >
-                <Badge
-                  variant="outline"
-                  className="text-[10px] border-emerald-500/60 text-emerald-400 bg-emerald-500/10 shadow-[0_0_10px_-2px_hsl(160_84%_45%/0.6)]"
-                >
-                  🔥 Alta Conversão
-                </Badge>
-              </HoverInfo>
-            )}
-            <h3 className="font-semibold truncate">{lead.name}</h3>
-            <ConfidenceBadge confidence={lead.confidence} />
-            <RoiBadge lead={lead} />
-            {(() => {
-              const t = getLeadTemperature(lead.final_score);
-              const desc =
-                t.label === "HOT"
-                  ? "HOT (≥ 80): pronto para abordagem imediata. Alta chance de conversão."
-                  : t.label === "WARM"
-                    ? "WARM (50–79): bom potencial, nutrir com mensagem personalizada antes de fechar."
-                    : "COLD (< 50): baixo potencial agora. Avalie se vale o esforço ou deixe para depois.";
-              return (
-                <HoverInfo
-                  content={(
-                    <>
-                      <span className="block font-semibold mb-1">Temperatura do lead · {lead.final_score ?? 0}/100</span>
-                      {desc}
-                    </>
-                  )}
-                >
-                  <Badge variant="outline" className={t.badgeClass}>{t.label}</Badge>
-                </HoverInfo>
-              );
-            })()}
-            {!lead.has_website && <Badge variant="outline" className="text-xs border-emerald-500/40 text-emerald-500">Sem site</Badge>}
-            {lead.is_contacted && <Badge variant="outline" className="text-xs border-blue-500/40 text-blue-500">Contatado</Badge>}
-            {lead.in_crm && <Badge variant="outline" className="text-xs border-violet-500/40 text-violet-500">No CRM</Badge>}
+      {/* Imagem real do estabelecimento — não clicável. */}
+      <div className="absolute inset-0 bg-muted">
+        {showPhoto ? (
+          <img
+            src={photoUrl ?? ""}
+            alt={lead.name}
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+            onError={() => setImgError(true)}
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+          />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground/60">
+            <ImageOff className="h-7 w-7" />
+            <span className="text-[11px]">Sem imagem</span>
           </div>
-          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
-            {lead.segment && <span>{lead.segment}</span>}
-            {lead.city && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{lead.city}/{lead.state}</span>}
-            {lead.rating != null ? <span>★ {lead.rating} ({lead.reviews_count})</span> : <span className="opacity-60">Sem avaliações</span>}
-            <span className="opacity-80">Score: {lead.final_score ?? 0}/100</span>
-          </div>
-          {(() => {
-            const reasons = (lead.score_reasons?.length ? lead.score_reasons : buildScoreReasons(lead)).slice(0, 3);
-            if (!reasons.length) return null;
-            return (
-              <div className="mt-2 text-[11px] text-muted-foreground">
-                {reasons.join(" • ")}
-              </div>
-            );
-          })()}
+        )}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+      </div>
+
+      <div className="relative z-10 flex h-full flex-col justify-between p-3">
+        <div className="flex flex-wrap items-center gap-1">
+          {isHot && (
+            <Badge
+              variant="outline"
+              title="Lead com altíssimo potencial de fechamento (score final ≥ 80)."
+              className="text-[10px] border-emerald-500/60 text-emerald-300 bg-black/40"
+            >
+              🔥 Alta Conversão
+            </Badge>
+          )}
+          <Badge variant="outline" title={`Temperatura do lead · ${lead.final_score ?? 0}/100`} className={`${temperature.badgeClass} bg-black/30`}>
+            {temperature.label}
+          </Badge>
+          <ConfidenceBadge confidence={lead.confidence} />
+          <RoiBadge lead={lead} />
+          {!lead.has_website && <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-300 bg-black/30">Sem site</Badge>}
+          {lead.is_contacted && <Badge variant="outline" className="text-[10px] border-blue-500/40 text-blue-300 bg-black/30">Contatado</Badge>}
+          {lead.in_crm && <Badge variant="outline" className="text-[10px] border-violet-500/40 text-violet-300 bg-black/30">No CRM</Badge>}
         </div>
 
-        <div className="flex flex-col items-end gap-2">
-          <ScoreStars score={lead.score} />
-          <div className="flex items-center gap-1 flex-wrap justify-end">
-            <Button size="icon" variant="ghost" onClick={onFavorite} aria-label="Favoritar" title="Favoritar">
-              <Star className={`h-4 w-4 ${lead.is_favorite ? "fill-amber-400 text-amber-400" : ""}`} />
-            </Button>
-            {lead.website && (
-              <Button size="icon" variant="ghost" asChild title="Site"><a href={lead.website} target="_blank" rel="noreferrer"><Globe className="h-4 w-4" /></a></Button>
-            )}
-            <Button size="icon" variant="ghost" asChild title="Pesquisar no Google">
-              <a
-                href={`https://www.google.com/search?q=${encodeURIComponent(`${lead.name}${lead.city ? " " + lead.city : ""}`)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <SearchIcon className="h-4 w-4" />
-              </a>
-            </Button>
-            {lead.google_url && (
-              <Button size="icon" variant="ghost" asChild title="Google Maps"><a href={lead.google_url} target="_blank" rel="noreferrer"><MapIcon className="h-4 w-4" /></a></Button>
-            )}
+        <div className="space-y-1.5 text-white">
+          <h3 className="font-semibold leading-tight line-clamp-2 drop-shadow">{lead.name}</h3>
+          <div className="text-[11px] text-white/85 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
+            {lead.segment && <span className="truncate max-w-full">{lead.segment}</span>}
+            {lead.city && <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{lead.city}/{lead.state}</span>}
+            {lead.rating != null ? <span>★ {lead.rating} ({lead.reviews_count})</span> : <span className="opacity-70">Sem avaliações</span>}
+            <span className="opacity-90">Score {lead.final_score ?? 0}/100</span>
+          </div>
 
+          <div className="flex flex-wrap items-center gap-0.5 pt-1">
+            <CardActionIcon title="Favoritar" onClick={onFavorite}>
+              <Star className={`h-4 w-4 ${lead.is_favorite ? "fill-amber-400 text-amber-400" : ""}`} />
+            </CardActionIcon>
+            {lead.website && (
+              <CardActionLink title="Site" href={lead.website} external><Globe className="h-4 w-4" /></CardActionLink>
+            )}
+            <CardActionLink title="Pesquisar no Google" external href={`https://www.google.com/search?q=${encodeURIComponent(`${lead.name}${lead.city ? " " + lead.city : ""}`)}`}>
+              <SearchIcon className="h-4 w-4" />
+            </CardActionLink>
+            {lead.google_url && (
+              <CardActionLink title="Google Maps" href={lead.google_url} external><MapIcon className="h-4 w-4" /></CardActionLink>
+            )}
             {lead.phone && (
-              <Button size="icon" variant="ghost" asChild title="Ligar"><a href={`tel:${lead.phone}`}><Phone className="h-4 w-4" /></a></Button>
+              <CardActionLink title="Ligar" href={`tel:${lead.phone}`}><Phone className="h-4 w-4" /></CardActionLink>
             )}
             {lead.whatsapp && (
-              <Button size="icon" variant="ghost" asChild title="WhatsApp"><a href={`https://wa.me/${lead.whatsapp.replace(/\D/g, "")}`} target="_blank" rel="noreferrer"><MessageSquare className="h-4 w-4 text-emerald-500" /></a></Button>
+              <CardActionLink title="WhatsApp" href={`https://wa.me/${lead.whatsapp.replace(/\D/g, "")}`} external>
+                <MessageSquare className="h-4 w-4 text-emerald-400" />
+              </CardActionLink>
             )}
             {lead.instagram && (
-              <Button size="icon" variant="ghost" asChild title="Instagram"><a href={lead.instagram} target="_blank" rel="noreferrer"><Instagram className="h-4 w-4 text-pink-500" /></a></Button>
+              <CardActionLink title="Instagram" href={lead.instagram} external><Instagram className="h-4 w-4 text-pink-400" /></CardActionLink>
             )}
-            <Button
-              size="icon" variant="ghost" title="Copiar dados"
-              onClick={() => { navigator.clipboard.writeText(leadToText(lead)); toast.success("Dados copiados"); }}
-            >
+            <CardActionIcon title="Copiar dados" onClick={() => { navigator.clipboard.writeText(leadToText(lead)); toast.success("Dados copiados"); }}>
               <ClipboardCopy className="h-4 w-4" />
-            </Button>
+            </CardActionIcon>
             <LandingPromptButton lead={lead} variant="icon" />
-            <Button size="icon" variant="ghost" onClick={onContacted} title="Marcar como contatado">
-              <Check className={`h-4 w-4 ${lead.is_contacted ? "text-blue-500" : ""}`} />
-            </Button>
-            <Button size="sm" variant="outline" onClick={onOpen}><Eye className="h-3.5 w-3.5 mr-1" /> Ver</Button>
+            <CardActionIcon title="Marcar como contatado" onClick={onContacted}>
+              <Check className={`h-4 w-4 ${lead.is_contacted ? "text-blue-400" : ""}`} />
+            </CardActionIcon>
           </div>
         </div>
       </div>
     </Card>
-  );
-}
-
-function HoverInfo({ children, content }: { children: ReactNode; content: ReactNode }) {
-  return (
-    <span className="relative inline-flex cursor-help group/hoverinfo">
-      {children}
-      <span className="pointer-events-none absolute left-1/2 bottom-[calc(100%+10px)] z-[80] w-72 max-w-[min(18rem,80vw)] -translate-x-1/2 rounded-md border border-emerald-400/40 bg-background/95 px-3 py-2 text-xs leading-relaxed text-foreground opacity-0 shadow-[0_0_22px_-6px_hsl(0_84%_55%/0.85)] backdrop-blur transition-all duration-150 group-hover/hoverinfo:translate-y-[-2px] group-hover/hoverinfo:opacity-100 group-focus-within/hoverinfo:translate-y-[-2px] group-focus-within/hoverinfo:opacity-100">
-        {content}
-        <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-emerald-400/40 bg-background/95" />
-      </span>
-    </span>
   );
 }
 
