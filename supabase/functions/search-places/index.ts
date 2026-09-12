@@ -14,6 +14,7 @@ import {
   type LeadSource,
 } from "../_shared/gmaps.ts";
 import { buildQueryVariants, callMapScraperVariants } from "../_shared/mapscraper.ts";
+import { enrichLeadsWithWebsiteImages } from "../_shared/lead-photo.ts";
 
 // Supabase Edge Functions expõem EdgeRuntime.waitUntil para trabalho em
 // background que continua após a resposta HTTP.
@@ -34,11 +35,16 @@ const MAP_SCRAPER_COUNTRY = (Deno.env.get("MAP_SCRAPER_COUNTRY") ?? "br").trim()
 // Orçamentos de resultados POR FONTE. O gmaps-scraper (Playwright) é lento
 // (~2s/resultado) — cap baixo para não estourar o tempo da função. O mapScraper
 // (aiohttp) faz ~500 resultados em ~18s — piso alto para maximizar a cobertura.
-const GMAPS_SCRAPER_MAX = Math.max(10, Number(Deno.env.get("GMAPS_SCRAPER_MAX") ?? "40"));
+const GMAPS_SCRAPER_MAX = Math.max(10, Number(Deno.env.get("GMAPS_SCRAPER_MAX") ?? "25"));
 // Nº de variantes de query no mapScraper (cada uma yield ~20 distintos; variar
 // termos multiplica a cobertura) e teto de resultados por variante.
-const MAP_SCRAPER_VARIANTS = Math.max(1, Math.min(10, Number(Deno.env.get("MAP_SCRAPER_VARIANTS") ?? "8")));
+const MAP_SCRAPER_VARIANTS = Math.max(1, Math.min(10, Number(Deno.env.get("MAP_SCRAPER_VARIANTS") ?? "6")));
 const MAP_SCRAPER_PER_VARIANT = Math.max(20, Number(Deno.env.get("MAP_SCRAPER_PER_VARIANT") ?? "40"));
+// FOTO: o mapScraper não traz imagem; completamos com a imagem real do site do
+// próprio estabelecimento (og:image), limitado por orçamento/concorrência.
+const MAP_PHOTO_ENRICH_BUDGET = Math.max(0, Number(Deno.env.get("MAP_PHOTO_ENRICH_BUDGET") ?? "80"));
+const MAP_PHOTO_ENRICH_CONCURRENCY = Math.max(1, Number(Deno.env.get("MAP_PHOTO_ENRICH_CONCURRENCY") ?? "10"));
+const MAP_PHOTO_ENRICH_TIMEOUT_MS = Math.max(1000, Number(Deno.env.get("MAP_PHOTO_ENRICH_TIMEOUT_MS") ?? "4500"));
 
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
@@ -2274,9 +2280,18 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
       const validated = validateGmapsLeads(deduped.leads, p.city, p.state);
       counters.filtrado = validated.leads.length;
       const sorted = sortGmapsByPriority(validated.leads);
+      // FOTO: gmaps traz thumbnail; mapScraper não. Completa a foto com a imagem
+      // real do site do próprio estabelecimento (nunca imagem de terceiros).
+      const photoEnrich = await enrichLeadsWithWebsiteImages(sorted, {
+        budget: MAP_PHOTO_ENRICH_BUDGET,
+        concurrency: MAP_PHOTO_ENRICH_CONCURRENCY,
+        timeoutMs: MAP_PHOTO_ENRICH_TIMEOUT_MS,
+      });
       counters.final = sorted.length;
       counters.comTelefone = sorted.filter((l) => !!l.phone).length;
       counters.comWhatsapp = sorted.filter((l) => inferWhatsapp(l.phone ?? undefined) !== null).length;
+      (counters as unknown as Record<string, unknown>).comFoto = sorted.filter((l) => !!l.photoUrl).length;
+      (counters as unknown as Record<string, unknown>).fotoEnriquecida = photoEnrich.enriched;
       finalLeads = sorted.map((l) => toPublicLeadShape(l));
       resultSource = consulted.length > 0 ? consulted.join(",") : withPlaces.map((r) => r.key).join(",");
       if (validated.rejected.length > 0) {
