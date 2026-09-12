@@ -108,6 +108,8 @@ const STAGES = [
 const SOURCE_LABEL: Record<string, string> = {
   google_places_new: "Google Places (New)",
   google_places_legacy: "Google Places (Legacy)",
+  geoapify: "Geoapify",
+  google_maps_scraper: "Google Maps (scraper)",
   openstreetmap: "OpenStreetMap",
   openstreetmap_nominatim: "OpenStreetMap/Nominatim",
   openstreetmap_overpass: "OpenStreetMap/Overpass",
@@ -130,6 +132,53 @@ function uniqueWarnings(warnings: SearchWarning[]) {
     seen.add(key);
     return true;
   });
+}
+
+type SearchStatusResponse = {
+  search_id: string;
+  status: SearchStatus;
+  counters?: Record<string, number>;
+  warnings?: SearchWarning[];
+  leads?: SearchPlacesLead[];
+  error?: string | null;
+};
+
+const TERMINAL_SEARCH_STATUS = new Set<SearchStatus>([
+  "SUCCESS",
+  "EMPTY_REAL",
+  "EMPTY_WITH_LIMITATIONS",
+  "EXTERNAL_FAILURE",
+  "PARTIAL_RESULTS",
+]);
+
+// Polling do job assíncrono (Google Maps scraper). A Edge Function cria o
+// search_id e processa em background; aqui aguardamos um estado final.
+async function pollGmapsSearch(
+  searchId: string,
+  onAttempt?: (attempt: number) => void,
+  opts?: { attempts?: number; intervalMs?: number },
+): Promise<SearchStatusResponse> {
+  const attempts = opts?.attempts ?? 60;
+  const intervalMs = opts?.intervalMs ?? 5000;
+  for (let i = 1; i <= attempts; i++) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    onAttempt?.(i);
+    const { data, error } = await supabase.functions.invoke<SearchStatusResponse>("get-search-status", {
+      body: { search_id: searchId },
+    });
+    if (error) {
+      console.warn("[LeadSearchForm] polling get-search-status falhou", error);
+      continue;
+    }
+    if (data && TERMINAL_SEARCH_STATUS.has(data.status)) return data;
+  }
+  return {
+    search_id: searchId,
+    status: "EXTERNAL_FAILURE",
+    leads: [],
+    warnings: [{ source: "get-search-status", message: "Timeout aguardando o resultado da busca." }],
+    error: "Timeout: busca demorou mais de 5 minutos",
+  };
 }
 
 export interface LeadSearchFormProps {
@@ -242,15 +291,36 @@ export function LeadSearchForm({
     startStageRotation();
     try {
       const startedAt = performance.now();
-      const { data, error } = await supabase.functions.invoke<SearchPlacesResponse>("search-places", {
-        body: { state: safeState, city: safeCity, segment: safeSegment, maxPages: 2, module },
+      const { data: startData, error } = await supabase.functions.invoke<
+        SearchPlacesResponse & { search_id?: string; status?: string }
+      >("search-places", {
+        body: { state: safeState, city: safeCity, segment: safeSegment, maxPages: 1, module },
       });
       console.info("[LeadSearchForm] resposta da busca", {
         durationMs: Math.round(performance.now() - startedAt),
-        source: data?.source,
-        count: data?.leads?.length ?? 0,
+        source: startData?.source,
+        async: !!startData?.search_id,
+        count: startData?.leads?.length ?? 0,
       });
-      if (error) throw new Error(getSearchErrorMessage(error, data));
+      if (error) throw new Error(getSearchErrorMessage(error, startData));
+
+      // Fluxo assíncrono (Google Maps scraper): o backend cria o search_id e
+      // processa em background. Aqui aguardamos o status final via polling.
+      let data: SearchPlacesResponse | undefined = startData as SearchPlacesResponse | undefined;
+      let asyncSearchId: string | null = null;
+      if (startData?.search_id) {
+        asyncSearchId = startData.search_id;
+        const polled = await pollGmapsSearch(startData.search_id, (attempt) => {
+          setProgress((p) => Math.max(p, Math.min(95, 10 + attempt * 2)));
+        });
+        data = {
+          leads: polled.leads ?? [],
+          search_status: polled.status,
+          source: "google_maps_scraper",
+          warnings: polled.warnings ?? [],
+          error: polled.error ?? undefined,
+        } as SearchPlacesResponse;
+      }
 
       const rawLeads = data?.leads ?? [];
       const enrichedLeads = rawLeads.map((l: SearchPlacesLead) => enrichLeadWithScores(l));
@@ -306,45 +376,52 @@ export function LeadSearchForm({
         });
       }
 
-      const { data: search, error: sErr } = await supabase
-        .from("searches")
-        .insert({ user_id: user.id, state: safeState, city: safeCity, segment: safeSegment, results_count: realLeads.length })
-        .select()
-        .single();
-      if (sErr) throw sErr;
+      let completedSearchId: string;
+      if (asyncSearchId) {
+        // O backend já persistiu a busca (status/counters) e os leads em lote.
+        completedSearchId = asyncSearchId;
+      } else {
+        const { data: search, error: sErr } = await supabase
+          .from("searches")
+          .insert({ user_id: user.id, state: safeState, city: safeCity, segment: safeSegment, results_count: realLeads.length })
+          .select()
+          .single();
+        if (sErr) throw sErr;
 
-      const payload: LeadInsert[] = realLeads.map((l) => ({
-        user_id: user.id,
-        search_id: search.id,
-        external_id: l.external_id ?? null,
-        name: l.name ?? "Não disponível",
-        category: l.category ?? null,
-        segment: safeSegment,
-        city: l.city ?? safeCity,
-        state: l.state ?? safeState,
-        address: l.address ?? null,
-        phone: l.phone ?? null,
-        whatsapp: l.whatsapp ?? null,
-        website: l.website ?? null,
-        google_url: l.google_url ?? null,
-        instagram: l.instagram ?? null,
-        facebook: l.facebook ?? null,
-        rating: l.rating ?? null,
-        reviews_count: l.reviews_count ?? 0,
-        has_website: !!l.has_website,
-        score: l.score ?? 1,
-        score_reasons: l.score_reasons ?? [],
-        opening_hours: l.opening_hours ?? null,
-        latitude: l.latitude ?? null,
-        longitude: l.longitude ?? null,
-        confidence: l.confidence ?? null,
-        money_score: l.money_score ?? null,
-        pain_score: l.pain_score ?? null,
-        intent_score: l.intent_score ?? null,
-        final_score: l.final_score ?? null,
-      }));
-      const { error: lErr } = await supabase.from("leads").insert(payload);
-      if (lErr) throw lErr;
+        const payload: LeadInsert[] = realLeads.map((l) => ({
+          user_id: user.id,
+          search_id: search.id,
+          external_id: l.external_id ?? null,
+          name: l.name ?? "Não disponível",
+          category: l.category ?? null,
+          segment: safeSegment,
+          city: l.city ?? safeCity,
+          state: l.state ?? safeState,
+          address: l.address ?? null,
+          phone: l.phone ?? null,
+          whatsapp: l.whatsapp ?? null,
+          website: l.website ?? null,
+          google_url: l.google_url ?? null,
+          instagram: l.instagram ?? null,
+          facebook: l.facebook ?? null,
+          rating: l.rating ?? null,
+          reviews_count: l.reviews_count ?? 0,
+          has_website: !!l.has_website,
+          score: l.score ?? 1,
+          score_reasons: l.score_reasons ?? [],
+          opening_hours: l.opening_hours ?? null,
+          latitude: l.latitude ?? null,
+          longitude: l.longitude ?? null,
+          confidence: l.confidence ?? null,
+          money_score: l.money_score ?? null,
+          pain_score: l.pain_score ?? null,
+          intent_score: l.intent_score ?? null,
+          final_score: l.final_score ?? null,
+        }));
+        const { error: lErr } = await supabase.from("leads").insert(payload);
+        if (lErr) throw lErr;
+        completedSearchId = search.id;
+      }
 
       // Auditoria da busca — apenas em memória (sessionStorage), sem persistência em banco.
       try {
@@ -357,14 +434,14 @@ export function LeadSearchForm({
           created_at: Date.now(),
           input: { state: safeState, city: safeCity, segment: safeSegment, module },
         };
-        sessionStorage.setItem(`orvix:audit:${search.id}`, JSON.stringify(auditPayload));
+        sessionStorage.setItem(`orvix:audit:${completedSearchId}`, JSON.stringify(auditPayload));
       } catch { /* sessionStorage indisponível — ignorar */ }
 
       setProgress(100);
       toast.success(`${realLeads.length} leads reais encontrados em ${safeCity}/${safeState}`, {
         description: `Fonte: ${SOURCE_LABEL[usedSource] ?? usedSource}`,
       });
-      onComplete(search.id);
+      onComplete(completedSearchId);
     } catch (e: unknown) {
       console.error("[LeadSearchForm] erro", e);
       const message = e instanceof Error ? e.message : "Erro ao pesquisar";

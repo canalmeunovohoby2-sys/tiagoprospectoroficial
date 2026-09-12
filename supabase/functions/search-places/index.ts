@@ -2,13 +2,41 @@
 // Returns only verified public data. No mock, no invented fields.
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  callGmapsScraper,
+  normalizeGmapsResults,
+  dedupeGmapsLeads,
+  validateGmapsLeads,
+  sortGmapsByPriority,
+  toPublicLeadShape,
+  type GmapsNormalizedLead,
+} from "../_shared/gmaps.ts";
+
+// Supabase Edge Functions expõem EdgeRuntime.waitUntil para trabalho em
+// background que continua após a resposta HTTP.
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
+const GMAPS_SCRAPER_URL = (Deno.env.get("GMAPS_SCRAPER_URL") ?? "").trim();
+const GMAPS_SCRAPER_ENABLED = (Deno.env.get("GMAPS_SCRAPER_ENABLED") ?? "false").trim().toLowerCase() === "true";
+const GMAPS_SCRAPER_API_KEY = (Deno.env.get("GMAPS_SCRAPER_API_KEY") ?? "").trim();
+const GMAPS_SCRAPER_TIMEOUT_MS = Number(Deno.env.get("GMAPS_SCRAPER_TIMEOUT_MS") ?? "300000");
+
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const GOOGLE_KEY_LOADED = typeof GOOGLE_KEY === "string" && GOOGLE_KEY.trim().length > 0;
+// O Google Places (New/Legacy) fica DESATIVADO: a fonte primária agora é o
+// Geoapify Places API (gratuito, base OpenStreetMap + open data), sem billing.
+const USE_GOOGLE_PLACES = false;
+
+const GEOAPIFY_KEY = Deno.env.get("GEOAPIFY_API_KEY");
+const GEOAPIFY_KEY_LOADED = typeof GEOAPIFY_KEY === "string" && GEOAPIFY_KEY.trim().length > 0;
+// Orçamento de Place Details por busca — cada request custa ~1 crédito no
+// plano Free (3.000 créditos/dia). Mantém custo previsível e gratuito.
+const GEOAPIFY_DETAIL_BUDGET = 40;
 
 const SOURCE_LABELS = {
   googleNew: "google_places_new",
   googleLegacy: "google_places_legacy",
+  geoapify: "geoapify",
   nominatim: "openstreetmap_nominatim",
   overpass: "openstreetmap_overpass",
   overpassRecovery: "openstreetmap_overpass_recovery",
@@ -82,6 +110,7 @@ type PublicLead = {
   phone: string | null;
   whatsapp: string | null;
   website: string | null;
+  email?: string | null;
   google_url: string | null;
   instagram: string | null;
   facebook: string | null;
@@ -922,6 +951,228 @@ function mapLegacyPlacesToLeads(unique: LegacyDetailsResult[], city: string, sta
       };
     })
     .sort((a, b) => Number(b.city_matches) - Number(a.city_matches));
+}
+
+// ----------------- Geoapify Places (fonte primária gratuita) -----------------
+// Confirmado funcionando: https://api.geoapify.com/v2/places + /v2/place-details
+type GeoapifyFeature = {
+  type?: string;
+  properties?: {
+    place_id?: string;
+    name?: string;
+    formatted?: string;
+    address_line1?: string;
+    address_line2?: string;
+    city?: string;
+    state?: string;
+    postcode?: string;
+    street?: string;
+    housenumber?: string;
+    country?: string;
+    lat?: number;
+    lon?: number;
+    categories?: string[];
+    website?: string;
+    opening_hours?: string;
+    contact?: { phone?: string; phone_other?: string[]; email?: string; email_other?: string[] };
+  };
+};
+
+const GEOAPIFY_SEGMENT_CATEGORIES: Array<{ match: string[]; categories: string[] }> = [
+  { match: ["dentista", "dentistas", "odontologia", "odontologica", "odontológica"], categories: ["healthcare.dentist"] },
+  { match: ["medico", "médico", "medicos", "médicos", "clinica", "clínica", "clinicas", "clínicas"], categories: ["healthcare.clinic_or_praxis", "healthcare.hospital"] },
+  { match: ["advogado", "advogados", "advocacia"], categories: ["office.lawyer"] },
+  { match: ["contador", "contadores", "contabilidade"], categories: ["office.accountant", "office.tax_advisor"] },
+  { match: ["imobiliaria", "imobiliária", "imobiliarias", "imobiliárias"], categories: ["office.estate_agent", "service.estate_agent"] },
+  { match: ["arquiteto", "arquitetos", "arquitetura"], categories: ["office.architect"] },
+  { match: ["restaurante", "restaurantes"], categories: ["catering.restaurant"] },
+  { match: ["lanchonete", "lanches", "hamburgueria", "hamburguer", "burger"], categories: ["catering.fast_food"] },
+  { match: ["pizzaria", "pizza"], categories: ["catering.fast_food.pizza"] },
+  { match: ["cafeteria", "cafe", "café"], categories: ["catering.cafe"] },
+  { match: ["bar", "bares", "pub"], categories: ["catering.bar", "catering.pub"] },
+  { match: ["hotel", "hoteis", "hotéis", "pousada"], categories: ["accommodation.hotel", "accommodation.guest_house"] },
+  { match: ["farmacia", "farmácia", "farmacias", "farmácias", "drogaria", "drogarias"], categories: ["healthcare.pharmacy", "commercial.health_and_beauty.pharmacy"] },
+  { match: ["supermercado", "hipermercado", "supermercados", "atacarejo"], categories: ["commercial.supermarket"] },
+  { match: ["mercado", "mercadinho", "mercearia", "minimercado", "emporio", "empório", "conveniencia", "conveniência"], categories: ["commercial.convenience", "commercial.supermarket"] },
+  { match: ["padaria", "padarias", "panificadora", "confeitaria"], categories: ["commercial.food_and_drink.bakery", "commercial.food_and_drink.confectionery"] },
+  { match: ["adega", "adegas", "bebidas", "vinhos"], categories: ["commercial.food_and_drink.drinks"] },
+  { match: ["loja de roupa", "lojas de roupas", "roupas", "moda", "boutique", "vestuario", "vestuário"], categories: ["commercial.clothing", "commercial.clothing.clothes"] },
+  { match: ["calcado", "calçado", "calcados", "calçados", "sapatos", "sapataria", "tenis", "tênis"], categories: ["commercial.clothing.shoes"] },
+  { match: ["otica", "ótica", "opticas", "ópticas", "oculos", "óculos"], categories: ["commercial.health_and_beauty.optician"] },
+  { match: ["pet shop", "petshop", "pet shops"], categories: ["pet.shop"] },
+  { match: ["veterinario", "veterinário", "veterinarios", "veterinários"], categories: ["pet.veterinary"] },
+  { match: ["salao", "salão", "saloes", "salões", "cabeleireiro", "cabeleireiros", "barbearia"], categories: ["service.beauty.hairdresser"] },
+  { match: ["estetica", "estética", "beleza", "spa"], categories: ["service.beauty", "leisure.spa"] },
+  { match: ["escola", "escolas", "colegio", "colégio"], categories: ["education.school"] },
+  { match: ["papelaria", "papelarias"], categories: ["commercial.stationery"] },
+  { match: ["material de construcao", "material de construção", "ferragem", "ferragens", "construcao", "construção"], categories: ["commercial.houseware_and_hardware", "commercial.houseware_and_hardware.hardware_and_tools"] },
+  { match: ["autopeca", "autopeça", "autopecas", "autopeças", "auto center"], categories: ["commercial.vehicle"] },
+  { match: ["assistencia tecnica", "assistência técnica", "conserto", "reparo"], categories: ["service.electrician", "commercial.elektronics"] },
+  { match: ["distribuidora", "distribuidor", "atacado", "atacadista", "deposito", "depósito"], categories: ["commercial.trade"] },
+  { match: ["escritorio", "escritório", "consultoria", "consultoria"], categories: ["office", "office.consulting"] },
+];
+
+function getGeoapifyCategories(segment: string): string[] {
+  const normalized = normalizeText(segment);
+  const direct = GEOAPIFY_SEGMENT_CATEGORIES.find((entry) => entry.match.some((m) => normalized.includes(normalizeText(m))));
+  return direct ? direct.categories : [];
+}
+
+async function geocodeCityGeoapify(city: string, state: string): Promise<{ placeId: string | null; error?: string }> {
+  if (!GEOAPIFY_KEY_LOADED) return { placeId: null, error: "GEOAPIFY_API_KEY ausente" };
+  const url = new URL("https://api.geoapify.com/v1/geocode/search");
+  url.searchParams.set("text", `${city}, ${state}, Brasil`);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("lang", "pt");
+  url.searchParams.set("apiKey", GEOAPIFY_KEY!);
+  try {
+    const res = await fetchWithRetry(url.toString(), { method: "GET" }, 1);
+    if (!res.ok) return { placeId: null, error: `Geoapify Geocoding HTTP ${res.status}` };
+    const data = await res.json().catch(() => ({}));
+    const placeId = data?.results?.[0]?.place_id ?? null;
+    if (!placeId) return { placeId: null, error: "Geoapify não encontrou a cidade informada" };
+    return { placeId };
+  } catch (e) {
+    return { placeId: null, error: `Geoapify Geocoding: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+async function geoapifyPlaceDetails(placeId: string): Promise<GeoapifyFeature["properties"] | null> {
+  if (!GEOAPIFY_KEY_LOADED) return null;
+  const url = new URL("https://api.geoapify.com/v2/place-details");
+  url.searchParams.set("id", placeId);
+  url.searchParams.set("features", "details");
+  url.searchParams.set("lang", "pt");
+  url.searchParams.set("apiKey", GEOAPIFY_KEY!);
+  try {
+    const res = await fetchWithRetry(url.toString(), { method: "GET" }, 1);
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    return data?.features?.[0]?.properties ?? null;
+  } catch {
+    return null;
+  }
+}
+
+type GeoapifySearchResult = {
+  leads: PublicLead[];
+  error?: string;
+  placesCount: number;
+  detailsCount: number;
+  cityPlaceId: string | null;
+  categories: string[];
+};
+
+async function searchGeoapifyLeads(segment: string, city: string, state: string): Promise<GeoapifySearchResult> {
+  const categories = getGeoapifyCategories(segment);
+  if (!GEOAPIFY_KEY_LOADED) {
+    return { leads: [], error: "GEOAPIFY_API_KEY ausente", placesCount: 0, detailsCount: 0, cityPlaceId: null, categories };
+  }
+  if (categories.length === 0) {
+    return { leads: [], placesCount: 0, detailsCount: 0, cityPlaceId: null, categories };
+  }
+
+  const geo = await geocodeCityGeoapify(city, state);
+  if (!geo.placeId) {
+    return { leads: [], error: geo.error, placesCount: 0, detailsCount: 0, cityPlaceId: null, categories };
+  }
+
+  const url = new URL("https://api.geoapify.com/v2/places");
+  url.searchParams.set("categories", categories.join(","));
+  url.searchParams.set("filter", `place:${geo.placeId}`);
+  url.searchParams.set("limit", "100");
+  url.searchParams.set("lang", "pt");
+  url.searchParams.set("apiKey", GEOAPIFY_KEY!);
+
+  let features: GeoapifyFeature[] = [];
+  try {
+    const res = await fetchWithRetry(url.toString(), { method: "GET" }, 1);
+    if (!res.ok) {
+      return { leads: [], error: `Geoapify Places HTTP ${res.status}`, placesCount: 0, detailsCount: 0, cityPlaceId: geo.placeId, categories };
+    }
+    const data = await res.json().catch(() => ({}));
+    features = Array.isArray(data?.features) ? data.features : [];
+  } catch (e) {
+    return { leads: [], error: `Geoapify Places: ${e instanceof Error ? e.message : String(e)}`, placesCount: 0, detailsCount: 0, cityPlaceId: geo.placeId, categories };
+  }
+
+  const cityNorm = normalizeText(city);
+  const selected = features
+    .filter((f) => !!f.properties?.place_id && (f.properties?.name ?? "").trim().length >= 2)
+    .slice(0, GEOAPIFY_DETAIL_BUDGET);
+
+  // Place Details: é onde vêm contact.phone / contact.email / website.
+  const detailed = await mapWithConcurrency(selected, 4, async (f) => {
+    const base = f.properties!;
+    const details = await geoapifyPlaceDetails(base.place_id!);
+    return { base, merged: { ...base, ...(details ?? {}) } };
+  }, { interItemDelayMs: 60 });
+
+  const leads: PublicLead[] = [];
+  const seen = new Set<string>();
+  for (const { base, merged } of detailed) {
+    const name = merged.name ?? base.name ?? "";
+    if (!name || name.trim().length < 2) continue;
+
+    const extId = `geoapify:${merged.place_id ?? base.place_id}`;
+    if (seen.has(extId)) continue;
+    seen.add(extId);
+
+    const lat = merged.lat ?? base.lat ?? null;
+    const lon = merged.lon ?? base.lon ?? null;
+    const placeCity = merged.city ?? base.city ?? "";
+    const placeCityNorm = normalizeText(placeCity);
+    const cityMatches = !placeCity || placeCityNorm.includes(cityNorm) || cityNorm.includes(placeCityNorm);
+    if (!cityMatches) continue;
+
+    const phone = merged.contact?.phone ?? merged.contact?.phone_other?.[0] ?? null;
+    const email = merged.contact?.email ?? merged.contact?.email_other?.[0] ?? null;
+    const site = merged.website ?? null;
+    const address = merged.formatted ?? ([merged.address_line1, merged.address_line2].filter(Boolean).join(", ") || null);
+    const categoriesArr = merged.categories ?? base.categories ?? [];
+    const opening = typeof merged.opening_hours === "string" ? merged.opening_hours : null;
+
+    const reasons = ["Fonte: Geoapify (OpenStreetMap)"];
+    let score = 2;
+    if (!site) { score += 2; reasons.push("Sem site identificado — oportunidade"); }
+
+    leads.push({
+      external_id: extId,
+      name,
+      category: categoriesArr[0] ?? null,
+      address,
+      city: placeCity || city,
+      state: merged.state ?? state,
+      phone,
+      whatsapp: inferWhatsapp(undefined, phone ?? undefined),
+      website: site,
+      email,
+      google_url: lat != null && lon != null ? `https://www.google.com/maps/search/?api=1&query=${lat},${lon}` : null,
+      instagram: null,
+      facebook: null,
+      rating: null,
+      reviews_count: 0,
+      has_website: !!site,
+      score: Math.max(1, Math.min(5, score)),
+      score_reasons: reasons,
+      opening_hours: opening ? [opening] : null,
+      latitude: lat,
+      longitude: lon,
+      confidence: confidenceFromSignals(0, !!address, !!phone, !!site, cityMatches),
+      city_matches: cityMatches,
+    });
+  }
+
+  console.info("[search-places] Geoapify audit", {
+    categories,
+    cityPlaceId: geo.placeId,
+    rawPlaces: features.length,
+    detailed: selected.length,
+    accepted: leads.length,
+  });
+
+  return { leads, placesCount: features.length, detailsCount: selected.length, cityPlaceId: geo.placeId, categories };
 }
 
 // ----------------- OpenStreetMap / Nominatim fallback -----------------
@@ -1902,6 +2153,153 @@ function sortLeadsByPriority(leads: PublicLead[], segment: string, module: "orvi
 }
 
 
+// ────────────────────────────────────────────────────────────────
+// Job assíncrono: Google Maps scraper (fonte primária) + Geoapify (fallback).
+// Executa em background via EdgeRuntime.waitUntil e persiste em `leads`.
+// ────────────────────────────────────────────────────────────────
+type GmapsJobParams = {
+  admin: ReturnType<typeof createClient>;
+  searchId: string;
+  userId: string;
+  state: string;
+  city: string;
+  segment: string;
+  module: string;
+  maxPages: number;
+};
+
+type GmapsCounters = {
+  bruto: number;
+  normalizado: number;
+  deduplicado: number;
+  filtrado: number;
+  final: number;
+  comTelefone: number;
+  comWhatsapp: number;
+};
+
+async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
+  const startedAt = Date.now();
+  const counters: GmapsCounters = { bruto: 0, normalizado: 0, deduplicado: 0, filtrado: 0, final: 0, comTelefone: 0, comWhatsapp: 0 };
+  const warnings: Array<{ source: string; code?: string; message: string }> = [];
+  let status: "SUCCESS" | "EMPTY_REAL" | "PARTIAL_RESULTS" | "EXTERNAL_FAILURE" = "SUCCESS";
+  let errorMsg: string | null = null;
+  let finalLeads: Record<string, unknown>[] = [];
+
+  try {
+    const query = `${p.segment} em ${p.city}, ${p.state}`;
+    const maxPlaces = Math.max(1, p.maxPages * 20);
+    const scraped = await callGmapsScraper({
+      baseUrl: GMAPS_SCRAPER_URL,
+      query,
+      maxPlaces,
+      apiKey: GMAPS_SCRAPER_API_KEY || undefined,
+      timeoutMs: Number.isFinite(GMAPS_SCRAPER_TIMEOUT_MS) ? GMAPS_SCRAPER_TIMEOUT_MS : 300000,
+    });
+
+    if (scraped.error) {
+      warnings.push({ source: "google_maps_scraper", code: "SCRAPER_FAILED", message: scraped.error });
+      errorMsg = scraped.error;
+      // Fallback: Geoapify (mantém a busca funcionando sem o scraper).
+      const gp = await searchGeoapifyLeads(p.segment, p.city, p.state);
+      if (gp.error) warnings.push({ source: "geoapify", code: "GEOAPIFY_FAILED", message: gp.error });
+      if (gp.leads.length > 0) {
+        status = "PARTIAL_RESULTS";
+        counters.final = gp.leads.length;
+        counters.comTelefone = gp.leads.filter((l) => !!l.phone).length;
+        counters.comWhatsapp = gp.leads.filter((l) => !!l.whatsapp).length;
+        finalLeads = gp.leads as unknown as Record<string, unknown>[];
+      } else {
+        status = "EXTERNAL_FAILURE";
+      }
+    } else {
+      counters.bruto = scraped.results.length;
+      const normalized: GmapsNormalizedLead[] = normalizeGmapsResults(scraped.results, p.city, p.state);
+      counters.normalizado = normalized.length;
+      const deduped = dedupeGmapsLeads(normalized);
+      counters.deduplicado = deduped.leads.length;
+      const validated = validateGmapsLeads(deduped.leads, p.city, p.state);
+      counters.filtrado = validated.leads.length;
+      const sorted = sortGmapsByPriority(validated.leads);
+      counters.final = sorted.length;
+      counters.comTelefone = sorted.filter((l) => !!l.phone).length;
+      counters.comWhatsapp = sorted.filter((l) => inferWhatsapp(l.phone ?? undefined) !== null).length;
+      finalLeads = sorted.map((l) => toPublicLeadShape(l));
+      if (validated.rejected.length > 0) {
+        warnings.push({ source: "validation", code: "REJECTED", message: `${validated.rejected.length} lead(s) descartado(s) na validação` });
+      }
+      status = sorted.length > 0 ? "SUCCESS" : "EMPTY_REAL";
+    }
+
+    if (finalLeads.length > 0) {
+      const rows = finalLeads.map((value) => {
+        const lead = value as Record<string, unknown>;
+        return {
+          user_id: p.userId,
+          search_id: p.searchId,
+          external_id: (lead.external_id as string) ?? null,
+          name: String(lead.name ?? ""),
+          category: (lead.category as string) ?? null,
+          segment: p.segment,
+          city: (lead.city as string) ?? p.city,
+          state: (lead.state as string) ?? p.state,
+          address: (lead.address as string) ?? null,
+          phone: (lead.phone as string) ?? null,
+          whatsapp: (lead.whatsapp as string) ?? null,
+          website: (lead.website as string) ?? null,
+          google_url: (lead.google_url as string) ?? null,
+          rating: (lead.rating as number) ?? null,
+          reviews_count: (lead.reviews_count as number) ?? null,
+          score: Math.round(Number(lead.score) || 0),
+          score_reasons: (lead.score_reasons as unknown) ?? [],
+          has_website: !!lead.has_website,
+          latitude: (lead.latitude as number) ?? null,
+          longitude: (lead.longitude as number) ?? null,
+          email: (lead.email as string) ?? null,
+          source: "google_maps_scraper",
+        };
+      });
+      const { error: insertErr } = await p.admin.from("leads").insert(rows);
+      if (insertErr) {
+        warnings.push({ source: "db", code: "INSERT_FAILED", message: `Falha ao salvar leads: ${insertErr.message}` });
+        console.error("[search-places][gmaps] insert leads failed", insertErr);
+      }
+    }
+
+    await p.admin
+      .from("searches")
+      .update({
+        status,
+        counters,
+        warnings,
+        results_count: finalLeads.length,
+        module: p.module,
+        error: errorMsg,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", p.searchId);
+
+    console.info("[search-places][gmaps] job done", {
+      searchId: p.searchId,
+      status,
+      counters,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (e) {
+    console.error("[search-places][gmaps] fatal", e);
+    await p.admin
+      .from("searches")
+      .update({
+        status: "EXTERNAL_FAILURE",
+        counters,
+        warnings,
+        error: e instanceof Error ? e.message : String(e),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", p.searchId);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -2042,6 +2440,49 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ────────────────────────────────────────────────────────────
+    // MODO ASSÍNCRONO — Google Maps scraper (self-hosted).
+    // Cria o registro da busca, processa em background e devolve 202 com
+    // search_id. O front consulta get-search-status até o status final.
+    // ────────────────────────────────────────────────────────────
+    if (GMAPS_SCRAPER_ENABLED) {
+      const supaUrl = Deno.env.get("SUPABASE_URL");
+      const supaKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+      if (!supaUrl || !supaKey || !anonKey) {
+        return new Response(JSON.stringify({ error: "Backend indisponível para busca assíncrona" }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const authHeader = req.headers.get("Authorization") ?? "";
+      const userClient = createClient(supaUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
+      const { data: userData, error: userErr } = await userClient.auth.getUser();
+      if (userErr || !userData?.user?.id) {
+        return new Response(JSON.stringify({ error: "Não autenticado" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const admin = createClient(supaUrl, supaKey);
+      const { data: created, error: createErr } = await admin
+        .from("searches")
+        .insert({ user_id: userData.user.id, state, city, segment, module, status: "PROCESSING", counters: {}, warnings: [] })
+        .select("id")
+        .single();
+      if (createErr || !created?.id) {
+        console.error("[search-places][gmaps] create search failed", createErr);
+        return new Response(JSON.stringify({ error: "Falha ao criar a busca" }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const searchId = created.id as string;
+      EdgeRuntime.waitUntil(
+        runGmapsSearchJob({ admin, searchId, userId: userData.user.id, state, city, segment, module, maxPages }),
+      );
+      return new Response(JSON.stringify({ search_id: searchId, status: "PROCESSING" }), {
+        status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const synonyms = expandSegment(segment);
     const textQueries = synonyms.map((s) => `${s} em ${city}, ${state}, Brasil`);
     const primaryQuery = textQueries[0];
@@ -2050,13 +2491,16 @@ Deno.serve(async (req) => {
     const sourcesTried: string[] = [];
     const warnings: Array<{ source: string; code?: string; message: string; action?: string }> = [];
     let leads: PublicLead[] = [];
-    let source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery" | "none" = "none";
+    let source: "google_places_new" | "google_places_legacy" | "geoapify" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery" | "none" = "none";
 
     // Diagnostics: onde os leads são perdidos ao longo do funil.
     const diagnostics: Record<string, unknown> = {
       synonyms: synonyms.length,
       includedType: includedTypes.length > 0 ? includedTypes.join(",") : null,
       includedTypes,
+      geoapify: 0,
+      geoapifyPlaces: 0,
+      geoapifyCategories: null as string | null,
       googlePlacesNew: 0,
       googlePlacesLegacy: 0,
       nominatim: 0,
@@ -2073,7 +2517,7 @@ Deno.serve(async (req) => {
     // includedType) e regras aplicadas. Sem persistência em banco.
     // ────────────────────────────────────────────────────────────
     type LeadAuditEntry = {
-      source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery";
+      source: "google_places_new" | "google_places_legacy" | "geoapify" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery";
       synonym?: string;
       includedType?: string | null;
       rule?: string;
@@ -2087,8 +2531,46 @@ Deno.serve(async (req) => {
     // Contexto de resiliência partilhado por-request (circuit breaker + cache).
     const ctx = createSearchCtx();
 
-    // -------- 1) Google Places API (New) - multi-query + radius --------
-    if (GOOGLE_KEY_LOADED && GOOGLE_KEY!.startsWith("AIza")) {
+    // -------- 0) Geoapify Places — FONTE PRIMÁRIA (gratuita) --------
+    // Geocoding da cidade → Places por categoria → Place Details (contato).
+    // Base OpenStreetMap + open data; plano Free 3.000 créditos/dia, sem cartão.
+    if (GEOAPIFY_KEY_LOADED) {
+      sourcesTried.push(SOURCE_LABELS.geoapify);
+      const gp = await searchGeoapifyLeads(segment, city, state);
+      diagnostics.geoapifyCategories = gp.categories.length > 0 ? gp.categories.join(",") : null;
+      diagnostics.geoapifyPlaces = gp.placesCount;
+      if (gp.error) {
+        warnings.push({
+          source: SOURCE_LABELS.geoapify,
+          message: gp.error,
+          action: "Verifique a API key do Geoapify e tente novamente.",
+        });
+      }
+      if (gp.leads.length > 0) {
+        leads = gp.leads;
+        for (const l of leads) {
+          perLeadAudit.set(l.external_id, {
+            source: "geoapify",
+            synonym: segment,
+            includedType: gp.categories[0] ?? null,
+            rule: "geoapify_places_details",
+            category: l.category ?? null,
+          });
+        }
+        diagnostics.geoapify = gp.leads.length;
+        source = SOURCE_LABELS.geoapify;
+      }
+    } else {
+      warnings.push({
+        source: SOURCE_LABELS.geoapify,
+        code: "GEOAPIFY_KEY_MISSING",
+        message: "A chave do Geoapify não está configurada no backend.",
+        action: "Salve GEOAPIFY_API_KEY nos secrets da Edge Function.",
+      });
+    }
+
+    // -------- 1) Google Places API (New) - multi-query + radius (DESATIVADO) --------
+    if (USE_GOOGLE_PLACES && GOOGLE_KEY_LOADED && GOOGLE_KEY!.startsWith("AIza")) {
       sourcesTried.push(SOURCE_LABELS.googleNew);
 
       // Resolve city center for radius (locationBias) variants in parallel with first query
@@ -2244,7 +2726,7 @@ Deno.serve(async (req) => {
           }
         }
       }
-    } else {
+    } else if (USE_GOOGLE_PLACES) {
       const missingOrInvalid = normalizeGoogleError(0, JSON.stringify({ error: { message: GOOGLE_KEY_LOADED ? "invalid API key" : "missing" } }), "Google Places New");
       warnings.push({
         source: SOURCE_LABELS.googleNew,
@@ -2358,7 +2840,7 @@ Deno.serve(async (req) => {
       // Google entra PRIMEIRO no set → prioridade automática no dedupe.
       const seenKeys = new Set<string>();
       const merged: PublicLead[] = [];
-      const googleCount = leads.length;
+      const primaryCount = leads.length;
       let duplicatesRemoved = 0;
 
       for (const l of leads) {
@@ -2395,7 +2877,8 @@ Deno.serve(async (req) => {
 
       // Diagnóstico consolidado da coleta combinada.
       diagnostics.combined = {
-        google: googleCount,
+        primary: primaryCount,
+        geoapify: primaryCount,
         osm_nominatim: fromNominatim.length,
         osm_overpass: fromOverpass.length,
         osm_total: osmCandidates.length,
@@ -2404,8 +2887,8 @@ Deno.serve(async (req) => {
         final: merged.length,
       } as any;
 
-      console.info("[search-places] combined Google+OSM", {
-        google: googleCount,
+      console.info("[search-places] combined primary+OSM", {
+        primary: primaryCount,
         osm_nominatim: fromNominatim.length,
         osm_overpass: fromOverpass.length,
         osm_added: osmAdded,
@@ -2771,13 +3254,24 @@ Deno.serve(async (req) => {
     // Uma fonte só é "error" se foi tentada, não retornou nada e não é rate-limit.
     // rate_limited tem prioridade sobre error para deixar claro que é temporário.
     type SrcStatus = "success" | "rate_limited" | "error" | "skipped";
-    const googleAttempted = GOOGLE_KEY_LOADED;
+    const googleAttempted = USE_GOOGLE_PLACES && GOOGLE_KEY_LOADED;
+    const geoapifyAttempted = GEOAPIFY_KEY_LOADED;
     const nominatimAttempted = true; // OSM sempre tentado
     const overpassAttempted = true;
     const googleReturned = (Number(diagnostics.googlePlacesNew) || 0) + (Number(diagnostics.googlePlacesLegacy) || 0) > 0;
+    const geoapifyReturned = (Number(diagnostics.geoapify) || 0) > 0;
     const nominatimReturned = (Number(diagnostics.nominatim) || 0) > 0;
     const overpassReturned = (Number(diagnostics.overpass) || 0) > 0;
     const warnsHave = (needle: string) => warnings.some((w) => (w.source ?? "").includes(needle));
+    const geoapify_status: SrcStatus = !geoapifyAttempted
+      ? "skipped"
+      : !diagnostics.geoapifyCategories
+        ? "skipped" // segmento sem categoria mapeada — cobertura fica com o OSM
+        : geoapifyReturned
+          ? "success"
+          : warnsHave("geoapify")
+            ? "error"
+            : "success";
     const google_status: SrcStatus = !googleAttempted
       ? "skipped"
       : ctx.googleCircuitOpen
@@ -2804,8 +3298,8 @@ Deno.serve(async (req) => {
           ? "error"
           : "success";
 
-    const sources_status = { google: google_status, nominatim: nominatim_status, overpass: overpass_status };
-    const attemptedStatuses = [google_status, nominatim_status, overpass_status].filter((s) => s !== "skipped");
+    const sources_status = { geoapify: geoapify_status, google: google_status, nominatim: nominatim_status, overpass: overpass_status };
+    const attemptedStatuses = [geoapify_status, google_status, nominatim_status, overpass_status].filter((s) => s !== "skipped");
     const anyDegraded = attemptedStatuses.some((s) => s === "rate_limited" || s === "error");
     const allFailed = attemptedStatuses.length > 0 && attemptedStatuses.every((s) => s === "rate_limited" || s === "error");
 
@@ -2845,8 +3339,9 @@ Deno.serve(async (req) => {
       audit,
       search_status,
       sources_status,
-      google_enabled: GOOGLE_KEY_LOADED,
+      google_enabled: USE_GOOGLE_PLACES && GOOGLE_KEY_LOADED,
       google_key_loaded: GOOGLE_KEY_LOADED,
+      geoapify_enabled: GEOAPIFY_KEY_LOADED,
     }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
