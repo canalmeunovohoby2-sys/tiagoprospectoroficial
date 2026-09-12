@@ -389,10 +389,15 @@ export async function callGmapsScraper(opts: ScraperCallOpts): Promise<{ results
       const text = await res.text().catch(() => "");
       return { results: [], error: `Scraper HTTP ${res.status}: ${text.slice(0, 200)}` };
     }
-    const data = await res.json().catch(() => ({}));
-    const results = Array.isArray((data as { results?: unknown })?.results)
-      ? ((data as { results: GmapsScraperPlace[] }).results)
-      : [];
+    const data = await res.json().catch(() => ({} as unknown));
+    // O fork conor-is-my-name retorna um ARRAY puro em /scrape-get;
+    // outros servidores podem embrulhar em { results: [...] }. Aceita ambos.
+    let results: GmapsScraperPlace[] = [];
+    if (Array.isArray(data)) {
+      results = data as GmapsScraperPlace[];
+    } else if (Array.isArray((data as { results?: unknown })?.results)) {
+      results = (data as { results: GmapsScraperPlace[] }).results;
+    }
     return { results };
   } catch (e) {
     const isAbort = e instanceof DOMException && e.name === "AbortError";

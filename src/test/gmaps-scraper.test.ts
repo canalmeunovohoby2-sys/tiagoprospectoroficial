@@ -203,6 +203,15 @@ describe("gmaps — cliente HTTP", () => {
     expect(out.results).toHaveLength(1);
   });
 
+  it("aceita resposta em array puro (fork conor-is-my-name)", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify([{ name: "Alfa", place_id: "p1" }, { name: "Beta", place_id: "p2" }]), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const out = await callGmapsScraper({ baseUrl: "https://scraper.test", query: "advogados em Bauru, SP", maxPlaces: 20, fetchImpl });
+    expect(out.error).toBeUndefined();
+    expect(out.results).toHaveLength(2);
+  });
+
   it("retorna erro em HTTP não-ok", async () => {
     const fetchImpl = vi.fn(async () => new Response("boom", { status: 500 })) as unknown as typeof fetch;
     const out = await callGmapsScraper({ baseUrl: "https://scraper.test", query: "x", maxPlaces: 10, fetchImpl });
