@@ -26,9 +26,6 @@ type SearchPlacesLead = {
   whatsapp?: string | null;
   website?: string | null;
   google_url?: string | null;
-  photo_name?: string | null;
-  photo_url?: string | null;
-  photo_source?: string | null;
   instagram?: string | null;
   facebook?: string | null;
   rating?: number | null;
@@ -169,7 +166,7 @@ export function LeadSearchForm({
   segments: segmentOptions = SEGMENTS,
   module = "landing_pages",
 }: LeadSearchFormProps) {
-  const { user, authError, ensureSession } = useAuth();
+  const { user } = useAuth();
   const [state, setState] = useState<string>("");
   const [city, setCity] = useState<string>("");
   const [segment, setSegment] = useState<string>("");
@@ -227,26 +224,7 @@ export function LeadSearchForm({
   }
 
   async function handleSearch() {
-    // Uso pessoal: a sessão é criada automaticamente (conta anônima do Supabase).
-    // Se ainda não estiver pronta, aguarda a criação em vez de bloquear em silêncio.
-    let uid = user?.id;
-    if (!uid) {
-      const ready = await ensureSession();
-      if (!ready) {
-        toast.error(
-          authError ??
-            "Não foi possível iniciar a sessão de uso pessoal. Tente novamente em instantes.",
-          { duration: 12000 },
-        );
-        return;
-      }
-      const { data: sessionData } = await supabase.auth.getUser();
-      uid = sessionData.user?.id ?? null;
-      if (!uid) {
-        toast.error("Não foi possível obter a sessão de uso pessoal. Tente novamente.");
-        return;
-      }
-    }
+    if (!user) return;
     const safeState = state.trim().toUpperCase();
     const safeCity = city.trim();
     const safeSegment = finalSegment.trim();
@@ -265,7 +243,7 @@ export function LeadSearchForm({
     try {
       const startedAt = performance.now();
       const { data, error } = await supabase.functions.invoke<SearchPlacesResponse>("search-places", {
-        body: { state: safeState, city: safeCity, segment: safeSegment, maxPages: 4, module },
+        body: { state: safeState, city: safeCity, segment: safeSegment, maxPages: 2, module },
       });
       console.info("[LeadSearchForm] resposta da busca", {
         durationMs: Math.round(performance.now() - startedAt),
@@ -292,29 +270,30 @@ export function LeadSearchForm({
       const isEmptyReal = searchStatus === "EMPTY_REAL" || searchStatus === "EMPTY";
 
       if (realLeads.length === 0) {
-        const googleUnavailable = warnings.some(isGoogleWarning);
-        const nonGoogleWarnings = warnings.filter((w) => !isGoogleWarning(w));
-        for (const w of nonGoogleWarnings.slice(0, 2)) {
+        const googleWarnings = warnings.filter(isGoogleWarning);
+        const visibleWarnings = googleWarnings.length > 0 ? googleWarnings.slice(0, 1) : warnings.slice(0, 3);
+        const primaryWarning = visibleWarnings[0];
+        for (const w of visibleWarnings) {
           toast.warning(`${SOURCE_LABEL[w.source] ?? w.source}: ${w.message}`, {
             description: w.action,
-            duration: 7000,
+            duration: 10000,
           });
         }
         const msg = isEmptyWithLimitations
-          ? "Nenhum lead encontrado pelas fontes públicas disponíveis."
+          ? "Nenhum lead encontrado pelas fontes consultadas. Algumas fontes estavam temporariamente indisponíveis e podem reduzir a cobertura da busca."
           : data?.error
             ? getSearchErrorMessage(null, data)
-            : "Nenhum lead encontrado para este segmento e localização nas fontes públicas disponíveis.";
+            : "Nenhum lead encontrado pelas fontes consultadas para este segmento e localização.";
         setNotice({
           tone: isEmptyWithLimitations ? "warning" : "error",
           title: msg,
           description: isEmptyWithLimitations
-            ? "Uma das fontes de dados estava temporariamente indisponível, o que pode reduzir a cobertura. Refaça em alguns instantes ou tente outro termo/cidade."
-            : googleUnavailable
-              ? "A busca utiliza fontes públicas (OpenStreetMap) e pode ter cobertura menor em alguns segmentos. Tente outra cidade, outro segmento ou um termo mais amplo."
+            ? "Fontes indisponíveis não permitem afirmar que não existem empresas. Refaça a busca em alguns segundos para tentar recuperar a cobertura."
+            : primaryWarning
+              ? `${primaryWarning.message} ${primaryWarning.action ?? ""}`.trim()
               : "Tente outro segmento, uma cidade maior ou um termo mais amplo.",
         });
-        toast.warning(msg, { duration: 8000 });
+        toast.warning(msg, { duration: 10000 });
         setSearching(false); stopStageRotation(); setProgress(0);
         return;
       }
@@ -329,13 +308,13 @@ export function LeadSearchForm({
 
       const { data: search, error: sErr } = await supabase
         .from("searches")
-        .insert({ user_id: uid, state: safeState, city: safeCity, segment: safeSegment, results_count: realLeads.length })
+        .insert({ user_id: user.id, state: safeState, city: safeCity, segment: safeSegment, results_count: realLeads.length })
         .select()
         .single();
       if (sErr) throw sErr;
 
       const payload: LeadInsert[] = realLeads.map((l) => ({
-        user_id: uid,
+        user_id: user.id,
         search_id: search.id,
         external_id: l.external_id ?? null,
         name: l.name ?? "Não disponível",
@@ -348,7 +327,6 @@ export function LeadSearchForm({
         whatsapp: l.whatsapp ?? null,
         website: l.website ?? null,
         google_url: l.google_url ?? null,
-        photo_name: l.photo_url ?? l.photo_name ?? null,
         instagram: l.instagram ?? null,
         facebook: l.facebook ?? null,
         rating: l.rating ?? null,

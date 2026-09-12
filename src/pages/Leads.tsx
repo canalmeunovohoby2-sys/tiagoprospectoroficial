@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Star, Globe, MapPin, Phone, MessageSquare, Sparkles, Check,
+  Star, Globe, MapPin, Phone, MessageSquare, Sparkles, Eye, Check,
   Search as SearchIcon, Trash2, Loader2, Instagram, Facebook, ExternalLink, Map as MapIcon, Copy, Plus,
-  FileCode2, ImageOff,
+
   ShieldCheck, Shield, ShieldAlert, Clock, Download, ClipboardCopy,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,15 +24,13 @@ import type { Lead, CrmStatus } from "@/data/types";
 import { CRM_COLUMNS } from "@/data/brazil";
 import { LandingPromptButton } from "@/components/app/LandingPromptButton";
 import { RoiBadge } from "@/components/app/RoiBadge";
-import { getLeadTemperature, enrichLeadWithScores } from "@/lib/leadScoring";
-import { leadPhotoUrl } from "@/lib/leadPhoto";
+import { getLeadTemperature, buildScoreReasons, enrichLeadWithScores } from "@/lib/leadScoring";
 
 import { WhatsAppTemplatePicker, TEMPLATE_TEXTS, type WaTemplate } from "@/components/app/WhatsAppTemplatePicker";
 import { OfferCard } from "@/components/app/OfferCard";
 
 import { useWaitingQueue } from "@/hooks/useWaitingQueue";
 import { calculateLeadROI } from "@/lib/leadROI";
-import { openOrCreateSiteProject } from "@/lib/siteProjectsApi";
 import { ListChecks } from "lucide-react";
 
 type Filter =
@@ -75,7 +73,6 @@ function normalizeLeadRows(rows: unknown): Lead[] {
 export default function Leads() {
   const { user } = useAuth();
   const [params] = useSearchParams();
-  const navigate = useNavigate();
   const searchId = params.get("search");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,20 +83,6 @@ export default function Leads() {
   const [websiteFilter, setWebsiteFilter] = useState<"all" | "yes" | "no">("all");
   const [selected, setSelected] = useState<Lead | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [openingSiteId, setOpeningSiteId] = useState<string | null>(null);
-
-  async function openSite(lead: Lead) {
-    if (!user) { toast.error("Sessão indisponível. Recarregue a página."); return; }
-    setOpeningSiteId(lead.id);
-    try {
-      const projectId = await openOrCreateSiteProject(user.id, lead);
-      navigate(`/sites/${projectId}`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao criar projeto de site");
-    } finally {
-      setOpeningSiteId(null);
-    }
-  }
 
   async function load() {
     if (!user) return;
@@ -113,36 +96,27 @@ export default function Leads() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [user, searchId]);
 
-  // Background: enriquecimento em LOTES (retomável). Não bloqueia a lista.
+  // Background: Website & Instagram Discovery. Não bloqueia a lista.
+  // Atualiza website/has_website/instagram dos cards já exibidos.
   useEffect(() => {
     if (!user || !searchId) return;
     let cancelled = false;
-    (async () => {
-      let offset = 0;
-      let completed = false;
-      let guard = 0;
-      while (!completed && guard < 100 && !cancelled) {
-        const { data, error } = await supabase.functions.invoke("search-places", {
-          body: { mode: "enrich", search_id: searchId, enrich_offset: offset },
-        });
-        if (error || !data) break;
-        const r = data as { completed?: boolean; next_cursor?: number | null; processed?: number };
-        completed = r.completed === true || r.next_cursor == null;
-        offset = typeof r.next_cursor === "number" ? r.next_cursor : offset + (r.processed ?? 0);
-        guard++;
-      }
-      if (cancelled) return;
-      let q = supabase.from("leads").select("id,website,has_website,instagram,phone,whatsapp");
-      q = q.eq("search_id", searchId);
-      const { data } = await q;
-      if (cancelled || !Array.isArray(data)) return;
-      const byId = new Map(data.map((r: any) => [r.id, r]));
-      setLeads((prev) => prev.map((l) => {
-        const r = byId.get(l.id);
-        if (!r) return l;
-        return { ...l, website: r.website, has_website: !!r.has_website, instagram: r.instagram, phone: r.phone, whatsapp: r.whatsapp };
-      }));
-    })().catch(() => { /* silent */ });
+    supabase.functions
+      .invoke("search-places", { body: { mode: "enrich", search_id: searchId } })
+      .then(async ({ error }) => {
+        if (error || cancelled) return;
+        let q = supabase.from("leads").select("id,website,has_website,instagram");
+        q = q.eq("search_id", searchId);
+        const { data } = await q;
+        if (cancelled || !Array.isArray(data)) return;
+        const byId = new Map(data.map((r: any) => [r.id, r]));
+        setLeads((prev) => prev.map((l) => {
+          const r = byId.get(l.id);
+          if (!r) return l;
+          return { ...l, website: r.website, has_website: !!r.has_website, instagram: r.instagram };
+        }));
+      })
+      .catch(() => { /* silent */ });
     return () => { cancelled = true; };
   }, [user, searchId]);
 
@@ -228,18 +202,6 @@ export default function Leads() {
     }
   }
 
-  async function clearLeads() {
-    if (!leads.length) return;
-    const label = searchId ? "desta pesquisa" : "da sua base";
-    if (!window.confirm(`Apagar os ${leads.length} leads ${label}? Esta ação não pode ser desfeita.`)) return;
-    let q = supabase.from("leads").delete().eq("user_id", user?.id);
-    if (searchId) q = q.eq("search_id", searchId);
-    const { error } = await q;
-    if (error) { toast.error(error.message); return; }
-    toast.success(`Leads removidos (${label}).`);
-    await load();
-  }
-
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-start justify-between gap-4 flex-wrap">
@@ -249,14 +211,9 @@ export default function Leads() {
             {leads.length} empresas {searchId ? "desta pesquisa" : "na sua base"} · ordenadas por score de oportunidade
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => exportLeadsCsv(filtered)} disabled={filtered.length === 0}>
-            <Download className="h-4 w-4 mr-1" /> Exportar CSV
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void clearLeads()} disabled={leads.length === 0} className="text-destructive hover:text-destructive">
-            <Trash2 className="h-4 w-4 mr-1" /> Limpar leads
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" onClick={() => exportLeadsCsv(filtered)} disabled={filtered.length === 0}>
+          <Download className="h-4 w-4 mr-1" /> Exportar CSV
+        </Button>
       </motion.div>
 
       <Card className="p-3 border-border/50 space-y-3">
@@ -368,16 +325,14 @@ export default function Leads() {
           <p className="text-muted-foreground">Nenhum lead aqui ainda. Faça uma pesquisa para começar.</p>
         </Card>
       ) : (
-        <div data-testid="leads-grid" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 items-stretch">
+        <div className="grid gap-3">
           {filtered.map((l) => (
-            <LeadCard
+            <LeadRow
               key={l.id} lead={l}
               onOpen={() => setSelected(l)}
               onFavorite={() => updateLead(l.id, { is_favorite: !l.is_favorite })}
               onContacted={() => updateLead(l.id, { is_contacted: !l.is_contacted })}
               onSendToCrm={() => updateLead(l.id, { in_crm: true, crm_status: l.crm_status || "new" })}
-              onGenerateSite={() => openSite(l)}
-              openingSite={openingSiteId === l.id}
             />
           ))}
         </div>
@@ -389,7 +344,6 @@ export default function Leads() {
         onUpdate={updateLead}
         onDelete={deleteLead}
         onGenerate={generateMessage}
-        onGenerateSite={openSite}
         generating={generating}
       />
     </div>
@@ -448,155 +402,122 @@ function ScoreStars({ score }: { score: number }) {
   );
 }
 
-function LeadCard({
-  lead, onOpen, onFavorite, onContacted, onSendToCrm, onGenerateSite, openingSite,
+function LeadRow({
+  lead, onOpen, onFavorite, onContacted, onSendToCrm,
 }: {
-  lead: Lead; onOpen: () => void; onFavorite: () => void; onContacted: () => void; onSendToCrm: () => void; onGenerateSite: () => void; openingSite: boolean;
+  lead: Lead; onOpen: () => void; onFavorite: () => void; onContacted: () => void; onSendToCrm: () => void;
 }) {
   const isHot = (lead.final_score ?? 0) >= 80;
-  const [photoFailed, setPhotoFailed] = useState(false);
-  const photo = leadPhotoUrl(lead.photo_name);
-  const showPhoto = !!photo && !photoFailed;
-  const temp = getLeadTemperature(lead.final_score);
-  const website = (lead.website ?? "").trim();
-
   return (
     <Card
-      className={`group relative flex flex-col overflow-hidden p-0 border-border/50 transition-all duration-300 ease-out hover:border-primary hover:-translate-y-0.5 hover:shadow-[0_0_0_1px_hsl(0_84%_55%/0.5),0_0_26px_-4px_hsl(0_84%_55%/0.5)] ${
-        isHot ? "ring-1 ring-emerald-500/30" : ""
+      className={`group relative p-4 border-border/50 transition-all duration-300 ease-out hover:border-primary hover:-translate-y-0.5 hover:shadow-[0_0_0_1px_hsl(0_84%_55%/0.6),0_0_28px_-2px_hsl(0_84%_55%/0.55),0_0_60px_-12px_hsl(0_84%_55%/0.7)] hover:bg-primary/[0.04] ${
+        isHot
+          ? "border-l-4 border-l-emerald-500 ring-1 ring-emerald-500/30 shadow-[0_0_18px_-6px_hsl(160_84%_45%/0.55)]"
+          : ""
       }`}
     >
-      {/* Foto real do estabelecimento (Google Places) */}
-      <button
-        type="button"
-        onClick={onOpen}
-        className="relative block w-full aspect-[4/3] overflow-hidden bg-muted text-left"
-        title="Abrir informações do lead"
-        aria-label={`Abrir ${lead.name}`}
-      >
-        {showPhoto ? (
-          <img
-            src={photo as string}
-            alt={lead.name}
-            loading="lazy"
-            decoding="async"
-            onError={() => setPhotoFailed(true)}
-            className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
-          />
-        ) : (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-gradient-to-br from-muted to-muted/40 text-muted-foreground">
-            <ImageOff className="h-6 w-6 opacity-50" />
-            <span className="text-[10px] uppercase tracking-wider opacity-70">Sem imagem</span>
-          </div>
-        )}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent" />
-        <div className="absolute left-2 top-2 flex flex-wrap gap-1">
-          {isHot && (
-            <Badge variant="outline" className="text-[10px] border-emerald-500/60 text-emerald-300 bg-black/50 backdrop-blur">
-              🔥 Alta Conversão
-            </Badge>
-          )}
-        </div>
-        {lead.rating != null && (
-          <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium text-white backdrop-blur">
-            <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
-            {lead.rating.toFixed(1)}
-            <span className="text-white/70">({lead.reviews_count ?? 0})</span>
-          </div>
-        )}
-      </button>
-
-      {/* Dados compactos */}
-      <div className="flex min-w-0 flex-1 flex-col gap-2 p-3">
-        <div className="flex items-start justify-between gap-2">
-          <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left" title={lead.name}>
-            <h3 className="line-clamp-2 text-sm font-semibold leading-snug hover:underline">{lead.name}</h3>
-          </button>
-          <ConfidenceBadge confidence={lead.confidence} />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="truncate text-[11px] text-muted-foreground">{lead.category || lead.segment || "—"}</span>
-          <Badge variant="outline" className={`text-[10px] ${temp.badgeClass}`}>{temp.label}</Badge>
-          {!lead.has_website && <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-500">Sem site</Badge>}
-          {lead.whatsapp && <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-500">WhatsApp</Badge>}
-          {lead.is_contacted && <Badge variant="outline" className="text-[10px] border-blue-500/40 text-blue-500">Contatado</Badge>}
-        </div>
-
-        <div className="space-y-1 text-xs text-muted-foreground">
-          {(lead.city || lead.address) && (
-            <div className="flex items-start gap-1.5">
-              <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span className="line-clamp-2" title={lead.address ?? undefined}>
-                {lead.address || `${lead.city ?? ""}${lead.state ? `/${lead.state}` : ""}`}
-              </span>
-            </div>
-          )}
-          <div className="flex items-center gap-1.5">
-            <Phone className="h-3.5 w-3.5 shrink-0" />
-            {lead.phone ? <a href={`tel:${lead.phone}`} className="truncate hover:text-foreground">{lead.phone}</a> : <span>Telefone não disponível</span>}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Globe className="h-3.5 w-3.5 shrink-0" />
-            {website ? (
-              <a href={website} target="_blank" rel="noreferrer" className="truncate hover:text-foreground">{website.replace(/^https?:\/\//, "")}</a>
-            ) : (
-              <span>Sem site</span>
+      <div className="flex items-start gap-4 flex-wrap">
+        <div className="flex-1 min-w-[260px]">
+          <div className="flex items-center gap-2 flex-wrap">
+            {isHot && (
+              <HoverInfo
+                content="Lead com altíssimo potencial de fechamento (score final ≥ 80). Priorize o contato — combina capacidade financeira, dor digital e intenção de compra."
+              >
+                <Badge
+                  variant="outline"
+                  className="text-[10px] border-emerald-500/60 text-emerald-400 bg-emerald-500/10 shadow-[0_0_10px_-2px_hsl(160_84%_45%/0.6)]"
+                >
+                  🔥 Alta Conversão
+                </Badge>
+              </HoverInfo>
             )}
+            <h3 className="font-semibold truncate">{lead.name}</h3>
+            <ConfidenceBadge confidence={lead.confidence} />
+            <RoiBadge lead={lead} />
+            {(() => {
+              const t = getLeadTemperature(lead.final_score);
+              const desc =
+                t.label === "HOT"
+                  ? "HOT (≥ 80): pronto para abordagem imediata. Alta chance de conversão."
+                  : t.label === "WARM"
+                    ? "WARM (50–79): bom potencial, nutrir com mensagem personalizada antes de fechar."
+                    : "COLD (< 50): baixo potencial agora. Avalie se vale o esforço ou deixe para depois.";
+              return (
+                <HoverInfo
+                  content={(
+                    <>
+                      <span className="block font-semibold mb-1">Temperatura do lead · {lead.final_score ?? 0}/100</span>
+                      {desc}
+                    </>
+                  )}
+                >
+                  <Badge variant="outline" className={t.badgeClass}>{t.label}</Badge>
+                </HoverInfo>
+              );
+            })()}
+            {!lead.has_website && <Badge variant="outline" className="text-xs border-emerald-500/40 text-emerald-500">Sem site</Badge>}
+            {lead.is_contacted && <Badge variant="outline" className="text-xs border-blue-500/40 text-blue-500">Contatado</Badge>}
+            {lead.in_crm && <Badge variant="outline" className="text-xs border-violet-500/40 text-violet-500">No CRM</Badge>}
           </div>
+          <div className="text-xs text-muted-foreground mt-1 flex items-center gap-3 flex-wrap">
+            {lead.segment && <span>{lead.segment}</span>}
+            {lead.city && <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{lead.city}/{lead.state}</span>}
+            {lead.rating != null ? <span>★ {lead.rating} ({lead.reviews_count})</span> : <span className="opacity-60">Sem avaliações</span>}
+            <span className="opacity-80">Score: {lead.final_score ?? 0}/100</span>
+          </div>
+          {(() => {
+            const reasons = (lead.score_reasons?.length ? lead.score_reasons : buildScoreReasons(lead)).slice(0, 3);
+            if (!reasons.length) return null;
+            return (
+              <div className="mt-2 text-[11px] text-muted-foreground">
+                {reasons.join(" • ")}
+              </div>
+            );
+          })()}
         </div>
 
-        {/* Ações (preserva as existentes; sem o botão "Ver") */}
-        <div className="mt-auto flex flex-col gap-2 pt-2 border-t border-border/40">
-          <div className="flex items-center gap-2">
-            {lead.whatsapp ? (
-              <Button size="sm" asChild className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white" title="Chamar no WhatsApp">
-                <a href={`https://wa.me/${lead.whatsapp.replace(/\D/g, "")}`} target="_blank" rel="noreferrer">
-                  <MessageSquare className="h-3.5 w-3.5 mr-1" /> WhatsApp
-                </a>
-              </Button>
-            ) : lead.phone ? (
-              <Button size="sm" asChild className="flex-1" title="Ligar">
-                <a href={`tel:${lead.phone}`}><Phone className="h-3.5 w-3.5 mr-1" /> Ligar</a>
-              </Button>
-            ) : (
-              <Button size="sm" className="flex-1" disabled title="Sem contato">
-                <MessageSquare className="h-3.5 w-3.5 mr-1" /> Sem contato
-              </Button>
-            )}
-            <Button size="sm" variant="secondary" onClick={onGenerateSite} disabled={openingSite} className="flex-1" title="Gerar Site">
-              {openingSite ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <FileCode2 className="h-3.5 w-3.5 mr-1" />} Gerar Site
-            </Button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-0.5">
-            <Button size="icon" variant="ghost" onClick={onFavorite} aria-label="Favoritar" title="Favoritar" className="h-8 w-8">
+        <div className="flex flex-col items-end gap-2">
+          <ScoreStars score={lead.score} />
+          <div className="flex items-center gap-1 flex-wrap justify-end">
+            <Button size="icon" variant="ghost" onClick={onFavorite} aria-label="Favoritar" title="Favoritar">
               <Star className={`h-4 w-4 ${lead.is_favorite ? "fill-amber-400 text-amber-400" : ""}`} />
             </Button>
-            {website && (
-              <Button size="icon" variant="ghost" asChild title="Abrir site" className="h-8 w-8"><a href={website} target="_blank" rel="noreferrer"><Globe className="h-4 w-4" /></a></Button>
+            {lead.website && (
+              <Button size="icon" variant="ghost" asChild title="Site"><a href={lead.website} target="_blank" rel="noreferrer"><Globe className="h-4 w-4" /></a></Button>
             )}
-            <Button size="icon" variant="ghost" asChild title="Pesquisar no Google" className="h-8 w-8">
-              <a href={`https://www.google.com/search?q=${encodeURIComponent(`${lead.name}${lead.city ? " " + lead.city : ""}`)}`} target="_blank" rel="noreferrer">
+            <Button size="icon" variant="ghost" asChild title="Pesquisar no Google">
+              <a
+                href={`https://www.google.com/search?q=${encodeURIComponent(`${lead.name}${lead.city ? " " + lead.city : ""}`)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
                 <SearchIcon className="h-4 w-4" />
               </a>
             </Button>
             {lead.google_url && (
-              <Button size="icon" variant="ghost" asChild title="Abrir no Google Maps" className="h-8 w-8"><a href={lead.google_url} target="_blank" rel="noreferrer"><MapIcon className="h-4 w-4" /></a></Button>
+              <Button size="icon" variant="ghost" asChild title="Google Maps"><a href={lead.google_url} target="_blank" rel="noreferrer"><MapIcon className="h-4 w-4" /></a></Button>
             )}
+
             {lead.phone && (
-              <Button size="icon" variant="ghost" asChild title="Ligar" className="h-8 w-8"><a href={`tel:${lead.phone}`}><Phone className="h-4 w-4" /></a></Button>
+              <Button size="icon" variant="ghost" asChild title="Ligar"><a href={`tel:${lead.phone}`}><Phone className="h-4 w-4" /></a></Button>
+            )}
+            {lead.whatsapp && (
+              <Button size="icon" variant="ghost" asChild title="WhatsApp"><a href={`https://wa.me/${lead.whatsapp.replace(/\D/g, "")}`} target="_blank" rel="noreferrer"><MessageSquare className="h-4 w-4 text-emerald-500" /></a></Button>
             )}
             {lead.instagram && (
-              <Button size="icon" variant="ghost" asChild title="Instagram" className="h-8 w-8"><a href={lead.instagram} target="_blank" rel="noreferrer"><Instagram className="h-4 w-4 text-pink-500" /></a></Button>
+              <Button size="icon" variant="ghost" asChild title="Instagram"><a href={lead.instagram} target="_blank" rel="noreferrer"><Instagram className="h-4 w-4 text-pink-500" /></a></Button>
             )}
-            <Button size="icon" variant="ghost" title="Copiar dados" className="h-8 w-8" onClick={() => { navigator.clipboard.writeText(leadToText(lead)); toast.success("Dados copiados"); }}>
+            <Button
+              size="icon" variant="ghost" title="Copiar dados"
+              onClick={() => { navigator.clipboard.writeText(leadToText(lead)); toast.success("Dados copiados"); }}
+            >
               <ClipboardCopy className="h-4 w-4" />
             </Button>
             <LandingPromptButton lead={lead} variant="icon" />
-            <Button size="icon" variant="ghost" onClick={onContacted} title="Marcar como contatado" className="h-8 w-8">
+            <Button size="icon" variant="ghost" onClick={onContacted} title="Marcar como contatado">
               <Check className={`h-4 w-4 ${lead.is_contacted ? "text-blue-500" : ""}`} />
             </Button>
+            <Button size="sm" variant="outline" onClick={onOpen}><Eye className="h-3.5 w-3.5 mr-1" /> Ver</Button>
           </div>
         </div>
       </div>
@@ -604,14 +525,25 @@ function LeadCard({
   );
 }
 
+function HoverInfo({ children, content }: { children: ReactNode; content: ReactNode }) {
+  return (
+    <span className="relative inline-flex cursor-help group/hoverinfo">
+      {children}
+      <span className="pointer-events-none absolute left-1/2 bottom-[calc(100%+10px)] z-[80] w-72 max-w-[min(18rem,80vw)] -translate-x-1/2 rounded-md border border-emerald-400/40 bg-background/95 px-3 py-2 text-xs leading-relaxed text-foreground opacity-0 shadow-[0_0_22px_-6px_hsl(0_84%_55%/0.85)] backdrop-blur transition-all duration-150 group-hover/hoverinfo:translate-y-[-2px] group-hover/hoverinfo:opacity-100 group-focus-within/hoverinfo:translate-y-[-2px] group-focus-within/hoverinfo:opacity-100">
+        {content}
+        <span className="absolute left-1/2 top-full h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 border-b border-r border-emerald-400/40 bg-background/95" />
+      </span>
+    </span>
+  );
+}
+
 function LeadDetail({
-  lead, onClose, onUpdate, onDelete, onGenerate, onGenerateSite, generating,
+  lead, onClose, onUpdate, onDelete, onGenerate, generating,
 }: {
   lead: Lead | null; onClose: () => void;
   onUpdate: (id: string, patch: Partial<Lead>) => void;
   onDelete: (id: string) => void;
   onGenerate: (lead: Lead, channel: "whatsapp" | "email") => void;
-  onGenerateSite: (lead: Lead) => void;
   generating: boolean;
 }) {
   const [notes, setNotes] = useState("");
@@ -752,9 +684,6 @@ function LeadDetail({
             {lead.google_url && <Button size="sm" variant="outline" asChild><a href={lead.google_url} target="_blank" rel="noreferrer"><MapIcon className="h-3.5 w-3.5 mr-1" /> Google</a></Button>}
             {lead.instagram && <Button size="sm" variant="outline" asChild><a href={lead.instagram} target="_blank" rel="noreferrer"><Instagram className="h-3.5 w-3.5 mr-1" /> Instagram</a></Button>}
             {lead.facebook && <Button size="sm" variant="outline" asChild><a href={lead.facebook} target="_blank" rel="noreferrer"><Facebook className="h-3.5 w-3.5 mr-1" /> Facebook</a></Button>}
-            <Button size="sm" variant="default" onClick={() => onGenerateSite(lead)}>
-              <FileCode2 className="h-3.5 w-3.5 mr-1" /> Gerar Site
-            </Button>
             <LandingPromptButton lead={lead} variant="full" />
           </div>
 

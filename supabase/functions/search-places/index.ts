@@ -2,166 +2,9 @@
 // Returns only verified public data. No mock, no invented fields.
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { extractContactsFromMarkdown } from "../_shared/lead-web.ts";
-import { extractWikimediaFileName, extractOgImage, extractMainImage, extractLogoUrl, pickLeadImage } from "../_shared/lead-images.ts";
-import { TtlCache, cacheKey } from "../_shared/ttl-cache.ts";
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const GOOGLE_KEY_LOADED = typeof GOOGLE_KEY === "string" && GOOGLE_KEY.trim().length > 0;
-
-// Helper de resposta JSON com CORS (usado no modo enrich).
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}
-
-// ─── Alvo de cobertura (não é meta artificial: é quando paramos de descobrir) ─
-const DISCOVERY_TARGET = Math.min(80, Math.max(10, Number(Deno.env.get("DISCOVERY_TARGET") ?? 28)));
-const MAX_DISCOVERY_QUERIES = Math.min(12, Math.max(2, Number(Deno.env.get("MAX_DISCOVERY_QUERIES") ?? 6)));
-const MAX_DISCOVERY_RESULTS = Math.min(150, Math.max(10, Number(Deno.env.get("MAX_DISCOVERY_RESULTS") ?? 60)));
-// Descoberta 100% gratuita: Google Places está DESACOPLADO do pipeline.
-// O código do Google continua definido (não apagado), mas não é executado —
-// o Prospector funciona sem GOOGLE_API_KEY. Não há fallback Google↔OSM.
-const USE_GOOGLE_PLACES = false;
-
-// ─── Pipeline de imagens 100% gratuito (cache + fetch controlado) ──────────
-const SITE_HTML_CACHE = new TtlCache<string | null>(6 * 60 * 60 * 1000, 200);
-const WIKIDATA_CACHE = new TtlCache<string | null>(24 * 60 * 60 * 1000, 500);
-const LEAD_IMAGE_CACHE = new TtlCache<{ url: string; source: string } | null>(12 * 60 * 60 * 1000, 1500);
-const IMAGE_FETCH_TIMEOUT_MS = 6000;
-const IMAGE_MAX_HTML = 400_000;
-const IMAGE_BUDGET = 25;
-const IMAGE_USER_AGENT = "TiagoProspectorBot/1.0 (+https://tiagoprospector.lovable.app)";
-
-async function fetchSiteHtml(url: string): Promise<string | null> {
-  const key = cacheKey(url);
-  if (SITE_HTML_CACHE.has(key)) return SITE_HTML_CACHE.get(key) ?? null;
-  let result: string | null = null;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), IMAGE_FETCH_TIMEOUT_MS);
-    const res = await fetch(url, { redirect: "follow", signal: ctrl.signal, headers: { "User-Agent": IMAGE_USER_AGENT } });
-    clearTimeout(timer);
-    const ct = res.headers.get("content-type") ?? "";
-    if (res.ok && /text\/html|application\/xhtml/i.test(ct)) {
-      result = (await res.text()).slice(0, IMAGE_MAX_HTML);
-    }
-  } catch {
-    result = null;
-  }
-  SITE_HTML_CACHE.set(key, result);
-  return result;
-}
-
-async function resolveWikidataImageName(qid: string): Promise<string | null> {
-  const key = cacheKey("wikidata", qid);
-  if (WIKIDATA_CACHE.has(key)) return WIKIDATA_CACHE.get(key) ?? null;
-  let fileName: string | null = null;
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), IMAGE_FETCH_TIMEOUT_MS);
-    const url = `https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${encodeURIComponent(qid)}&property=P18&format=json`;
-    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": IMAGE_USER_AGENT } });
-    clearTimeout(timer);
-    if (res.ok) {
-      const data = await res.json().catch(() => null);
-      const value = (data as { claims?: { P18?: Array<{ mainsnak?: { datavalue?: { value?: unknown } } }> } })
-        ?.claims?.P18?.[0]?.mainsnak?.datavalue?.value;
-      if (typeof value === "string") fileName = value;
-    }
-  } catch {
-    fileName = null;
-  }
-  WIKIDATA_CACHE.set(key, fileName);
-  return fileName;
-}
-const ENRICH_BUDGET = Math.min(20, Math.max(2, Number(Deno.env.get("ENRICH_BUDGET") ?? 10)));
-const PER_LEAD_QUERY_LIMIT = 6;
-
-// Hosts de portais/notícias/conteúdo — nunca são a empresa em si.
-const CONTENT_HOST_HINT = /(g1\.globo|uol|terra\.com|folha|estadao|estad[aã]o|c[oó]rreio|gazeta|cidadeverde|guia|portal|not[ií]cias|blogspot|wordpress\.com|medium|jusbrasil|escavador|jurisprudencia|direito)/;
-const DIRECTORY_HOST_HINT = /(diretorio|directory|guia|apontador|list|listing|yellowpages|finder|cat[aá]logo|ranking|imoveis)/;
-
-const LIST_ARTICLE_HINT = /^\s*(os?\s+)?(melhores|top|lista|listagem|ranking|guia|quanto custa|como escolher|saiba|onde encontrar)\b/i;
-const DIVIDER_HINT = /[|•·\t]/;
-
-// Nome de empresa plausível: ≥2 palavras, não é lista/artigo nem página institucional.
-function looksLikeBusinessTitle(title: string, segNorm: string): boolean {
-  const t = normalizeText(title);
-  if (!t) return false;
-  const words = title.trim().split(/\s+/).filter(Boolean);
-  if (words.length < 2) return false;
-  if (LIST_ARTICLE_HINT.test(title.trim())) return false;
-  if (DIVIDER_HINT.test(title) && /(equipe|blog|artig|not[ií]cia|contato|sobre|servi[çc]os|resultados)/i.test(title)) return false;
-  // Ou o título carrega um termo do segmento, ou parece nome próprio de empresa.
-  if (segNorm && !t.includes(segNorm)) {
-    const strong = words.filter((w) => w.length >= 5 && !/^(para|com|sobre|desde|em|a|o|e)$/i.test(w));
-    const looksName = strong.length >= 1 && /[A-ZÀ-Ú]/.test(title.replace(segNorm, ""));
-    if (!looksName) return false;
-  }
-  return true;
-}
-
-// Chaves de dedupe por lead (usadas no merge web/recovery dentro dos dados
-// estruturados — prioridade: phone, host, nome+rua, nome+cidade).
-function leadMergeKeys(l: PublicLead): string[] {
-  const keys: string[] = [];
-  const digits = (raw: string | null | undefined) => (raw ?? "").replace(/\D+/g, "").slice(-11);
-  const phone = digits(l.phone) || digits(l.whatsapp);
-  if (phone && phone.length >= 10) keys.push(`phone:${phone}`);
-  if (l.website) {
-    const h = hostOf(l.website);
-    if (h) keys.push(`host:${h.replace(/^www\./, "")}`);
-  }
-  const name = normalizeText(l.name ?? "");
-  const city = normalizeText(l.city ?? "");
-  if (name && name.length >= 5) keys.push(`nc:${name}|${city}`);
-  return keys;
-}
-
-// Merge de candidatos (web/recovery) dentro dos leads estruturados.
-// Prioridade: base (OSM/structured) vence; incoming entra só se não duplicar.
-function mergeCandidateLeads(base: PublicLead[], incoming: PublicLead[]): { leads: PublicLead[]; added: number; duplicates: number } {
-  const seen = new Set<string>();
-  for (const l of base) for (const k of leadMergeKeys(l)) seen.add(k);
-  const leads = [...base];
-  let added = 0;
-  let duplicates = 0;
-  for (const l of incoming) {
-    const keys = leadMergeKeys(l);
-    const hit = keys.find((k) => seen.has(k));
-    if (hit) {
-      duplicates += 1;
-      continue;
-    }
-    for (const k of keys) seen.add(k);
-    leads.push(l);
-    added += 1;
-  }
-  return { leads, added, duplicates };
-}
-
-// Wrapper que tenta com includedType e, se retornar poucos resultados, tenta sem.
-async function searchPlacesNewWithFallback(
-  textQuery: string,
-  maxPages: number,
-  options?: { locationBias?: { lat: number; lon: number; radius: number }; locationRestriction?: GeoBounds | null; includedType?: string | null; ctx?: SearchCtx },
-): Promise<{ places: PlaceRaw[]; error?: SearchError; fallbackUsed?: boolean; primaryCount?: number }> {
-  const result = await searchPlacesNew(textQuery, maxPages, options);
-  // RECALL (genérico): se o tipo restrito sub-entrega (páginas curtas), retenta SEM
-  // includedType para não limitar a descoberta a poucas empresas. Threshold amplo
-  // (padrão de ~1 página cheia) evita perder resultados por tipo estrito.
-  const lowYield = result.places.length <= Math.max(12, maxPages * 12);
-  if (lowYield && options?.includedType) {
-    const fallbackResult = await searchPlacesNew(textQuery, maxPages, { ...options, includedType: null });
-    if (fallbackResult.places.length > result.places.length) {
-      return { places: fallbackResult.places, error: fallbackResult.error, fallbackUsed: true, primaryCount: result.places.length };
-    }
-  }
-  return { ...result, fallbackUsed: false, primaryCount: result.places.length };
-}
 
 const SOURCE_LABELS = {
   googleNew: "google_places_new",
@@ -183,7 +26,6 @@ const FIELD_MASK = [
   "places.internationalPhoneNumber",
   "places.websiteUri",
   "places.googleMapsUri",
-  "places.photos",
   "places.rating",
   "places.userRatingCount",
   "places.businessStatus",
@@ -203,7 +45,6 @@ type PlaceRaw = {
   internationalPhoneNumber?: string;
   websiteUri?: string;
   googleMapsUri?: string;
-  photos?: Array<{ name?: string }>;
   rating?: number;
   userRatingCount?: number;
   businessStatus?: string;
@@ -242,9 +83,6 @@ type PublicLead = {
   whatsapp: string | null;
   website: string | null;
   google_url: string | null;
-  photo_name?: string | null;
-  photo_url?: string | null;
-  photo_source?: string | null;
   instagram: string | null;
   facebook: string | null;
   rating: number | null;
@@ -252,7 +90,6 @@ type PublicLead = {
   has_website: boolean;
   score: number;
   score_reasons: string[];
-  commercial_score?: number;
   opening_hours: string[] | null;
   latitude: number | null;
   longitude: number | null;
@@ -282,17 +119,17 @@ type GoogleErrorCode =
 type SearchError = { status: number; text: string; endpoint: string; durationMs?: number };
 
 const OSM_SEGMENT_FILTERS: Array<{ match: string[]; filters: OsmTagFilter[] }> = [
-  { match: ["dentista", "dentistas", "odontologia", "odontologico", "odontológica", "odontologica"], filters: [{ key: "amenity", value: "dentist" }, { key: "healthcare", value: "dentist" }, { key: "office", value: "dentist" }, { key: "name", regex: "dentist|odontolog|odontológica|odontologica|consultorio odontologico|consultório odontológico|clinica odontologica|clínica odontológica" }] },
+  { match: ["dentista", "dentistas", "odontologia", "odontologico", "odontológica", "odontologica"], filters: [{ key: "amenity", value: "dentist" }, { key: "healthcare", value: "dentist" }] },
   { match: ["medico", "médico", "medicos", "médicos", "clinica", "clínica", "clinicas", "clínicas"], filters: [{ key: "amenity", value: "clinic" }, { key: "healthcare", value: "clinic" }, { key: "healthcare", value: "doctor" }] },
-  { match: ["advogado", "advogados", "advocacia"], filters: [{ key: "office", value: "lawyer" }, { key: "amenity", value: "lawyer" }] },
-  { match: ["contador", "contadores", "contabilidade"], filters: [{ key: "office", value: "accountant" }, { key: "name", regex: "contabil|contador" }] },
+  { match: ["advogado", "advogados", "advocacia"], filters: [{ key: "office", value: "lawyer" }] },
+  { match: ["contador", "contadores", "contabilidade"], filters: [{ key: "office", value: "accountant" }] },
   { match: ["imobiliaria", "imobiliária", "imobiliarias", "imobiliárias"], filters: [{ key: "office", value: "estate_agent" }, { key: "shop", value: "estate_agent" }] },
   { match: ["restaurante", "restaurantes"], filters: [{ key: "amenity", value: "restaurant" }, { key: "amenity", value: "food_court" }] },
   { match: ["oficina", "oficinas", "mecanica", "mecânica"], filters: [{ key: "shop", value: "car_repair" }, { key: "craft", value: "mechanic" }, { key: "shop", value: "tyres" }, { key: "shop", value: "motorcycle_repair" }] },
   { match: ["academia", "academias", "fitness"], filters: [{ key: "leisure", value: "fitness_centre" }, { key: "amenity", value: "gym" }] },
   { match: ["estetica", "estética", "beleza"], filters: [{ key: "shop", value: "beauty" }, { key: "beauty", regex: ".+" }] },
-  { match: ["arquiteto", "arquitetos", "arquitetura"], filters: [{ key: "office", value: "architect" }, { key: "name", regex: "arquitet" }] },
-  { match: ["psicologo", "psicólogo", "psicologos", "psicólogos", "psicologia"], filters: [{ key: "healthcare", value: "psychotherapist" }, { key: "office", value: "therapist" }, { key: "name", regex: "psicolog" }] },
+  { match: ["arquiteto", "arquitetos", "arquitetura"], filters: [{ key: "office", value: "architect" }] },
+  { match: ["psicologo", "psicólogo", "psicologos", "psicólogos", "psicologia"], filters: [{ key: "healthcare", value: "psychotherapist" }, { key: "office", value: "therapist" }] },
   { match: ["veterinario", "veterinário", "veterinarios", "veterinários"], filters: [{ key: "amenity", value: "veterinary" }, { key: "healthcare", value: "veterinary" }] },
   { match: ["salao", "salão", "saloes", "salões", "cabeleireiro"], filters: [{ key: "shop", value: "hairdresser" }, { key: "shop", value: "beauty" }] },
   { match: ["escola", "escolas"], filters: [{ key: "amenity", value: "school" }] },
@@ -327,7 +164,7 @@ const OSM_SEGMENT_FILTERS: Array<{ match: string[]; filters: OsmTagFilter[] }> =
 const SEGMENT_SYNONYMS: Array<{ match: string[]; synonyms: string[] }> = [
   { match: ["dentista", "odontologia", "odontológica", "odontologica"], synonyms: ["dentista", "odontologia", "clínica odontológica", "consultório odontológico"] },
   { match: ["medico", "médico", "clinica medica", "clínica médica"], synonyms: ["clínica médica", "consultório médico", "médico", "clínica geral"] },
-  { match: ["advogado", "advocacia"], synonyms: ["advogado", "escritório de advocacia", "advocacia", "advocacia em", "escritório jurídico", "advogados"] },
+  { match: ["advogado", "advocacia"], synonyms: ["advogado", "escritório de advocacia", "advocacia"] },
   { match: ["contador", "contabilidade"], synonyms: ["contador", "escritório de contabilidade", "contabilidade"] },
   { match: ["imobiliaria", "imobiliária"], synonyms: ["imobiliária", "corretor de imóveis", "imóveis"] },
   { match: ["mecanica", "mecânica", "oficina"], synonyms: ["mecânica", "oficina mecânica", "auto center", "auto elétrica"] },
@@ -387,7 +224,6 @@ const GOOGLE_INCLUDED_TYPE: Array<{ match: string[]; types: string[] }> = [
   { match: ["distribuidora", "distribuidor", "fornecedor"], types: ["wholesaler", "store"] },
   { match: ["otica", "ótica"], types: ["optician"] },
   { match: ["cafeteria", "café", "cafe"], types: ["cafe"] },
-  { match: ["advogado", "advogados", "advocacia", "escritório de advocacia"], types: ["lawyer"] },
   { match: ["hotel", "pousada"], types: ["lodging"] },
   { match: ["mecanica", "mecânica", "oficina"], types: ["car_repair"] },
   { match: ["dentista", "odontologia"], types: ["dental_clinic"] },
@@ -407,38 +243,11 @@ function getGoogleIncludedTypes(segment: string): string[] {
 function expandSegment(segment: string): string[] {
   const normalized = normalizeText(segment);
   const match = SEGMENT_SYNONYMS.find((entry) => entry.match.some((m) => normalized.includes(normalizeText(m))));
-  const set = new Set<string>([segment]);
-  if (match) for (const s of match.synonyms) set.add(s);
-  // Odontologia (5.33.1): cobertura maior com variações semanticamente
-  // equivalentes, sempre dentro da mesma cidade/UF (a query de busca carrega a
-  // cidade — não traz capital nem cidades vizinhas).
-  if (/odonto|dento|dentist|dentaria|denti[a]ria|clinica dentaria/.test(normalized)) {
-    for (const alias of ["dentista", "odontologia", "clinica odontologica", "consultorio odontologico", "clinica dentaria", "dentista particular", "especialista odontologico", "ortodontista", "dentista em "]) {
-      if (set.size < 10) set.add(alias);
-    }
+  if (match) {
+    const set = new Set<string>([segment, ...match.synonyms]);
+    return Array.from(set).slice(0, 8);
   }
-  // Expansão genérica (segmentos sem mapa de sinônimos): gera variações
-  // morfológicas simples (singular/plural) das palavras significativas, além do
-  // núcleo sem conectivos. As buscas seguem limitadas à cidade/UF alvo, então o
-  // risco de ruído é baixo — o ganho é recall em segmentos fora do catálogo.
-  if (!match) {
-    const STOP = new Set(["de", "da", "do", "das", "dos", "em", "e", "a", "o", "na", "no", "com", "para", "por", "um", "uma", "especializado", "especializada", "servico", "servico de", "atendimento"]);
-    const words = normalized.split(/\s+/).filter((w) => w.length >= 4 && !STOP.has(w));
-    if (words.length > 0) {
-      if (set.size < 10) set.add(words.join(" "));
-      for (const w of words) {
-        if (set.size >= 10) break;
-        if (/s$/.test(w) && w.length > 4) {
-          const singular = w.replace(/es$/, "").replace(/s$/, "");
-          if (singular.length >= 4) set.add(`${w} ou ${singular}`);
-        } else {
-          const plural = w.endsWith("s") ? w : `${w}s`;
-          if (plural.length >= 4 && set.size < 10) set.add(`${w} ou ${plural}`);
-        }
-      }
-    }
-  }
-  return Array.from(set).slice(0, 10);
+  return [segment];
 }
 
 function normalizeText(value: string): string {
@@ -481,18 +290,17 @@ function normalizePhone(intl?: string, national?: string): string | null {
   return raw;
 }
 
-// WhatsApp link: somente números móveis brasileiros.
-// Exige DDD + 9 dígitos (nono dígito obrigatório). Telefone fixo (8 dígitos)
-// NÃO é convertido em WhatsApp sem evidência — permanece apenas como phone.
-// Output é digits only, formatado como 55 + DDD(2) + 9 dígitos.
+// WhatsApp link: any valid Brazilian commercial phone (mobile or landline).
+// Output is digits only, formatted as 55 + DDD(2) + number(8 or 9).
+// Returns null when phone is missing or doesn't look like a real BR number.
 function inferWhatsapp(intl?: string, national?: string): string | null {
   const digits = (intl ?? national ?? "").replace(/\D/g, "");
   if (!digits) return null;
   // Already includes country code 55
-  let m = digits.match(/^55(\d{2})(9\d{8})$/);
+  let m = digits.match(/^55(\d{2})(\d{8,9})$/);
   if (m) return `55${m[1]}${m[2]}`;
-  // National format (no country code): DDD + 9 dígitos
-  m = digits.match(/^(\d{2})(9\d{8})$/);
+  // National format (no country code): DDD + 8/9 digits
+  m = digits.match(/^(\d{2})(\d{8,9})$/);
   if (m) return `55${m[1]}${m[2]}`;
   return null;
 }
@@ -704,14 +512,12 @@ function normalizeGoogleError(status: number, text: string, endpoint = "Google P
 //   • Cache de boundary Nominatim por cidade+UF na mesma execução.
 //   • Serialização (mutex) para Nominatim (política 1 req/s).
 // ────────────────────────────────────────────────────────────────
-type GeoBounds = { south: number; west: number; north: number; east: number };
-
 type SearchCtx = {
   google429: number;
   googleCircuitOpen: boolean;
   nominatim429: number;
   nominatimCircuitOpen: boolean;
-  boundaryCache: Map<string, { areaId: number | null; lat: number | null; lon: number | null; bounds?: GeoBounds | null; error?: string }>;
+  boundaryCache: Map<string, { areaId: number | null; lat: number | null; lon: number | null; error?: string }>;
   nominatimGate: Promise<unknown>;
   sourcesFailed: string[];
 };
@@ -754,7 +560,6 @@ type FetchRetryOpts = {
   onRateLimit?: () => void;
   abortIfRateLimited?: () => boolean;
   respectRetryAfter?: boolean;
-  timeoutMs?: number;
 };
 
 async function fetchWithRetry(
@@ -773,7 +578,7 @@ async function fetchWithRetry(
       throw new Error("CIRCUIT_OPEN");
     }
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 15000);
+    const timeout = setTimeout(() => ctrl.abort(), 15000);
     try {
       const res = await fetch(url, { ...init, signal: ctrl.signal });
       if (res.status === 429 || res.status >= 500) {
@@ -865,14 +670,13 @@ async function fetchLegacyPlaceDetails(p: LegacyTextSearchResult): Promise<Legac
 async function searchPlacesNew(
   textQuery: string,
   maxPages: number,
-  options?: { locationBias?: { lat: number; lon: number; radius: number }; locationRestriction?: GeoBounds | null; includedType?: string | null; ctx?: SearchCtx },
+  options?: { locationBias?: { lat: number; lon: number; radius: number }; includedType?: string | null; ctx?: SearchCtx },
 ): Promise<{ places: PlaceRaw[]; error?: SearchError }> {
   const ctx = options?.ctx;
 
   const allPlaces: PlaceRaw[] = [];
   let pageToken: string | undefined;
   const locationBias = options?.locationBias;
-  const locationRestriction = options?.locationRestriction;
   const includedType = options?.includedType ?? null;
 
   for (let page = 0; page < maxPages; page++) {
@@ -885,14 +689,7 @@ async function searchPlacesNew(
     };
     if (pageToken) payload.pageToken = pageToken;
     if (includedType) payload.includedType = includedType;
-    if (locationRestriction) {
-      payload.locationRestriction = {
-        rectangle: {
-          low: { latitude: locationRestriction.south, longitude: locationRestriction.west },
-          high: { latitude: locationRestriction.north, longitude: locationRestriction.east },
-        },
-      };
-    } else if (locationBias) {
+    if (locationBias) {
       payload.locationBias = {
         circle: {
           center: { latitude: locationBias.lat, longitude: locationBias.lon },
@@ -1041,10 +838,9 @@ async function searchPlacesLegacy(textQuery: string, maxPages: number): Promise<
 
 function mapPlacesNewToLeads(unique: PlaceRaw[], city: string, state: string): PublicLead[] {
   const cityNorm = city.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const stateNorm = state.trim().toUpperCase();
   return unique
     .filter((p) => !p.businessStatus || p.businessStatus === "OPERATIONAL")
-    .map((p): PublicLead | null => {
+    .map((p) => {
       const phone = normalizePhone(p.internationalPhoneNumber, p.nationalPhoneNumber);
       const whatsapp = inferWhatsapp(p.internationalPhoneNumber, p.nationalPhoneNumber);
       const site = p.websiteUri ?? null;
@@ -1054,10 +850,6 @@ function mapPlacesNewToLeads(unique: PlaceRaw[], city: string, state: string): P
       const placeStateShort = p.addressComponents?.find((a) => a.types?.includes("administrative_area_level_1"))?.shortText ?? null;
       const placeCityNorm = placeCity.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       const cityMatches = !placeCity || placeCityNorm.includes(cityNorm) || cityNorm.includes(placeCityNorm);
-      // Filtro rígido de localização: descarta empresas comprovadamente de outra
-      // cidade ou de outro estado. Só mantém quando a cidade não é determinável.
-      const stateMatches = !placeStateShort || placeStateShort.toUpperCase() === stateNorm;
-      if ((placeCity && !cityMatches) || !stateMatches) return null;
       const { score, reasons } = scoreOpportunity(p, hasSite);
 
       return {
@@ -1071,7 +863,6 @@ function mapPlacesNewToLeads(unique: PlaceRaw[], city: string, state: string): P
         whatsapp,
         website: site,
         google_url: p.googleMapsUri ?? null,
-        photo_name: p.photos?.[0]?.name ?? null,
         instagram: null,
         facebook: null,
         rating: p.rating ?? null,
@@ -1086,16 +877,14 @@ function mapPlacesNewToLeads(unique: PlaceRaw[], city: string, state: string): P
         city_matches: cityMatches,
       };
     })
-    .filter((l): l is PublicLead => l !== null)
     .sort((a, b) => Number(b.city_matches) - Number(a.city_matches));
 }
 
 function mapLegacyPlacesToLeads(unique: LegacyDetailsResult[], city: string, state: string): PublicLead[] {
   const cityNorm = city.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-  const stateNorm = state.trim().toUpperCase();
   return unique
     .filter((p) => !p.business_status || p.business_status === "OPERATIONAL")
-    .map((p): PublicLead | null => {
+    .map((p) => {
       const phone = normalizePhone(p.international_phone_number, p.formatted_phone_number);
       const whatsapp = inferWhatsapp(p.international_phone_number, p.formatted_phone_number);
       const site = p.website ?? null;
@@ -1104,9 +893,6 @@ function mapLegacyPlacesToLeads(unique: LegacyDetailsResult[], city: string, sta
       const placeStateShort = p.address_components?.find((a) => a.types?.includes("administrative_area_level_1"))?.short_name ?? null;
       const placeCityNorm = placeCity.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
       const cityMatches = !placeCity || placeCityNorm.includes(cityNorm) || cityNorm.includes(placeCityNorm);
-      // Filtro rígido de localização (mesma regra do Places New).
-      const stateMatches = !placeStateShort || placeStateShort.toUpperCase() === stateNorm;
-      if ((placeCity && !cityMatches) || !stateMatches) return null;
       const proxyPlace: PlaceRaw = { id: p.place_id, userRatingCount: p.user_ratings_total, rating: p.rating };
       const { score, reasons } = scoreOpportunity(proxyPlace, !!site);
 
@@ -1121,7 +907,6 @@ function mapLegacyPlacesToLeads(unique: LegacyDetailsResult[], city: string, sta
         whatsapp,
         website: site,
         google_url: p.url ?? `https://www.google.com/maps/place/?q=place_id:${p.place_id}`,
-        photo_name: null,
         instagram: null,
         facebook: null,
         rating: p.rating ?? null,
@@ -1136,7 +921,6 @@ function mapLegacyPlacesToLeads(unique: LegacyDetailsResult[], city: string, sta
         city_matches: cityMatches,
       };
     })
-    .filter((l): l is PublicLead => l !== null)
     .sort((a, b) => Number(b.city_matches) - Number(a.city_matches));
 }
 
@@ -1153,7 +937,6 @@ type NominatimItem = {
   address?: Record<string, string>;
   extratags?: Record<string, string>;
   namedetails?: Record<string, string>;
-  boundingbox?: string[];
 };
 
 type OverpassElement = {
@@ -1272,14 +1055,14 @@ async function searchNominatim(segment: string, city: string, state: string, ctx
 }
 
 
-async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx): Promise<{ areaId: number | null; lat: number | null; lon: number | null; bounds?: GeoBounds | null; error?: string }> {
+async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx): Promise<{ areaId: number | null; lat: number | null; lon: number | null; error?: string }> {
   // Cache por-request — evita 2 lookups idênticos para a mesma cidade+UF.
   const cacheKey = `${city.toLowerCase()}|${state.toUpperCase()}`;
   if (ctx?.boundaryCache.has(cacheKey)) {
     return ctx.boundaryCache.get(cacheKey)!;
   }
   if (ctx?.nominatimCircuitOpen) {
-    const val = { areaId: null, lat: null, lon: null, bounds: null as GeoBounds | null, error: "Nominatim circuit open" };
+    const val = { areaId: null, lat: null, lon: null, error: "Nominatim circuit open" };
     ctx.boundaryCache.set(cacheKey, val);
     return val;
   }
@@ -1292,7 +1075,6 @@ async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx
     url.searchParams.set("limit", "1");
     url.searchParams.set("countrycodes", "br");
     url.searchParams.set("accept-language", "pt-BR");
-    url.searchParams.set("polygon_geojson", "0");
 
     const doFetch = () => fetchWithRetry(url.toString(), {
       method: "GET",
@@ -1304,7 +1086,7 @@ async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx
     const res = ctx ? await runSerialized(ctx, NOMINATIM_MIN_INTERVAL_MS, doFetch) : await doFetch();
 
     if (!res.ok) {
-      const val = { areaId: null, lat: null, lon: null, bounds: null as GeoBounds | null, error: `Nominatim boundary HTTP ${res.status}` };
+      const val = { areaId: null, lat: null, lon: null, error: `Nominatim boundary HTTP ${res.status}` };
       if (ctx) ctx.boundaryCache.set(cacheKey, val);
       return val;
     }
@@ -1316,27 +1098,14 @@ async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx
     const lat = item?.lat ? Number(item.lat) : null;
     const lon = item?.lon ? Number(item.lon) : null;
 
-    // Nominatim boundingbox = [south, north, west, east] (strings).
-    let bounds: GeoBounds | null = null;
-    const bbox = item?.boundingbox;
-    if (Array.isArray(bbox) && bbox.length >= 4) {
-      const south = Number(bbox[0]);
-      const north = Number(bbox[1]);
-      const west = Number(bbox[2]);
-      const east = Number(bbox[3]);
-      if ([south, north, west, east].every((v) => Number.isFinite(v) && Math.abs(v) <= 180)) {
-        bounds = { south, west, north, east };
-      }
-    }
-
     // Overpass area IDs: relation + 3600000000, way + 2400000000.
     const areaId = osmId && osmType === "relation" ? 3600000000 + osmId : osmId && osmType === "way" ? 2400000000 + osmId : null;
-    const val = { areaId, lat: Number.isFinite(lat) ? lat : null, lon: Number.isFinite(lon) ? lon : null, bounds };
+    const val = { areaId, lat: Number.isFinite(lat) ? lat : null, lon: Number.isFinite(lon) ? lon : null };
     if (ctx) ctx.boundaryCache.set(cacheKey, val);
     return val;
   } catch (e) {
     console.error("[search-places] Nominatim boundary fatal", e);
-    const val = { areaId: null, lat: null, lon: null, bounds: null as GeoBounds | null, error: e instanceof Error ? e.message : "boundary_failed" };
+    const val = { areaId: null, lat: null, lon: null, error: e instanceof Error ? e.message : "boundary_failed" };
     if (ctx) ctx.boundaryCache.set(cacheKey, val);
     return val;
   }
@@ -1352,94 +1121,10 @@ type OverpassSearchResult = {
 };
 
 const OVERPASS_ENDPOINTS = [
-  "https://overpass.kumi.systems/api/interpreter",
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
   "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
   "https://lz4.overpass-api.de/api/interpreter",
 ];
-
-// Cache de consultas Overpass idênticas (evita repetir a mesma query).
-const OVERPASS_CACHE = new TtlCache<{ elements: OverpassElement[]; endpointUsed: string }>(10 * 60 * 1000, 120);
-
-// Executa UM lote de selectors no Overpass, tentando os endpoints em ordem.
-// Timeout do servidor e do cliente são parametrizados para que selectors
-// pesados (ex.: regex de `name` sobre cidade grande) usem limites curtos e
-// não bloqueiem os demais lotes.
-async function runOverpassBatch(
-  selectors: string[],
-  areaHeader: string,
-  serverTimeoutSec: number,
-  clientTimeoutMs: number,
-): Promise<{ elements: OverpassElement[]; endpointUsed?: string; query: string; status: number; error?: string }> {
-  const query = `
-    [out:json][timeout:${serverTimeoutSec}];
-    ${areaHeader}
-    (
-      ${selectors.join("\n")}
-    );
-    out center tags 500;
-  `.trim();
-
-  const cached = OVERPASS_CACHE.get(query);
-  if (cached) {
-    console.info("[search-places] Overpass cache hit", { elements: cached.elements.length, endpoint: cached.endpointUsed });
-    return { elements: cached.elements, endpointUsed: cached.endpointUsed, query, status: 200 };
-  }
-
-  let lastStatus = 0;
-  let endpointUsed: string | undefined;
-  let emptyFallback: { elements: OverpassElement[]; endpointUsed: string; status: number } | null = null;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    try {
-      // O mirror priorizado (kumi) é instável e às vezes fica pendurado por
-      // dezenas de segundos. Limita o tempo dele para ceder lugar aos demais.
-      const effectiveTimeout = /kumi/.test(endpoint)
-        ? Math.min(clientTimeoutMs, 15000)
-        : clientTimeoutMs;
-      const res = await fetchWithRetry(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-          "User-Agent": "TiagoProspector/1.0 (contato: tiagoprospector)",
-        },
-        body: new URLSearchParams({ data: query }).toString(),
-      }, { retries: 0, respectRetryAfter: true, timeoutMs: effectiveTimeout });
-
-      if (!res.ok) {
-        lastStatus = res.status;
-        await res.text().catch(() => "");
-        console.warn("[search-places] Overpass endpoint failed, trying next", { endpoint, status: res.status });
-        continue;
-      }
-      endpointUsed = endpoint;
-      const data = await res.json().catch(() => ({}));
-      const elements = Array.isArray(data.elements) ? data.elements : [];
-      console.info("[search-places] Overpass success", { endpoint, elements: elements.length });
-      if (elements.length === 0) {
-        // 200 mas sem dados (mirror com base desatualizada?): guarda como
-        // fallback e tenta o próximo endpoint — nunca aceitar "0" do primeiro.
-        if (!emptyFallback) emptyFallback = { elements, endpointUsed: endpoint, status: res.status };
-        continue;
-      }
-      OVERPASS_CACHE.set(query, { elements, endpointUsed: endpoint });
-      return { elements, endpointUsed: endpoint, query, status: res.status };
-    } catch (e) {
-      console.warn("[search-places] Overpass endpoint threw", { endpoint, error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-
-  if (emptyFallback) {
-    console.warn("[search-places] Overpass: todos os endpoints vazios; usando o primeiro", { endpoint: emptyFallback.endpointUsed });
-    return { elements: emptyFallback.elements, endpointUsed: emptyFallback.endpointUsed, query, status: emptyFallback.status };
-  }
-  console.error("[search-places] Overpass all endpoints failed", lastStatus);
-  return {
-    elements: [],
-    query,
-    status: lastStatus,
-    error: `Overpass indisponível (último status: ${lastStatus || "network"})`,
-  };
-}
 
 async function searchOverpass(segment: string, city: string, state: string, ctx?: SearchCtx): Promise<OverpassSearchResult> {
   try {
@@ -1458,6 +1143,21 @@ async function searchOverpass(segment: string, city: string, state: string, ctx?
     const hasBoundaryFromNominatim = !!(boundary.areaId || (boundary.lat && boundary.lon));
     const boundarySource = boundary.areaId ? "nominatim_area" : boundary.lat ? "nominatim_around" : "overpass_area_name";
 
+    // Usa `nwr` (node+way+relation shorthand) — reduz drasticamente o custo
+    // computacional em cidades grandes como São Paulo (evita 504 Gateway Timeout).
+    const selectors = filters.map((filter) => {
+      const tagSelector = filter.value
+        ? `["${escapeOverpassString(filter.key)}"="${escapeOverpassString(filter.value)}"]`
+        : `["${escapeOverpassString(filter.key)}"~"${escapeOverpassString(filter.regex ?? ".+")}",i]`;
+
+      if (boundary.lat && boundary.lon && !boundary.areaId) {
+        return `nwr${tagSelector}(around:25000,${boundary.lat},${boundary.lon});`;
+      }
+      return `nwr${tagSelector}(area.searchArea);`;
+    });
+
+    if (selectors.length === 0) return { elements: [], error: "Não foi possível montar a query Overpass" };
+
     // Cabeçalho: se temos areaId oficial do Nominatim, usa. Caso contrário,
     // resolve a área direto no Overpass consultando pelo nome da cidade
     // (admin_level=8 para municípios brasileiros).
@@ -1469,72 +1169,58 @@ async function searchOverpass(segment: string, city: string, state: string, ctx?
       areaHeader = `area["name"="${cityEscaped}"]["boundary"="administrative"]["admin_level"="8"]->.searchArea;`;
     }
 
-    // Usa `nwr` (node+way+relation shorthand) — reduz o custo computacional.
-    const buildSelectors = (fs: OsmTagFilter[]) =>
-      fs.map((filter) => {
-        const tagSelector = filter.value
-          ? `["${escapeOverpassString(filter.key)}"="${escapeOverpassString(filter.value)}"]`
-          : `["${escapeOverpassString(filter.key)}"~"${escapeOverpassString(filter.regex ?? ".+")}",i]`;
-
-        if (boundary.lat && boundary.lon && !boundary.areaId) {
-          return `nwr${tagSelector}(around:25000,${boundary.lat},${boundary.lon});`;
-        }
-        return `nwr${tagSelector}(area.searchArea);`;
-      });
-
-    // Lotes: filtros por TAG (leves) vão numa única query; cada filtro de
-    // regex de `name` (pesado em cidade grande) roda isolado, com timeout
-    // curto, para que um selector lento não derrube os demais.
-    const tagFilters = filters.filter((f) => !!f.value);
-    const regexFilters = filters.filter((f) => !f.value);
-    const batches: Array<{ label: string; selectors: string[]; serverTimeoutSec: number; clientTimeoutMs: number }> = [];
-    if (tagFilters.length > 0) {
-      batches.push({ label: "tags", selectors: buildSelectors(tagFilters), serverTimeoutSec: 25, clientTimeoutMs: 42000 });
-    }
-    for (const rf of regexFilters) {
-      batches.push({ label: `regex:${rf.key}`, selectors: buildSelectors([rf]), serverTimeoutSec: 12, clientTimeoutMs: 14000 });
-    }
-
-    if (batches.length === 0) return { elements: [], error: "Não foi possível montar a query Overpass" };
+    // Timeout de 60s: São Paulo/RJ têm grafos gigantes e travam com 25s.
+    const query = `
+      [out:json][timeout:60];
+      ${areaHeader}
+      (
+        ${selectors.join("\n")}
+      );
+      out center tags 100;
+    `.trim();
 
     console.info("[search-places] Overpass request", {
       boundarySource,
       nominatimAvailable: hasBoundaryFromNominatim,
-      tagSelectors: tagFilters.length,
-      regexSelectors: regexFilters.length,
-      batches: batches.length,
+      selectorCount: selectors.length,
+      timeoutSec: 60,
     });
 
-    const collected: OverpassElement[] = [];
-    const seenElem = new Set<string>();
-    let endpointUsed: string | undefined;
-    let lastQuery = "";
+    // Tenta múltiplos endpoints do Overpass. Se o primário retornar 504/5xx
+    // (Gateway Timeout — comum em cidades grandes), migra para mirror.
     let lastStatus = 0;
-    let lastError: string | undefined;
+    let lastText = "";
+    let endpointUsed: string | undefined;
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+      try {
+        const res = await fetchWithRetry(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "User-Agent": "LeadHunterBrasil/1.0 (lovable.app)",
+          },
+          body: new URLSearchParams({ data: query }).toString(),
+        }, { retries: 1, respectRetryAfter: true });
 
-    for (const batch of batches) {
-      const r = await runOverpassBatch(batch.selectors, areaHeader, batch.serverTimeoutSec, batch.clientTimeoutMs);
-      lastQuery = r.query;
-      lastStatus = r.status;
-      if (r.endpointUsed) endpointUsed = r.endpointUsed;
-      if (r.error && !r.endpointUsed) lastError = r.error;
-      for (const el of r.elements) {
-        const key = `${el.type}:${el.id}`;
-        if (seenElem.has(key)) continue;
-        seenElem.add(key);
-        collected.push(el);
+        if (!res.ok) {
+          const t = await res.text().catch(() => "");
+          lastStatus = res.status;
+          lastText = t;
+          console.warn("[search-places] Overpass endpoint failed, trying next", { endpoint, status: res.status });
+          continue;
+        }
+        endpointUsed = endpoint;
+        const data = await res.json().catch(() => ({}));
+        const elements = Array.isArray(data.elements) ? data.elements : [];
+        console.info("[search-places] Overpass success", { endpoint, elements: elements.length });
+        return { elements, query, boundarySource, endpointUsed };
+      } catch (e) {
+        console.warn("[search-places] Overpass endpoint threw", { endpoint, error: e instanceof Error ? e.message : String(e) });
       }
-      console.info("[search-places] Overpass batch done", {
-        label: batch.label,
-        elements: r.elements.length,
-        endpoint: r.endpointUsed,
-      });
     }
 
-    if (endpointUsed) {
-      return { elements: collected, query: lastQuery, boundarySource, endpointUsed };
-    }
-    return { elements: [], error: lastError ?? `Overpass indisponível (último status: ${lastStatus || "network"})`, query: lastQuery, boundarySource, endpointUsed };
+    console.error("[search-places] Overpass all endpoints failed", lastStatus, lastText.slice(0, 200));
+    return { elements: [], error: `Overpass indisponível (último status: ${lastStatus || "network"})`, query, boundarySource, endpointUsed };
   } catch (e) {
     console.error("[search-places] Overpass fatal", e);
     return { elements: [], error: e instanceof Error ? e.message : "overpass_failed" };
@@ -1595,12 +1281,12 @@ async function searchOverpassByName(
     }
 
     const query = `
-      [out:json][timeout:20];
+      [out:json][timeout:60];
       ${areaHeader}
       (
         ${selectors.join("\n")}
       );
-      out center tags 500;
+      out center tags 100;
     `.trim();
 
     console.info("[search-places] Overpass RECOVERY request", {
@@ -1613,15 +1299,14 @@ async function searchOverpassByName(
     let endpointUsed: string | undefined;
     for (const endpoint of OVERPASS_ENDPOINTS) {
       try {
-        const effectiveTimeout = /kumi/.test(endpoint) ? 14000 : 24000;
         const res = await fetchWithRetry(endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "User-Agent": "TiagoProspector/1.0 (contato: tiagoprospector)",
+            "User-Agent": "LeadHunterBrasil/1.0 (lovable.app)",
           },
           body: new URLSearchParams({ data: query }).toString(),
-        }, { retries: 0, respectRetryAfter: true, timeoutMs: effectiveTimeout });
+        }, { retries: 1, respectRetryAfter: true });
 
         if (!res.ok) { lastStatus = res.status; continue; }
         endpointUsed = endpoint;
@@ -1707,7 +1392,7 @@ function mapNominatimToLeads(items: NominatimItem[], city: string, state: string
     osmTagsById.set(extId, {
       class: it.class ?? "",
       type: it.type ?? "",
-      category: ((it as unknown as { category?: unknown }).category as string | undefined) ?? "",
+      category: (it.category as string | undefined) ?? "",
       name: name,
     });
   }
@@ -1722,16 +1407,6 @@ function mapOverpassToLeads(elements: OverpassElement[], city: string, state: st
     const tags = el.tags ?? {};
     const name = tags.name ?? tags["brand"] ?? tags["operator"] ?? "";
     if (!name || name.trim().length < 2) continue;
-
-    // Filtro geográfico rigoroso: se o elemento declara addr:city de outra
-    // cidade (fallback "around" sem área administrativa), não pode entrar.
-    const addrCity = tags["addr:city"];
-    if (addrCity) {
-      const normAddr = normalizeText(addrCity);
-      const normTarget = normalizeText(city);
-      const compatible = normAddr.includes(normTarget) || normTarget.includes(normAddr);
-      if (!compatible) continue;
-    }
 
     const extId = `osm:${el.type}:${el.id}`;
     if (seen.has(extId)) continue;
@@ -1894,11 +1569,26 @@ async function enrichLeadsWithInstagram(leads: PublicLead[]): Promise<void> {
 }
 
 // ============================================================
-// Website: fonte única = OSM
+// Website discovery + validation
 // ============================================================
-// O website do lead vem exclusivamente do OSM (website/contact:website/url).
-// Não há descoberta por Google/Tavily/DuckDuckGo nem adivinhação de domínio.
-// Sem website no OSM → website = null (o lead continua válido).
+// Goal: when Google Places returns no websiteUri, run a second pass that:
+//   1. Searches Google Places (New) again with name + city + state
+//   2. Falls back to a DuckDuckGo HTML query "<name> <city> site oficial"
+//   3. Validates candidate domains (blacklist directories/socials, fetch HTML,
+//      verify name/city/phone presence) and only accepts when confidence is
+//      high enough. Otherwise leaves website empty (never invents data).
+
+const NON_OFFICIAL_HOSTS = [
+  "facebook.com", "fb.com", "instagram.com", "linkedin.com", "twitter.com", "x.com",
+  "tiktok.com", "youtube.com", "youtu.be", "wa.me", "api.whatsapp.com", "whatsapp.com",
+  "goo.gl", "maps.google.com", "google.com", "google.com.br", "maps.app.goo.gl",
+  "yelp.com", "tripadvisor.com", "tripadvisor.com.br", "ifood.com.br", "rappi.com.br",
+  "olx.com.br", "mercadolivre.com.br", "vivareal.com.br", "zapimoveis.com.br",
+  "doctoralia.com.br", "consultaremedios.com.br", "guiamais.com.br", "telelistas.net",
+  "apontador.com.br", "econodata.com.br", "cnpj.biz", "econoinfo.com.br",
+  "solucoesindustriais.com.br", "soluctionia.com.br", "linktr.ee", "lnk.bio",
+  "beacons.ai", "bio.link", "campsite.bio", "carrd.co",
+];
 
 function hostOf(url: string): string {
   try {
@@ -1907,40 +1597,222 @@ function hostOf(url: string): string {
   } catch { return ""; }
 }
 
-// Detecta sites de baixa qualidade comercial: domínios grátis/placeholder,
-// portais de marketplace, agregadores ou páginas sem presença própria.
-// Um site "ruim" significa que o dono ainda não tem presença digital sólida
-// → melhor lead para venda de landing page/site.
-function isLowQualityWebsite(website: string | null): boolean {
-  if (!website) return true;
-  const host = hostOf(website);
-  if (!host) return true;
-  const FREE_HOSTS = [
-    "wixsite.com", "weebly.com", "webnode.com", "blogspot.com",
-    "wordpress.com", "godaddysites.com", "site.google.com", "linktr.ee",
-    "carrd.co", "meu.site", "canva.site", "instabio.cc", "bio.link",
-    "toca.com.br", "facil.ws",
-  ];
-  if (FREE_HOSTS.some((f) => host === f || host.endsWith(`.${f}`))) return true;
-  // Portais de diretório / marketplace — não são site próprio do negócio.
-  const DIRECTORY_HOSTS = [
-    "facebook.com", "instagram.com", "whatsapp.com", "wa.me", "youtube.com",
-    "linkedin.com", "google.com", "g.page", "mercadolivre.com",
-    "ifood.com", "foursquare.com", "yelp.com", "tripadvisor.com",
-  ];
-  if (DIRECTORY_HOSTS.some((d) => host === d || host.endsWith(`.${d}`))) return true;
-  // IP puro ou localhost também não é site real.
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host === "localhost") return true;
-  return false;
+function isOfficialCandidateHost(host: string): boolean {
+  if (!host || host.length < 4) return false;
+  return !NON_OFFICIAL_HOSTS.some((bad) => host === bad || host.endsWith(`.${bad}`));
 }
 
 function digits(v: string | null | undefined): string {
   return (v ?? "").replace(/\D/g, "");
 }
 
-// Descoberta de website via Google Places / Tavily / DuckDuckGo REMOVIDA.
-// O pipeline é 100% gratuito: usa apenas o website fornecido pelo OSM.
-// Sem website no OSM → website = null (nunca adivinha domínio nem usa buscador).
+type WebsiteValidation = {
+  url: string;
+  host: string;
+  confidence: number;
+  signals: string[];
+};
+
+async function validateCandidateWebsite(
+  candidate: string,
+  lead: PublicLead,
+  city: string,
+  state: string,
+  timeoutMs = 4000,
+): Promise<WebsiteValidation | null> {
+  const host = hostOf(candidate);
+  if (!isOfficialCandidateHost(host)) return null;
+
+  const nameNorm = normalizeName(lead.name);
+  const hostMain = normalizeName(host.split(".")[0] ?? "");
+  const signals: string[] = [];
+  let score = 0;
+
+  // Host vs name affinity
+  if (hostMain && nameNorm) {
+    if (hostMain === nameNorm) { score += 50; signals.push("host=name"); }
+    else if (hostMain.length >= 4 && (nameNorm.includes(hostMain) || hostMain.includes(nameNorm.slice(0, Math.max(4, Math.min(nameNorm.length, 10)))))) {
+      score += 30; signals.push("host~name");
+    }
+  }
+
+  // Fetch HTML for content-level signals
+  let html = "";
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const url = /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`;
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; LeadHunterBrasil/1.0)",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.5",
+      },
+      signal: ctrl.signal,
+    }).finally(() => clearTimeout(timer));
+    if (res.ok) {
+      const ct = res.headers.get("content-type") ?? "";
+      if (/text\/html|application\/xhtml/i.test(ct)) {
+        html = (await res.text()).slice(0, 400_000);
+      }
+    }
+  } catch { /* ignore */ }
+
+  if (html) {
+    const htmlNorm = html.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const nameTokens = nameNorm.match(/[a-z0-9]{4,}/g) ?? [];
+    const nameHits = nameTokens.filter((t) => htmlNorm.includes(t)).length;
+    if (nameHits >= 2) { score += 25; signals.push(`name-tokens:${nameHits}`); }
+    else if (nameHits === 1) { score += 10; signals.push("name-token:1"); }
+
+    const cityNorm = normalizeName(city);
+    if (cityNorm && htmlNorm.includes(cityNorm)) { score += 20; signals.push("city-in-html"); }
+
+    const stateNorm = state.toLowerCase();
+    if (stateNorm && (htmlNorm.includes(` ${stateNorm} `) || htmlNorm.includes(`-${stateNorm}`) || htmlNorm.includes(`/${stateNorm}`))) {
+      score += 5; signals.push("state-in-html");
+    }
+
+    const leadDigits = digits(lead.phone) || digits(lead.whatsapp);
+    if (leadDigits.length >= 8) {
+      const tail = leadDigits.slice(-8);
+      const htmlDigits = htmlNorm.replace(/\D/g, "");
+      if (htmlDigits.includes(tail)) { score += 30; signals.push("phone-match"); }
+    }
+  } else {
+    signals.push("html-unreachable");
+  }
+
+  return { url: /^https?:\/\//i.test(candidate) ? candidate : `https://${candidate}`, host, confidence: score, signals };
+}
+
+async function findWebsiteViaPlaces(lead: PublicLead, city: string, state: string): Promise<string[]> {
+  if (!GOOGLE_KEY_LOADED) return [];
+  const queries = [
+    `${lead.name} ${city} ${state}`,
+    `${lead.name} ${city}`,
+    `${lead.name} site oficial`,
+  ];
+  const found = new Set<string>();
+  for (const q of queries) {
+    try {
+      const res = await fetchWithRetry("https://places.googleapis.com/v1/places:searchText", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": GOOGLE_KEY ?? "",
+          "X-Goog-FieldMask": "places.id,places.displayName,places.websiteUri,places.formattedAddress",
+        },
+        body: JSON.stringify({ textQuery: q, languageCode: "pt-BR", regionCode: "BR", pageSize: 5 }),
+      }, 1);
+      if (!res.ok) continue;
+      const data = await res.json().catch(() => ({}));
+      for (const p of (data.places ?? []) as PlaceRaw[]) {
+        if (p.websiteUri) found.add(p.websiteUri);
+      }
+      if (found.size >= 4) break;
+    } catch { /* ignore */ }
+  }
+  return [...found];
+}
+
+async function findWebsiteViaDuckDuckGo(lead: PublicLead, city: string, state: string): Promise<string[]> {
+  try {
+    const q = encodeURIComponent(`${lead.name} ${city} ${state} site oficial`);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    const res = await fetch(`https://duckduckgo.com/html/?q=${q}`, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (compatible; LeadHunterBrasil/1.0)",
+        "Accept": "text/html",
+      },
+      signal: ctrl.signal,
+    }).finally(() => clearTimeout(timer));
+    if (!res.ok) return [];
+    const html = (await res.text()).slice(0, 200_000);
+    const out = new Set<string>();
+    // DDG html result links use uddg= redirect param
+    const re = /uddg=([^"&]+)/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      try {
+        const decoded = decodeURIComponent(m[1]);
+        const host = hostOf(decoded);
+        if (isOfficialCandidateHost(host)) out.add(decoded);
+      } catch { /* ignore */ }
+      if (out.size >= 6) break;
+    }
+    return [...out];
+  } catch { return []; }
+}
+
+async function discoverWebsiteForLead(lead: PublicLead, city: string, state: string): Promise<void> {
+  if (lead.website) return;
+  const t0 = Date.now();
+
+  const placeCandidates = await findWebsiteViaPlaces(lead, city, state);
+  const ddgCandidates = placeCandidates.length === 0 ? await findWebsiteViaDuckDuckGo(lead, city, state) : [];
+  const candidates = [...placeCandidates, ...ddgCandidates].filter((u) => isOfficialCandidateHost(hostOf(u)));
+
+  if (candidates.length === 0) {
+    console.info("[search-places][website-discovery] no candidate found", {
+      lead: lead.name, city, state, reason: "no_candidates",
+      placeCandidates: placeCandidates.length, ddgCandidates: ddgCandidates.length,
+      durationMs: Date.now() - t0,
+    });
+    return;
+  }
+
+  const validations = await Promise.all(candidates.slice(0, 6).map((c) => validateCandidateWebsite(c, lead, city, state)));
+  const valid = validations.filter((v): v is WebsiteValidation => !!v).sort((a, b) => b.confidence - a.confidence);
+
+  const best = valid[0];
+  // Accept only when single confident winner (>=40) OR clearly above runner-up
+  const accept = !!best && best.confidence >= 40 && (!valid[1] || best.confidence - valid[1].confidence >= 15);
+
+  console.info("[search-places][website-discovery] result", {
+    lead: lead.name, city, state,
+    candidates: candidates.length,
+    validated: valid.length,
+    best: best ? { host: best.host, confidence: best.confidence, signals: best.signals } : null,
+    runnerUp: valid[1] ? { host: valid[1].host, confidence: valid[1].confidence } : null,
+    accepted: accept,
+    reason: accept ? "accepted" : (best ? "low_confidence_or_tie" : "no_valid_candidate"),
+    durationMs: Date.now() - t0,
+  });
+
+  if (accept && best) {
+    lead.website = best.url;
+    lead.has_website = true;
+    lead.score_reasons = [...(lead.score_reasons ?? []), `Site descoberto via validação multi-critério (${best.confidence}pts)`];
+  }
+}
+
+async function runWebsiteDiscovery(leads: PublicLead[], city: string, state: string): Promise<void> {
+  const targets = leads.filter((l) => !l.website);
+  if (targets.length === 0) return;
+  // Limit to keep total runtime reasonable
+  const queue = targets.slice(0, 25);
+  const concurrency = 4;
+  let idx = 0;
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+    while (idx < queue.length) {
+      const my = idx++;
+      try { await discoverWebsiteForLead(queue[my], city, state); } catch { /* ignore */ }
+    }
+  });
+  await Promise.all(workers);
+  console.info("[search-places][website-discovery] summary", {
+    totalLeads: leads.length,
+    withoutSiteBefore: targets.length,
+    attempted: queue.length,
+    recovered: queue.filter((l) => !!l.website).length,
+    stillNoSite: queue.filter((l) => !l.website).length,
+  });
+}
 
 // ============================================================
 // Lead Score Inteligente (priorização interna)
@@ -1991,25 +1863,6 @@ function computeLeadPriority(lead: PublicLead, segment: string, module: "orvix" 
   let p = 0;
   // Segment tier
   p += segmentPriorityWeight(segment);
-  // Commercial qualification — ORDENA, nunca filtra.
-  // Leads sem site (com ou sem contato) são o foco para venda de sites.
-  // No módulo orvix o ranking mantém os sinais de reputação/alcance.
-  if (module !== "orvix") {
-    if (lead.commercial_score != null) {
-      p += lead.commercial_score;
-    } else {
-      // Fallback para leads sem commercial_score computado (ex.: chamadas fora
-      // do fluxo principal de busca). Espelha a mesma hierarquia.
-      const hasSite = !!lead.has_website;
-      if (!hasSite) {
-        if (lead.whatsapp) p += 40;
-        else if (lead.phone || lead.instagram) p += 30;
-        else p += 22;
-      } else if (isLowQualityWebsite(lead.website)) {
-        p += 10;
-      }
-    }
-  }
   // Activity / reputation signals
   if (lead.reviews_count >= 100) p += 18;
   else if (lead.reviews_count >= 50) p += 12;
@@ -2017,10 +1870,22 @@ function computeLeadPriority(lead: PublicLead, segment: string, module: "orvix" 
   else if (lead.reviews_count >= 5) p += 3;
   if ((lead.rating ?? 0) >= 4.5) p += 10;
   else if ((lead.rating ?? 0) >= 4.0) p += 6;
-  // Reachability — WhatsApp é o canal preferencial; quem tem sobe no ranking.
-  if (lead.whatsapp) p += 25;
-  else if (lead.phone) p += 4;
+  // Reachability
+  if (lead.whatsapp) p += 12;
+  if (lead.phone) p += 4;
   if (lead.instagram) p += 6;
+  // Website state — só é sinal de oportunidade em Landing Pages.
+  // No módulo Orvix (venda de ERP/PDV), presença/ausência de site NÃO deve
+  // enviesar a priorização — o que importa é segmento, ERP fit, avaliações,
+  // volume e presença comercial.
+  if (module !== "orvix") {
+    if (!lead.has_website) p += 25;
+    else {
+      const host = hostOf(lead.website ?? "");
+      const weak = ["wixsite.com", "weebly.com", "webnode.com", "blogspot.com", "wordpress.com", "godaddysites.com", "site.google.com", "linktr.ee"];
+      if (weak.some((w) => host.endsWith(w))) p += 15;
+    }
+  }
   // City match bonus
   if (lead.city_matches) p += 5;
   // Confidence
@@ -2035,6 +1900,7 @@ function sortLeadsByPriority(leads: PublicLead[], segment: string, module: "orvi
     .sort((a, b) => b.p - a.p || Number(b.l.city_matches) - Number(a.l.city_matches))
     .map((x) => x.l);
 }
+
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -2066,7 +1932,7 @@ Deno.serve(async (req) => {
       const admin = createClient(supaUrl, supaKey);
       const { data: rows, error: selErr } = await admin
         .from("leads")
-        .select("id,name,city,state,website,has_website,instagram,phone,whatsapp,address")
+        .select("id,name,city,state,website,has_website,instagram")
         .eq("search_id", searchId);
       if (selErr) {
         console.error("[search-places][enrich] select failed", selErr);
@@ -2075,109 +1941,81 @@ Deno.serve(async (req) => {
         });
       }
       const dbRows = Array.isArray(rows) ? rows : [];
-      // ── ENRICHMENT INCREMENTAL EM LOTES (5.38) ─────────────────────────
-      // - Lote limitado (batch) e retomável via enrich_offset;
-      // - Orçamento de tempo por chamada (para de forma limpa antes do limite);
-      // - Cada lead é persistido IMEDIATAMENTE (resultado parcial nunca se perde);
-      // - Leads já completos (site+contato) são pulados e contabilizados.
-      const batchSize = Math.min(25, Math.max(1, Number(body?.enrich_batch_size ?? Deno.env.get("ENRICH_BATCH_SIZE") ?? 10)));
-      const budgetMs = Math.min(45_000, Math.max(2_000, Number(body?.enrich_budget_ms ?? Deno.env.get("ENRICH_BUDGET_MS") ?? 20_000)));
-      const deadline = Date.now() + budgetMs;
-      const offset = Math.max(0, Number(body?.enrich_offset ?? 0));
-      const { count } = (await admin.from("leads").select("id", { count: "exact", head: true }).eq("search_id", searchId)) as unknown as { count: number };
-      const total = count ?? 0;
+      // Adapta rows -> PublicLead shape (apenas campos usados pelo discovery).
+      const pseudoLeads: PublicLead[] = dbRows.map((r: any) => ({
+        external_id: r.id,
+        name: r.name ?? "",
+        category: null,
+        address: null,
+        city: r.city ?? "",
+        state: r.state ?? "",
+        phone: null,
+        whatsapp: null,
+        website: r.website ?? null,
+        google_url: null,
+        instagram: r.instagram ?? null,
+        facebook: null,
+        rating: null,
+        reviews_count: 0,
+        has_website: !!r.has_website,
+        score: 1,
+        score_reasons: [],
+        opening_hours: null,
+        latitude: null,
+        longitude: null,
+      } as unknown as PublicLead));
 
-      const { data: batch, error: batchErr } = await admin
-        .from("leads")
-        .select("id,name,city,state,website,has_website,instagram,phone,whatsapp,address")
-        .eq("search_id", searchId)
-        .order("id", { ascending: true })
-        .range(offset, offset + batchSize - 1);
-      if (batchErr) return json({ error: batchErr.message }, 500);
+      // Descobre site por lead (usa a primeira cidade/estado encontrado).
+      const firstCity = pseudoLeads.find((l) => l.city)?.city ?? "";
+      const firstState = pseudoLeads.find((l) => l.state)?.state ?? "";
+      await runWebsiteDiscovery(pseudoLeads, firstCity, firstState);
+      await enrichLeadsWithInstagram(pseudoLeads);
 
-      const candidates: Array<Record<string, unknown>> = Array.isArray(batch) ? batch : [];
-      const stats = { processed: 0, websitesFound: 0, phonesFound: 0, whatsappFound: 0, instagramFound: 0, skippedAlreadyEnriched: 0, whatsappOfficial: 0 };
-      const firstCity = String(candidates[0]?.city ?? "");
-      const firstState = String(candidates[0]?.state ?? "");
+      // Persiste apenas os que mudaram website/has_website/instagram.
+      let updated = 0;
+      const updates = pseudoLeads
+        .map((l, i) => {
+          const src = dbRows[i];
+          const changed =
+            (l.website ?? null) !== (src.website ?? null) ||
+            (!!l.has_website) !== (!!src.has_website) ||
+            (l.instagram ?? null) !== (src.instagram ?? null);
+          if (!changed) return null;
+          return {
+            id: src.id,
+            website: l.website ?? null,
+            has_website: !!l.website,
+            instagram: l.instagram ?? null,
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
 
-      const enrichOne = async (r: Record<string, unknown>) => {
-        const lead: PublicLead = {
-          external_id: String(r.id),
-          name: String(r.name ?? ""),
-          category: null,
-          address: (r.address as string | null) ?? null,
-          city: String(r.city ?? ""),
-          state: String(r.state ?? ""),
-          phone: (r.phone as string | null) ?? null,
-          whatsapp: (r.whatsapp as string | null) ?? null,
-          website: (r.website as string | null) ?? null,
-          google_url: null,
-          instagram: (r.instagram as string | null) ?? null,
-          facebook: null,
-          rating: null,
-          reviews_count: 0,
-          has_website: !!r.has_website,
-          score: 1,
-          score_reasons: [],
-          opening_hours: null,
-          latitude: null,
-          longitude: null,
-        } as unknown as PublicLead;
-        if (lead.website && (lead.whatsapp || lead.phone)) { stats.skippedAlreadyEnriched++; return; }
-        // Enriquecimento 100% gratuito: somente o PRÓPRIO domínio do lead.
-        // Sem site → permanece null. Nunca usa buscador/API paga.
-        if (lead.website && (!lead.whatsapp || !lead.instagram || !lead.phone)) {
-          const html = await fetchSiteHtml(lead.website).catch(() => null);
-          if (html) {
-            const contacts = extractContactsFromMarkdown(html, lead.city ?? "", lead.state ?? "", { requireGeo: false });
-            if (contacts.phone && !lead.phone) { lead.phone = contacts.phone; stats.phonesFound++; }
-            if (contacts.whatsapp && !lead.whatsapp) { lead.whatsapp = contacts.whatsapp; stats.whatsappFound++; stats.whatsappOfficial++; }
-            if (contacts.instagram && !lead.instagram) { lead.instagram = contacts.instagram; stats.instagramFound++; }
-          }
-        }
-        // PERSISTÊNCIA IMEDIATA (parcial nunca se perde)
-        await admin.from("leads").update({
-          website: lead.website,
-          has_website: !!lead.website,
-          instagram: lead.instagram,
-          phone: lead.phone,
-          whatsapp: lead.whatsapp,
-          score_reasons: (lead.score_reasons ?? []).slice(0, 12),
-        }).eq("id", lead.external_id);
-      };
-
-      for (const r of candidates) {
-        if (Date.now() > deadline - 2000) break; // orçamento: para limpo antes do limite
-        stats.processed++;
-        try { await enrichOne(r); } catch { /* segue p/ próximo */ }
+      for (const u of updates) {
+        const { error: upErr } = await admin
+          .from("leads")
+          .update({ website: u.website, has_website: u.has_website, instagram: u.instagram })
+          .eq("id", u.id);
+        if (!upErr) updated++;
+        else console.warn("[search-places][enrich] update failed", u.id, upErr.message);
       }
 
-      const nextOffset = offset + stats.processed;
-      const completed = nextOffset >= total || candidates.length < batchSize;
-      console.info("[search-places][enrich] batch", { searchId, total, batchSize, offset, processed: stats.processed, completed, remaining: Math.max(0, total - nextOffset), elapsedMs: Date.now() - (deadline - budgetMs) });
-      return json({
+      console.info("[search-places][enrich] summary", {
+        searchId, totalRows: dbRows.length, updated,
+      });
+
+      return new Response(JSON.stringify({
         mode: "enrich",
         search_id: searchId,
-        total_candidates: total,
-        batch_size: batchSize,
-        processed: stats.processed,
-        websites_found: stats.websitesFound,
-        phones_found: stats.phonesFound,
-        whatsapp_found: stats.whatsappFound,
-        instagram_found: stats.instagramFound,
-        skipped_already_enriched: stats.skippedAlreadyEnriched,
-        whatsapp_official: stats.whatsappOfficial,
-        remaining: Math.max(0, total - nextOffset),
-        completed,
-        next_cursor: completed ? null : nextOffset,
-        elapsed_ms: Date.now() - (deadline - budgetMs),
-      });
+        total: dbRows.length,
+        updated,
+      }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+
 
     const segment = String(body?.segment ?? "").trim();
     const city = String(body?.city ?? "").trim();
     const state = String(body?.state ?? "").trim().toUpperCase();
-    const maxPages = Math.min(Math.max(Number(body?.maxPages ?? 4), 1), 4);
+    const maxPages = Math.min(Math.max(Number(body?.maxPages ?? 2), 1), 3);
     const module: "orvix" | "landing_pages" = body?.module === "orvix" ? "orvix" : "landing_pages";
 
     console.info("[search-places] request params", {
@@ -2208,13 +2046,11 @@ Deno.serve(async (req) => {
     const textQueries = synonyms.map((s) => `${s} em ${city}, ${state}, Brasil`);
     const primaryQuery = textQueries[0];
     const includedTypes = getGoogleIncludedTypes(segment);
-    // RECALL: sempre inclui um passe SEM tipo ao lado dos tipos restritos — um
-    // includedType estrito nunca limita a descoberta a poucas empresas.
-    const includedTypeForQuery: (string | null)[] = includedTypes.length > 0 ? [...includedTypes, null] : [null];
+    const includedTypeForQuery: (string | null)[] = includedTypes.length > 0 ? includedTypes : [null];
     const sourcesTried: string[] = [];
     const warnings: Array<{ source: string; code?: string; message: string; action?: string }> = [];
     let leads: PublicLead[] = [];
-    let source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery" | "web_discovery" | "none" = "none";
+    let source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery" | "none" = "none";
 
     // Diagnostics: onde os leads são perdidos ao longo do funil.
     const diagnostics: Record<string, unknown> = {
@@ -2237,13 +2073,12 @@ Deno.serve(async (req) => {
     // includedType) e regras aplicadas. Sem persistência em banco.
     // ────────────────────────────────────────────────────────────
     type LeadAuditEntry = {
-      source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery" | "web_discovery";
+      source: "google_places_new" | "google_places_legacy" | "openstreetmap_nominatim" | "openstreetmap_overpass" | "openstreetmap_overpass_recovery";
       synonym?: string;
       includedType?: string | null;
       rule?: string;
       osmTags?: Record<string, string> | null;
       category?: string | null;
-      web_enriched?: boolean;
       googleTypes?: string[] | null;
     };
     const perLeadAudit = new Map<string, LeadAuditEntry>();
@@ -2252,13 +2087,12 @@ Deno.serve(async (req) => {
     // Contexto de resiliência partilhado por-request (circuit breaker + cache).
     const ctx = createSearchCtx();
 
-    // -------- 1) Google Places API (New) — DESACOPLADO (USE_GOOGLE_PLACES = false) --------
-    if (USE_GOOGLE_PLACES && GOOGLE_KEY_LOADED && GOOGLE_KEY!.startsWith("AIza")) {
+    // -------- 1) Google Places API (New) - multi-query + radius --------
+    if (GOOGLE_KEY_LOADED && GOOGLE_KEY!.startsWith("AIza")) {
       sourcesTried.push(SOURCE_LABELS.googleNew);
 
-      // Resolve city center/bounds for geo-restricted (locationRestriction) variants in parallel with first query
-      const boundaryPromise = getNominatimBoundary(city, state, ctx)
-        .catch(() => ({ areaId: null, lat: null, lon: null, bounds: null as GeoBounds | null, error: "boundary failed" }));
+      // Resolve city center for radius (locationBias) variants in parallel with first query
+      const boundaryPromise = getNominatimBoundary(city, state, ctx).catch(() => ({ areaId: null, lat: null, lon: null }));
 
       // Concurrency-limited runner (max 2 in-flight) — prevents HTTP 429
       // bursts against the same Google project. Retry with backoff is still
@@ -2279,21 +2113,16 @@ Deno.serve(async (req) => {
           if (ctx.googleCircuitOpen) {
             return Promise.resolve({ places: [] as PlaceRaw[], error: { status: 429, text: JSON.stringify({ error: { message: "GOOGLE_CIRCUIT_OPEN" } }), endpoint: "searchText" } as SearchError });
           }
-          return searchPlacesNewWithFallback(job.query, maxPages, { includedType: job.includedType, ctx })
+          return searchPlacesNew(job.query, maxPages, { includedType: job.includedType, ctx })
             .catch((e) => ({ places: [] as PlaceRaw[], error: { status: 0, text: String(e), endpoint: "searchText" } as SearchError }));
         },
         { interItemDelayMs: GOOGLE_INTER_ITEM_DELAY_MS },
       );
 
-      // Then fire geo-restricted variants (top 2 synonyms only) using the resolved boundary
+      // Then fire radius-biased variants (top 2 synonyms only) using the resolved center
       const boundary = await boundaryPromise;
-      const geoOptions = boundary.bounds
-        ? { locationRestriction: boundary.bounds }
-        : boundary.lat && boundary.lon
-          ? { locationBias: { lat: boundary.lat, lon: boundary.lon, radius: 25000 } }
-          : null;
       let radiusResults: Array<{ places: PlaceRaw[]; error?: SearchError }> = [];
-      if (geoOptions && !ctx.googleCircuitOpen) {
+      if (boundary.lat && boundary.lon && !ctx.googleCircuitOpen) {
         const radiusSynonyms = synonyms.slice(0, 2);
         const radiusJobs: Array<{ synonym: string; includedType: string | null }> = [];
         for (const s of radiusSynonyms) {
@@ -2304,25 +2133,18 @@ Deno.serve(async (req) => {
           GOOGLE_CONCURRENCY,
           (job) => {
             if (ctx.googleCircuitOpen) {
-              return Promise.resolve({ places: [] as PlaceRaw[], error: { status: 429, text: JSON.stringify({ error: { message: "GOOGLE_CIRCUIT_OPEN" } }), endpoint: "searchText+geo" } as SearchError });
+              return Promise.resolve({ places: [] as PlaceRaw[], error: { status: 429, text: JSON.stringify({ error: { message: "GOOGLE_CIRCUIT_OPEN" } }), endpoint: "searchText+bias" } as SearchError });
             }
-            const base = (geoOptions ?? {}) as { locationBias?: { lat: number; lon: number; radius: number }; locationRestriction?: GeoBounds };
-            return searchPlacesNewWithFallback(job.synonym, Math.max(maxPages, 2), { ...base, includedType: job.includedType, ctx })
-              .catch((e) => ({ places: [] as PlaceRaw[], error: { status: 0, text: String(e), endpoint: "searchText+geo" } as SearchError }));
+            return searchPlacesNew(job.synonym, 2, { locationBias: { lat: boundary.lat!, lon: boundary.lon!, radius: 25000 }, includedType: job.includedType, ctx })
+              .catch((e) => ({ places: [] as PlaceRaw[], error: { status: 0, text: String(e), endpoint: "searchText+bias" } as SearchError }));
           },
           { interItemDelayMs: GOOGLE_INTER_ITEM_DELAY_MS },
         );
-        console.info("[search-places] geo variants fired", {
-          count: radiusJobs.length,
-          restriction: !!boundary.bounds,
-          lat: boundary.lat,
-          lon: boundary.lon,
-          concurrency: GOOGLE_CONCURRENCY,
-        });
+        console.info("[search-places] radius variants fired", { count: radiusJobs.length, lat: boundary.lat, lon: boundary.lon, concurrency: GOOGLE_CONCURRENCY });
       } else if (ctx.googleCircuitOpen) {
-        console.warn("[search-places] geo variants skipped — Google circuit open");
+        console.warn("[search-places] radius variants skipped — Google circuit open");
       } else {
-        console.info("[search-places] no boundary center available, skipping geo variants");
+        console.info("[search-places] no boundary center available, skipping radius variants");
       }
 
 
@@ -2422,10 +2244,19 @@ Deno.serve(async (req) => {
           }
         }
       }
+    } else {
+      const missingOrInvalid = normalizeGoogleError(0, JSON.stringify({ error: { message: GOOGLE_KEY_LOADED ? "invalid API key" : "missing" } }), "Google Places New");
+      warnings.push({
+        source: SOURCE_LABELS.googleNew,
+        code: missingOrInvalid.code,
+        message: missingOrInvalid.message,
+        action: missingOrInvalid.action,
+      });
     }
-    // Sem bloco de "Google ausente": o Google não é mais esperado no fluxo.
 
-    // -------- 3) OpenStreetMap: MOTOR PRINCIPAL (Overpass) + Nominatim de apoio --------
+    // -------- 3) OpenStreetMap: SEMPRE executa em paralelo ao Google --------
+    // Google Places tem prioridade (processado primeiro no dedupe). OSM entra
+    // apenas complementando estabelecimentos que o Google não retornou.
     {
       sourcesTried.push(SOURCE_LABELS.nominatim, SOURCE_LABELS.overpass);
       const [osm, overpass] = await Promise.all([
@@ -2583,7 +2414,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ─── RECUPERAÇÃO — 2ª tentativa mais ampla quando há poucos candidatos ─
+    // ─── RECUPERAÇÃO — 2ª tentativa mais ampla quando final = 0 ───────
     // Muitos POIs em cidades pequenas não têm `shop=*` configurado, apenas
     // nome. Buscamos por regex de `name`/`brand`/`official_name` no OSM,
     // sem exigir tags de categoria. A validação de segmento é feita no
@@ -2591,8 +2422,7 @@ Deno.serve(async (req) => {
     let recoveryRawCount = 0;
     let recoveryAcceptedCount = 0;
     let recoveryAttempted = false;
-    let recoveryDuplicates = 0;
-    if (leads.length < DISCOVERY_TARGET) {
+    if (leads.length === 0) {
       recoveryAttempted = true;
       sourcesTried.push(SOURCE_LABELS.overpassRecovery);
       const recovery = await searchOverpassByName(segment, city, state, ctx);
@@ -2757,20 +2587,12 @@ Deno.serve(async (req) => {
         return { score, positives, negatives: dedupNeg, reason: primaryReason };
       };
 
-      // Score adaptativo: o limite rígido (30) exige termo forte no nome,
-      // o que rejeita negócios legítimos cujo nome não contém o segmento
-      // (ex.: clínica veterinária "Bem Estar" — tag compatível, nome genérico).
-      // Como a recuperação só roda quando as fontes estruturadas voltaram 0,
-      // aceitamos sinais positivos isolados SEM sinais negativos num piso menor.
       const RECOVERY_MIN_SCORE = 30;
-      const RECOVERY_MIN_SCORE_LENIENT = 10;
       const recoveryRejections: Array<{ id: string; name: string; score: number; reason: string; positives: string[]; negatives: string[] }> = [];
       const validatedRecoveryLeads: PublicLead[] = [];
       for (const l of recoveryLeads) {
         const { score, positives, negatives, reason } = scoreRecoveryLead(l);
-        const accepted = score >= RECOVERY_MIN_SCORE ||
-          (score >= RECOVERY_MIN_SCORE_LENIENT && positives.length > 0 && negatives.length === 0);
-        if (accepted) {
+        if (score >= RECOVERY_MIN_SCORE) {
           validatedRecoveryLeads.push(l);
         } else {
           recoveryRejections.push({
@@ -2800,7 +2622,6 @@ Deno.serve(async (req) => {
         accepted_count: recoveryAcceptedCount,
         rejected_count: recoveryRejections.length,
         min_score: RECOVERY_MIN_SCORE,
-        min_score_lenient: RECOVERY_MIN_SCORE_LENIENT,
         rejection_reasons: (diagnostics.recovery_rejection_reason as unknown[]),
         source: SOURCE_LABELS.overpassRecovery,
       };
@@ -2828,13 +2649,8 @@ Deno.serve(async (req) => {
             category: l.category ?? null,
           });
         }
-        // Merge com prioridade estruturada: recovery só adiciona o que NÃO
-        // duplicar telefone/host/nome+cidade dos leads já existentes.
-        const mergedRec = mergeCandidateLeads(leads, validatedRecoveryLeads);
-        recoveryDuplicates = mergedRec.duplicates;
-        diagnostics.recovery_duplicates = mergedRec.duplicates;
-        leads = mergedRec.leads;
-        if (leads.length > 0 && source === "none") source = SOURCE_LABELS.overpassRecovery;
+        leads = validatedRecoveryLeads;
+        if (source === "none") source = SOURCE_LABELS.overpassRecovery;
       }
     } else {
       // Garante que o objeto exista mesmo quando não foi disparado.
@@ -2846,187 +2662,13 @@ Deno.serve(async (req) => {
       };
     }
 
-    // ─── Descoberta web disabled ──────────────────────────────
-    // Web Discovery (Tavily/Firecrawl) NÃO cria leads primários.
-    // A descoberta primária é exclusiva de Google Places / OSM / Overpass.
-    // Web é usado SOMENTE para enriquecimento de leads já descobertos.
-    // (Bloco de descoberta web removido conforme requisito do LeadHunter.)
-    diagnostics.web_sources = {};
+    // Website Discovery + Instagram Discovery are NO LONGER blocking.
+    // They now run em background via a segunda chamada (mode: "enrich") disparada
+    // pelo frontend após o retorno inicial. Isso permite que a busca retorne
+    // imediatamente e os cards atualizem os campos website/instagram quando prontos.
 
-    // ─── ENRIQUECIMENTO 100% GRATUITO (somente o PRÓPRIO domínio do lead) ───
-    // Sem Google, sem Tavily/Firecrawl/Brave/Serper, sem scraping de buscador.
-    // Se o lead veio do OSM com website, lê dados públicos do próprio domínio.
-    // Sem website → permanece null (nunca inventa/adivinha domínio).
-    const webDiag: Record<string, unknown> = { enabled: leads.length > 0, mode: "own_site" };
-    let enrichmentAttempted = 0;
-    let enrichmentCompleted = 0;
-    let phonesFound = 0;
-    let whatsappsFound = 0;
-    let instagramFound = 0;
-    if (leads.length > 0) {
-      const candidates = leads
-        .filter((l) => !!l.website && (!l.phone || !l.whatsapp || !l.instagram))
-        .slice(0, ENRICH_BUDGET);
-      await mapWithConcurrency(candidates, 3, async (l) => {
-        enrichmentAttempted += 1;
-        try {
-          const html = await fetchSiteHtml(l.website as string);
-          if (!html) return;
-          const contacts = extractContactsFromMarkdown(html, l.city ?? "", l.state ?? "", { requireGeo: false });
-          if (contacts.phone && !l.phone) { l.phone = contacts.phone; phonesFound += 1; }
-          if (contacts.whatsapp && !l.whatsapp) { l.whatsapp = contacts.whatsapp; whatsappsFound += 1; }
-          if (contacts.instagram && !l.instagram) { l.instagram = contacts.instagram; instagramFound += 1; }
-          enrichmentCompleted += 1;
-        } catch { /* enriquecimento nunca quebra a busca */ }
-      });
-      webDiag.enrichment_attempted = enrichmentAttempted;
-      webDiag.enrichment_completed = enrichmentCompleted;
-      webDiag.phones_found = phonesFound;
-      webDiag.whatsapps_found = whatsappsFound;
-      webDiag.instagram_found = instagramFound;
-    }
-    diagnostics.web_sources = webDiag;
 
-    // ─── Qualificação comercial ──────────────────────────────────
-    // O motor rankeia por potencial comercial, não filtra.
-    // Ordem de prioridade (maior para menor):
-    //   1. Sem site + com WhatsApp  → lead quente, maior conversão
-    //   2. Com site ruim + WhatsApp → site não serve, mas tem contato
-    //   3. Com site ruim             → site não é confiável
-    //   4. Com site bom             → lead frio, já tem presença digital
-    // O commercial_score alimenta o sort (peso no computeLeadPriority) —
-    // nunca exclui lead do resultado.
-    if (leads.length > 0) {
-      for (const l of leads) {
-        const website = l.website ?? null;
-        const whatsapp = l.whatsapp ?? null;
-        const phone = l.phone ?? null;
-        const hasContact = Boolean(whatsapp || phone);
-        const hasWhatsapp = Boolean(whatsapp);
-        const hasWebsite = Boolean(website);
 
-        if (!hasWebsite && hasContact) {
-          // WhatsApp é o canal preferencial: lead sem site + WhatsApp é o mais quente.
-          l.commercial_score = hasWhatsapp ? 110 : 92;
-          l.score_reasons = [...(l.score_reasons ?? []), hasWhatsapp ? "Sem site + WhatsApp → lead muito quente" : "Sem site + contato sem WhatsApp → lead quente"];
-        } else if (hasWebsite && hasContact) {
-          // Site ruim = domínio free/placeholder ou muito curto, ou sem evidência de segmento.
-          const isBadSite = isLowQualityWebsite(website);
-          if (isBadSite) {
-            l.commercial_score = hasWhatsapp ? 82 : 68;
-            l.score_reasons = [...(l.score_reasons ?? []), hasWhatsapp ? "Site ruim + WhatsApp → lead quente" : "Site ruim + contato → lead quente"];
-          } else {
-            l.commercial_score = hasWhatsapp ? 16 : 10;
-            l.score_reasons = [...(l.score_reasons ?? []), "Site bom + contato → lead frio"];
-          }
-        } else if (hasWebsite && !hasContact) {
-          const isBadSite = isLowQualityWebsite(website);
-          l.commercial_score = isBadSite ? 40 : 5;
-          l.score_reasons = [...(l.score_reasons ?? []), isBadSite ? "Site ruim sem contato" : "Site bom sem contato"];
-        } else {
-          // Sem site e sem contato visível — lead escasso
-          l.commercial_score = 20;
-          l.score_reasons = [...(l.score_reasons ?? []), "Sem site, sem contato visível"];
-        }
-      }
-    }
-
-    // Pipeline metrics — contabiliza cada etapa do funil para auditoria.
-    // ─── IMAGENS 100% GRATUITAS ─────────────────────────────────────────
-    // Prioridade: Wikimedia (OSM) > og:image > imagem principal > logo.
-    // Somente candidatos do próprio domínio (ou Wikimedia associada via OSM).
-    // Sem imagem genérica. Cache por lead; budget e concorrência controlados.
-    {
-      const imgTargets = leads.filter((l) => !l.photo_url).slice(0, IMAGE_BUDGET);
-      await mapWithConcurrency(
-        imgTargets,
-        3,
-        async (l) => {
-          const tags = (osmTagsById.get(l.external_id) ?? {}) as Record<string, string | undefined>;
-          const key = cacheKey("img", l.external_id, l.website);
-          const cached = LEAD_IMAGE_CACHE.get(key);
-          if (cached !== undefined) {
-            if (cached) { l.photo_url = cached.url; l.photo_source = cached.source; }
-            return;
-          }
-          let wikimediaFileName = extractWikimediaFileName(tags as Record<string, string>);
-          if (!wikimediaFileName && tags.wikidata) {
-            wikimediaFileName = await resolveWikidataImageName(String(tags.wikidata));
-          }
-          let og: string | null = null;
-          let main: string | null = null;
-          let logo: string | null = null;
-          if (!wikimediaFileName && l.website) {
-            const html = await fetchSiteHtml(l.website);
-            if (html) {
-              og = extractOgImage(html, l.website);
-              main = extractMainImage(html, l.website);
-              logo = extractLogoUrl(html, l.website);
-            }
-          }
-          const picked = pickLeadImage({ siteUrl: l.website, wikimediaFileName, og, main, logo });
-          if (picked) {
-            l.photo_url = picked.url;
-            l.photo_source = picked.source;
-          }
-          LEAD_IMAGE_CACHE.set(key, picked ? { url: picked.url, source: picked.source } : null);
-        },
-        { interItemDelayMs: 0 },
-      );
-      const withImage = leads.filter((l) => !!l.photo_url).length;
-      diagnostics.images = {
-        attempted: imgTargets.length,
-        with_image: withImage,
-        by_source: {
-          wikimedia: leads.filter((l) => l.photo_source === "wikimedia").length,
-          website_og: leads.filter((l) => l.photo_source === "website-og").length,
-          website_html: leads.filter((l) => l.photo_source === "website-html").length,
-          website_logo: leads.filter((l) => l.photo_source === "website-logo").length,
-        },
-        none: leads.length - withImage,
-      };
-    }
-
-    const pipeline = {
-      discovered: leads.length,
-      valid: leads.length,
-      deduped: leads.length,
-      phone: leads.filter((l) => Boolean(l.phone)).length,
-      whatsapp: leads.filter((l) => Boolean(l.whatsapp)).length,
-      no_site: leads.filter((l) => !l.website).length,
-      opportunity: leads.filter((l) => !l.website && Boolean(l.whatsapp || l.phone)).length,
-      qualified: leads.filter((l) => (l.commercial_score ?? 0) >= 40).length,
-    };
-    diagnostics.pipeline = pipeline;
-
-    // Diagnóstico de cobertura por execução — onde exatamente os candidatos
-    // entram/saem, para nunca perder cobertura em silêncio.
-    diagnostics.coverage = {
-      structured_raw: (Number(diagnostics.osm_raw_count) || 0),
-      structured_accepted: (Number(diagnostics.osm_accepted_count) || 0),
-      recovery_attempted: recoveryAttempted,
-      recovery_raw: Number(diagnostics.recovery_raw) || 0,
-      recovery_accepted: recoveryAcceptedCount,
-      recovery_duplicates: recoveryDuplicates,
-      web_discovery_attempted: false,
-      tavily_queries: 0,
-      tavily_raw: 0,
-      firecrawl_queries: 0,
-      firecrawl_raw: 0,
-      web_accepted: 0,
-      web_discovery_added: Number(diagnostics.web_discovery_added) || 0,
-      web_discovery_duplicates: Number(diagnostics.web_discovery_duplicates) || 0,
-      duplicates_removed: Number((diagnostics.combined as Record<string, unknown> | undefined)?.["duplicates_removed"] ?? 0) || 0,
-      enrichment_attempted: enrichmentAttempted,
-      enrichment_completed: enrichmentCompleted,
-      phones_found: pipeline.phone,
-      whatsapp_found: pipeline.whatsapp,
-      sites_found: leads.length - pipeline.no_site,
-      no_site: pipeline.no_site,
-      commercial_opportunity: pipeline.opportunity,
-      qualified: pipeline.qualified,
-      final_count: leads.length,
-    };
 
     // Intelligent priority sort — internal Lead Score, never excludes leads.
     if (leads.length > 0) {
@@ -3117,8 +2759,6 @@ Deno.serve(async (req) => {
         recovery_raw_count: Number(diagnostics.recovery_raw) || 0,
         recovery_accepted_count: Number(diagnostics.recovery_accepted) || 0,
         recovery_attempted: !!diagnostics.recovery_attempted,
-        web_discovery_count: Number((diagnostics.web_sources as Record<string, unknown> | undefined)?.["total_candidates"] ?? 0) || 0,
-        web_discovery_attempted: sourcesTried.includes("web_discovery"),
         after_dedupe_count: leads.length,
         after_segment_filter_count: null as number | null, // preenchido no cliente (filtro Orvix)
         rejected_count: 0, // preenchido no cliente
