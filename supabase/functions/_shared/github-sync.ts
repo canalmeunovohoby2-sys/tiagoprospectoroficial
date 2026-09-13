@@ -11,7 +11,9 @@ const NEVER_ALLOWED = [
   "-----BEGIN",
 ];
 const IGNORED_FILES = /(^|\/)(\.env(\.|$)|\.env\.local|.*\.pem$|node_modules|\.git\/|\.DS_Store|\.gitignore$)/i;
-const ALLOWED_EXT = /\.(html|css|js|json|txt|md|png|jpg|jpeg|webp|svg|gif|ico|woff2?|ttf|eot|map|xml|yml|yaml|toml|csv)$/i;
+// Extensões REAIS de um site (texto + assets). Cobre imagens modernas, fontes,
+// vídeos, mídia e código-fonte para NÃO descartar arquivos legítimos do projeto.
+const ALLOWED_EXT = /\.(html|htm|css|js|mjs|cjs|jsx|ts|tsx|json|txt|md|xml|yml|yaml|toml|csv|svg|png|jpg|jpeg|webp|avif|gif|ico|bmp|woff2?|ttf|otf|eot|map|mp4|webm|mp3|wav|pdf)$/i;
 
 function isSecretContent(content: string): { blocked: boolean; secret?: string } {
   if (!content) return { blocked: false };
@@ -67,3 +69,16 @@ export const GITIGNORE = `# Prospector — arquivos que nunca devem subir
 node_modules/
 .DS_Store
 `;
+
+/**
+ * Arquivos que JÁ foram sincronizados por este projeto e NÃO existem mais no
+ * estado atual (foram removidos/renomeados no editor). Devem ser apagados do
+ * repositório para que ele reflita o projeto REAL e ATUAL (sem arquivos velhos).
+ */
+export function findRemovals(
+  local: SyncFile[],
+  lastSync: Record<string, unknown | undefined>,
+): string[] {
+  const present = new Set(local.map((f) => f.path));
+  return Object.keys(lastSync ?? {}).filter((p) => p && !present.has(p));
+}

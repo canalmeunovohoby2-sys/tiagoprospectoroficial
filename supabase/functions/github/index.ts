@@ -3,7 +3,7 @@
 // contém token; nenhum log registra segredo.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
-import { buildSafeProjectTree, findConflicts, GITIGNORE, type SyncFile } from "../_shared/github-sync.ts";
+import { buildSafeProjectTree, findConflicts, findRemovals, GITIGNORE, type SyncFile } from "../_shared/github-sync.ts";
 
 const GITHUB = "https://api.github.com";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -172,6 +172,9 @@ Deno.serve(async (req) => {
 
       const files: SyncFile[] = [...tree.files, { path: ".gitignore", content: GITIGNORE }];
       const isInitial = Object.keys(syncedMap).length === 0;
+      // Arquivos que já foram sincronizados e NÃO existem mais no projeto atual
+      // (removidos/renomeados no editor) precisam sair do repositório também.
+      const removals = isInitial ? [] : findRemovals(files, syncedMap);
       if (isInitial && Object.keys(currentRemote).length > 0) {
         // Repo já contém algum arquivo com o mesmo caminho do projeto e nunca
         // sincronizamos por aqui → não sobrescrever conteúdo externo.
@@ -234,6 +237,13 @@ Deno.serve(async (req) => {
           if (!put.ok) return json({ status: "error", error: `Falha ao enviar ${f.path}: ${put.message ?? "erro"}` }, 502);
           if (put.data?.content?.sha) newSync[f.path] = { sha: put.data.content.sha, updated_at: new Date().toISOString() };
           commitSha = put.data?.commit?.sha ?? commitSha;
+        }
+        // Remove do repo os arquivos que deixaram de existir no projeto (estado ATUAL).
+        for (const path of removals) {
+          const prevSha = (syncedMap[path] as { sha?: string } | undefined)?.sha;
+          if (!prevSha) { delete newSync[path]; continue; }
+          const del = await ghJson<{ commit?: { sha?: string } }>(token, `/repos/${link.owner}/${link.repo}/contents/${encodeURIComponent(path).replace(/%2F/g, "/")}`, { method: "DELETE", body: JSON.stringify({ message: `Prospector: remover ${path}`, sha: prevSha, branch: link.branch }) });
+          if (del.ok) { delete newSync[path]; commitSha = del.data?.commit?.sha ?? commitSha; }
         }
       }
 

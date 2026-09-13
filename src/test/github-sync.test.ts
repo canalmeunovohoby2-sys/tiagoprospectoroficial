@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSafeProjectTree, findConflicts, GITIGNORE } from "../../supabase/functions/_shared/github-sync";
+import { buildSafeProjectTree, findConflicts, findRemovals, GITIGNORE } from "../../supabase/functions/_shared/github-sync";
 
 describe("GitHub por projeto (5.36) — árvore segura e conflitos", () => {
   it("monta árvore com arquivos reais do projeto, ignorando temporários/.env", () => {
@@ -52,5 +52,56 @@ describe("GitHub por projeto (5.36) — árvore segura e conflitos", () => {
   it("GITIGNORE padrão exclui segredos", () => {
     expect(GITIGNORE).toContain(".env");
     expect(GITIGNORE).toContain("node_modules");
+  });
+});
+
+describe("GitHub por projeto — fidelidade ao projeto REAL e ATUAL", () => {
+  it("inclui formatos legítimos modernos (avif, tsx, mp4, pdf, woff2) — nada de descartar arquivo real", () => {
+    const tree = buildSafeProjectTree({
+      "index.html": "<h1>ok</h1>",
+      "assets/foto.avif": "avif-bytes",
+      "src/app.tsx": "export default 1",
+      "media/promo.mp4": "video",
+      "docs/proposta.pdf": "%PDF-1.4",
+      "assets/font.woff2": "font",
+    });
+    expect(tree.ok).toBe(true);
+    const paths = tree.files.map((f) => f.path);
+    for (const p of ["assets/foto.avif", "src/app.tsx", "media/promo.mp4", "docs/proposta.pdf", "assets/font.woff2"]) {
+      expect(paths, p).toContain(p);
+    }
+  });
+
+  it("findRemovals: arquivos que saíram do projeto devem sair do repositório (sem arquivo velho)", () => {
+    const local = [{ path: "index.html", content: "a" }, { path: "src/site.css", content: "b" }];
+    const synced = { "index.html": { sha: "1" }, "src/site.css": { sha: "2" }, "assets/antiga.png": { sha: "3" } };
+    expect(findRemovals(local, synced)).toEqual(["assets/antiga.png"]);
+    expect(findRemovals(local, {})).toEqual([]);
+  });
+
+  it("dois projetos ESTRUTURALMENTE diferentes → árvores ISOLADAS (A não vaza para B)", () => {
+    const A = buildSafeProjectTree({ "index.html": "<h1>Pata Amiga</h1>", "src/site.css": ".a{}", "assets/pet.webp": "x" });
+    const B = buildSafeProjectTree({ "index.html": "<h1>Studio Norte</h1>", "src/main.js": "console.log(1)", "assets/planta.svg": "<svg/>" });
+    const pa = A.files.map((f) => f.path);
+    const pb = B.files.map((f) => f.path);
+    expect(pa).not.toEqual(pb);
+    expect(pa).not.toContain("assets/planta.svg");
+    expect(pb).not.toContain("assets/pet.webp");
+    expect(A.files.find((f) => f.path === "index.html")?.content).toContain("Pata Amiga");
+    expect(B.files.find((f) => f.path === "index.html")?.content).toContain("Studio Norte");
+  });
+
+  it("a árvore reflete o CONTEÚDO ATUAL (edição no editor aparece no que vai ao GitHub)", () => {
+    const before = buildSafeProjectTree({ "index.html": "<h1>Antes</h1>" });
+    const after = buildSafeProjectTree({ "index.html": "<h1>Depois da edição</h1>" });
+    expect(before.files[0].content).toContain("Antes");
+    expect(after.files[0].content).toContain("Depois da edição");
+    expect(after.files[0].content).not.toBe(before.files[0].content);
+  });
+
+  it("nunca inclui arquivos fictícios/ausentes: só o que existe no mapa real", () => {
+    const tree = buildSafeProjectTree({ "index.html": "<h1>ok</h1>" });
+    const paths = tree.files.map((f) => f.path);
+    expect(paths).toEqual(["index.html"]); // nada é inventado/added
   });
 });
