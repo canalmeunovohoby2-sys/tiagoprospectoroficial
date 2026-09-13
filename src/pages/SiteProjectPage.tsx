@@ -257,7 +257,7 @@ export default function SiteProjectPage() {
       toast.info("Montando apresentação…");
       const realPalette = extractSitePalette(codeFiles);
       const screenshots = [shots.desktop, shots.mobile];
-      const { buffer, fileName } = await buildCommercialPdf(specData as never, null, screenshots, realPalette);
+      const { buffer, fileName } = await buildCommercialPdf(specData as never, null, screenshots, realPalette, project?.company_name || project?.name);
       saveBlob(new Blob([buffer], { type: "application/pdf" }), fileName);
       toast.success("Proposta em PDF gerada com capturas reais do site");
     } catch (e) {

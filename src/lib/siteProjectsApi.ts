@@ -2,6 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import type { LeadSource, SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { pickLeadForSpec } from "@/data/siteProjects";
+import { resolveCompanyName, companySlug, extractCompanyFromPrompt, isInvalidCompanySlug } from "./companyName";
 import { getAgentTicket } from "./agentTicket";
 import { parseGenerateResponse } from "./generateStream";
 import { friendlyAiError } from "./friendlyAiError";
@@ -52,7 +53,7 @@ export function slugifyName(value: string): string {
 }
 
 async function uniqueSlug(base: string): Promise<string> {
-  const root = slugifyName(base) || "site";
+  const root = companySlug(base) || "site";
   for (let attempt = 0; attempt < 30; attempt++) {
     const candidate = attempt === 0 ? root : `${root}-${attempt + 1}`;
     const { data } = await supabase.from("site_projects").select("id").eq("slug", candidate).limit(1).maybeSingle();
@@ -79,7 +80,20 @@ export async function fetchSiteProject(id: string): Promise<SiteProjectRow | nul
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return rowToProject(data);
+  const project = rowToProject(data);
+  // REPARO: se o slug/link foi gerado a partir do checklist (dado antigo),
+  // regenera a partir do nome oficial da empresa (nunca mostra o checklist).
+  if (project && isInvalidCompanySlug(project.slug)) {
+    const cleanName = resolveCompanyName(project.company_name || project.name);
+    if (cleanName) {
+      try {
+        const newSlug = await uniqueSlug(cleanName);
+        await supabase.from("site_projects").update({ slug: newSlug }).eq("id", id);
+        project.slug = newSlug;
+      } catch { /* mantém o slug atual se o reparo falhar */ }
+    }
+  }
+  return project;
 }
 
 // Cria um projeto de site para o lead (se já existir, apenas retorna o id).
@@ -96,7 +110,7 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
   if (existing?.id) return String(existing.id);
 
   const rawName = lead.name ?? lead.company_name ?? "Novo site";
-  const name = String(rawName).trim() || "Novo site";
+  const name = resolveCompanyName(rawName) || "Novo site";
   const briefingMap = pickLeadForSpec(lead);
   const briefing = briefingMap as unknown as Json;
   const slug = await uniqueSlug(name);
@@ -107,7 +121,7 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
       lead_id: String(lead.id),
       name,
       slug,
-      company_name: String(briefingMap.name ?? name),
+      company_name: resolveCompanyName(briefingMap.name ?? name) || name,
       segment: briefingMap.segment ? String(briefingMap.segment) : null,
       city: briefingMap.city ? String(briefingMap.city) : null,
       state: briefingMap.state ? String(briefingMap.state) : null,
@@ -126,8 +140,10 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
 export async function createSiteProjectFromPrompt(userId: string, prompt: string): Promise<string> {
   const cleaned = (prompt ?? "").trim();
   if (!cleaned) throw new Error("Descreva o site que você quer criar.");
-  const firstLine = cleaned.split(/\r?\n/)[0].slice(0, 80).trim() || "Novo site";
-  const name = String(firstLine).replace(/[<>]/g, "").trim() || "Novo site";
+  // Nome comercial plausível extraído do prompt; nunca o checklist/slug.
+  // Sem nome confiável → "Novo site" (não inventa, mas também não usa o checklist).
+  const company = extractCompanyFromPrompt(cleaned);
+  const name = company || "Novo site";
   const slug = await uniqueSlug(name);
   const briefing = { user_prompt: cleaned } as unknown as Json;
   const { data: created, error } = await supabase
@@ -412,45 +428,6 @@ export async function invokeProspectorAgent(input: {
   } catch {
     return editorUnavailableResult("unreachable");
   }
-}
-
-// Monta a missão de geração premium (identidade/skills + contexto real do negócio).
-export function buildGenerationMission(ctx: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null; about?: string | null; services?: string[] }, briefing?: Record<string, unknown>): string {
-  const ctxLines = [
-    ctx.name && `Empresa: ${ctx.name}`,
-    ctx.segment && `Segmento: ${ctx.segment}`,
-    ctx.city && `Cidade: ${ctx.city}`,
-    ctx.state && `Estado: ${ctx.state}`,
-    ctx.address && `Endereço: ${ctx.address}`,
-    ctx.phone && `Telefone: ${ctx.phone}`,
-    ctx.whatsapp && `WhatsApp: ${ctx.whatsapp}`,
-    ctx.about && `Sobre: ${ctx.about}`,
-    Array.isArray(ctx.services) && ctx.services.length ? `Serviços: ${ctx.services.join(", ")}` : "",
-  ].filter(Boolean).join("\n");
-  const extra = briefing && Object.keys(briefing).length ? `\nBriefing adicional (use o que for real; não invente):\n${JSON.stringify(briefing).slice(0, 1800)}` : "";
-  let mission = `CRIE UM SITE COMPLETO E PREMIUM para este negócio, direto no workspace (site estático autocontido: index.html completo, CSS em <style> inline ou src/site.css, dados em src/site.json). Você é um Senior UI/UX Director + Art Director + Frontend Engineer especialista em landing pages de alta conversão.
-
-CONTEXTO REAL DO NEGÓCIO:
-${ctxLines || "(poucos dados — não invente o resto)"}
-${extra}
-
-REGRA DE DIRECÃO (aplique a SKILL de Design Contextual Adaptativo):
-- Você é o cérebro criativo: defina a identidade sob medida (paleta, tipografia, layout, composição, imagens, interações) para ESTE negócio — cada site deve ser distinto, nunca o mesmo template de outro projeto.
-- Use o bloco PESQUISA WEB DE REFERÊNCIA (se presente) para tendências e referências do nicho — inspire-se sem copiar.
-- Google Maps (embed, só com endereço real), Google Fonts, ícones e recursos externos são permitidos quando fizerem sentido.
-- Psicologia das cores do segmento, tipografia Google Fonts expressiva, imagens reais contextualizadas (Unsplash, 3+ DISTINTAS, coerentes com o negócio — NUNCA repita a mesma imagem e NUNCA use imagem de outro segmento).
-- Aplique a SKILL de Efeitos/Motion: glassmorphism no header/cards quando couber, glow/bordas sutis, botões com hover, cards com elevação, microinterações e transições — sem exagerar.
-- Use arquitetura de conversão com ritmo: header/nav, hero de alto impacto (headline + CTA principal + secundário), seções variadas (valor/diferenciais, serviços/ambientes, como funciona, prova apenas com dados reais, CTA final), footer profissional completo.
-- Responsividade total (mobile/tablet/desktop) sem overflow.
-
-REGRAS:
-- NÃO invente endereço/telefone/WhatsApp/horários/preços/avaliações/certificações/resultados/serviços não fornecidos.
-- NÃO deixe placeholders ("lorem", "adicione aqui") — código 100% integral do <!DOCTYPE html> ao </html>.
-- Faça o site COMPLETO (não curto): hero forte + pelo menos 4-5 seções com função + footer rico.`;
-  if (ctx?.whatsapp && String(ctx.whatsapp).trim()) {
-    mission += `\nWHATSAPP REAL DO CLIENTE: ${String(ctx.whatsapp).trim()} — inclua um botão natural para https://wa.me/${String(ctx.whatsapp).replace(/\D/g, "")} no local mais adequado do design (hero/contato/CTA) e mantenha esse número nas futuras edições. NÃO use outro número nem crie botão se não houver WhatsApp.`;
-  }
-  return mission;
 }
 
 // ===== Roteamento do Agent Runtime: LOCAL (Ollama) vs REMOTO (Railway) =====

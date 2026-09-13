@@ -4,8 +4,11 @@
 // renderizada no navegador — nunca reconstrução/hero/background aproximado.
 // Nenhum texto vaza de cards; todo texto é medido e quebrado pela largura.
 import { jsPDF } from "jspdf";
-import { sanitizeSlug } from "./siteExportCore";
 import { renderProposalMockups, IPHONE } from "./proposalMockups";
+import { resolveCompanyName } from "./companyName";
+
+// Reexporta para consumidores/testes que importam de sitePdf.
+export { resolveCompanyName };
 
 interface PdfInput {
   business?: Record<string, unknown>;
@@ -48,7 +51,11 @@ function clampHex(hex: string): string {
   return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hex) ? hex : "";
 }
 export function pdfFileName(name: string): string {
-  return `${sanitizeSlug(name, "projeto")}-proposta.pdf`;
+  // Nome do arquivo = nome comercial da empresa, preservando caixa e espaços;
+  // sanitiza APENAS caracteres inválidos de sistema de arquivos.
+  const resolved = resolveCompanyName(name) || "Proposta Comercial";
+  const base = resolved.replace(/[<>:"/\\|?*\u0000-\u001F]/g, " ").replace(/\s+/g, " ").trim();
+  return `${base || "Proposta Comercial"}.pdf`;
 }
 
 const WHITE: Rgb = { r: 255, g: 255, b: 255 };
@@ -164,7 +171,7 @@ function footerPage(doc: jsPDF, W: number, name: string, page: number) {
   text(doc, `PROPOSTA COMERCIAL · ${String(page).padStart(2, "0")}`, W - 48, 822, 7, MUT, "normal", "right", 0.4);
 }
 
-export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: string } | null, screenshots?: string[], realPalette?: Partial<Record<string, string>>): Promise<{ buffer: ArrayBuffer; fileName: string }> {
+export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: string } | null, screenshots?: string[], realPalette?: Partial<Record<string, string>>, companyName?: string): Promise<{ buffer: ArrayBuffer; fileName: string }> {
   const b = obj(spec.business);
   const ds = obj(spec.design_system);
   const specColors = obj(ds.colors) as Record<string, string>;
@@ -172,7 +179,9 @@ export async function buildCommercialPdf(spec: PdfInput, heroImage?: { dataUrl: 
   const typo = obj(ds.typography);
   const content = obj(spec.content);
   const hero = obj(content.hero);
-  const company = str(b.name) || "Empresa";
+  // Nome da empresa: campo oficial (projeto) → business do spec → fallback neutro.
+  // Nunca usa checklist/slug/nome-de-arquivo (resolveCompanyName filtra).
+  const company = resolveCompanyName(companyName) || resolveCompanyName(str(b.name)) || "Proposta Comercial";
   const segment = str(b.segment);
   const location = [str(b.city), str(b.state)].filter(Boolean).join("/");
   const tagline = str(hero.subtitle) || "Presença digital profissional, sob medida para este negócio.";

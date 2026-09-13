@@ -102,11 +102,29 @@ export function prepareProjectPreview(files: WorkspaceMap | Record<string, strin
   html = embedLocalAssets(html, ws, names);
 
   // Preview em iframe sandbox (about:srcdoc = origem opaca, sem allow-same-origin):
-  // history.replaceState/pushState LANÇAM SecurityError nesse contexto — o que
-  // quebra o clique em itens de menu/âncora DENTRO do Prospector (fora, no
-  // navegador real, funciona). Neutralizamos essas chamadas no preview.
-  // Também neutraliza location.hash para evitar que âncoras mudem a URL do iframe.
-  const shim = `<script>(function(){try{if(location.protocol==='about:'||location.href.indexOf('about:srcdoc')===0){var noop=function(){return undefined;};var hashNoop={set:function(v){try{var a=document.querySelector(v);if(a)a.scrollIntoView({behavior:'smooth',block:'start'});}catch(e){}};get:function(){return '';}};try{history.replaceState=noop;}catch(e){}try{history.pushState=noop;}catch(e){}try{history.scrollRestoration='auto';}catch(e){}try{Object.defineProperty(location,'hash',{get:hashNoop.get,set:hashNoop.set,configurable:true});}catch(e){}}}catch(e){}})();<\/script>`;
+  // - history.replaceState/pushState LANÇAM SecurityError nesse contexto;
+  // - CRÍTICO (regressão de navegação): em about:srcdoc um link de FRAGMENTO
+  //   ("#secao") resolve contra a URL do TOPO, então o iframe navegava para a
+  //   própria página do Prospector ao clicar no menu. Interceptamos o clique e
+  //   rolamos para a seção, sem tocar em location/history.
+  const shim = `<script>(function(){try{
+    var isSrcdoc = (location.protocol==='about:'||location.href.indexOf('about:srcdoc')===0);
+    if(!isSrcdoc) return;
+    try{history.replaceState=function(){};}catch(e){}
+    try{history.pushState=function(){};}catch(e){}
+    try{history.scrollRestoration='auto';}catch(e){}
+    document.addEventListener('click',function(ev){
+      var a=ev.target&&ev.target.closest?ev.target.closest('a[href]'):null;
+      if(!a) return;
+      var href=a.getAttribute('href')||'';
+      if(href.charAt(0)!=='#') return;
+      ev.preventDefault();
+      var id=href.slice(1);
+      var el=id?document.getElementById(id):null;
+      if(el&&el.scrollIntoView){el.scrollIntoView({behavior:'smooth',block:'start'});}
+      else if(!id){try{window.scrollTo({top:0,behavior:'smooth'});}catch(e){window.scrollTo(0,0);}}
+    },true);
+  }catch(e){}})();<\/script>`;
   const bodyOpen = html.search(/<body[^>]*>/i);
   if (bodyOpen >= 0) {
     const close = html.indexOf(">", bodyOpen);

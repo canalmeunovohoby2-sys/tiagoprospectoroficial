@@ -80,4 +80,19 @@ describe("Project Preview Runtime (5.14)", () => {
     expect(p.document).toContain('class="hero-badge"');
     expect(p.document).toContain("Atendimento Premium");
   });
+
+  it("injeta guarda de navegação para âncoras (#) no iframe srcdoc (regressão: não pode abrir o Prospector)", () => {
+    // Em about:srcdoc, "#secao" resolve contra a URL do TOPO e o iframe navegava
+    // para o app. A guarda intercepta o clique e rola até a seção.
+    const files = baseFiles({
+      "cliente/index.html": `<!doctype html><html><head><title>x</title></head><body><nav><a href="#sobre">Sobre</a><a href="#topo">Topo</a></nav><section id="sobre">S</section></body></html>`,
+    });
+    const p = prepareProjectPreview(files);
+    expect(p.ok).toBe(true);
+    expect(p.document).toContain("closest('a[href]')");
+    expect(p.document).toContain("href.charAt(0)!=='#'");
+    expect(p.document).toContain("scrollIntoView");
+    // não pode usar a artimanha antiga de sobrescrever location.hash (unforgeable)
+    expect(p.document).not.toContain("Object.defineProperty(location,'hash'");
+  });
 });

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import JSZip from "jszip";
 import { sanitizeSlug, buildProjectFiles, buildSiteHtml } from "../../src/lib/siteExportCore";
-import { pdfFileName } from "../../src/lib/sitePdf";
+import { pdfFileName, resolveCompanyName } from "../../src/lib/sitePdf";
 
 const SPEC = {
   business: { name: "Pata Pet Banho & Tosa", segment: "Pet shops", city: "Guarulhos", state: "SP" },
@@ -17,7 +17,7 @@ describe("Exportação do projeto", () => {
     expect(sanitizeSlug("Pata Pet Banho & Tosa")).toBe("pata-pet-banho-tosa");
     expect(sanitizeSlug("João da Silva!@#")).toBe("joao-da-silva");
     expect(sanitizeSlug("", "padrao")).toBe("padrao");
-    expect(pdfFileName("Pata Pet Banho & Tosa")).toBe("pata-pet-banho-tosa-proposta.pdf");
+    expect(pdfFileName("Pata Pet Banho & Tosa")).toBe("Pata Pet Banho & Tosa.pdf");
   });
 
   it("arquivos do projeto não contêm secrets e têm estrutura esperada", async () => {
@@ -52,6 +52,17 @@ describe("Exportação do projeto", () => {
 
   it("informações comerciais (PDF) usam valores fixos e nomes sanitizados", () => {
     // Os valores fixos vivem no builder do PDF (validado em render real).
-    expect(pdfFileName("Meu Café")).toBe("meu-cafe-proposta.pdf");
+    expect(pdfFileName("Meu Café")).toBe("Meu Café.pdf");
+  });
+
+  it("NUNCA usa checklist/slug/nome-de-arquivo como nome da empresa", () => {
+    const checklist = "## ✅ CHECKLIST ESTRUTURAL DE EXECUÇÃO (LEIA ANTES DE COMPILAR)";
+    expect(resolveCompanyName(checklist)).toBe("");
+    expect(pdfFileName(checklist)).toBe("Proposta Comercial.pdf");
+    expect(resolveCompanyName("checklist-estrutural-de-execucao-leia-antes-de-compilar-proposta")).toBe("");
+    expect(resolveCompanyName("relatorio-final.html")).toBe("");
+    // nomes reais continuam passando (com espaços/caixa originais)
+    expect(resolveCompanyName("PET SHOP BICHINHO FELIZ")).toBe("PET SHOP BICHINHO FELIZ");
+    expect(pdfFileName("PET SHOP BICHINHO FELIZ")).toBe("PET SHOP BICHINHO FELIZ.pdf");
   });
 });

@@ -31,12 +31,13 @@ export interface DeviceFrame {
   screen: ScreenRect;
 }
 
-/** MacBook Pro 14" — frame frontal (3944×2564). */
+/** MacBook aberto (tela + teclado/trackpad visíveis) — frame frontal 800×488.
+ *  Área de tela detectada por análise de alfa (região transparente interna). */
 export const MACBOOK: DeviceFrame = {
-  src: "/mockups/apple-macbookpro14-front.png",
-  width: 3944,
-  height: 2564,
-  screen: { x: 461, y: 300, w: 3023, h: 1963 },
+  src: "/mockups/apple-macbook-neo-2026-front.png",
+  width: 800,
+  height: 488,
+  screen: { x: 79, y: 22, w: 642, h: 402, radius: 12 },
 };
 
 /** iPhone 15 Pro (titanium preto, retrato) — frame frontal (1419×2796). */
