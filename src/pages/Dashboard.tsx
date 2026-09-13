@@ -108,7 +108,7 @@ function Dashboard() {
     { key: "favorites", label: "Favoritados", value: displayedFavorites, icon: Star, accent: "from-amber-500/20 to-amber-500/0" },
     { key: "contacted", label: "Contatos realizados", value: displayedContacted, icon: Phone, accent: "from-blue-500/20 to-blue-500/0" },
     { key: "proposals", label: "Propostas enviadas", value: displayedProposals, icon: Send, accent: "from-pink-500/20 to-pink-500/0" },
-    { key: "conversion", label: "Conversão", value: `${displayedConversion.toFixed(1)}%`, icon: TrendingUp, accent: "from-emerald-500/20 to-emerald-500/0" },
+    { key: "conversion", label: "Leads → Clientes", value: `${displayedConversion.toFixed(1)}%`, icon: TrendingUp, accent: "from-emerald-500/20 to-emerald-500/0" },
   ], [displayedContacted, displayedConversion, displayedFavorites, displayedProposals, displayedTotal]);
 
   return (

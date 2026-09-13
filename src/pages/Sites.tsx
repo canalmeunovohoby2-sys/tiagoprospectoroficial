@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  Plus, Loader2, Trash2, ArrowRight, Sparkles, Wand2, Palette,
+  Plus, Loader2, Trash2, ArrowRight, Sparkles, Wand2, Palette, MessageSquareText,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import type { SiteProjectRow } from "@/data/siteProjects";
 import { statusLabel } from "@/data/siteProjects";
 import { listSiteProjects, deleteSiteProject, createSiteProjectFromPrompt } from "@/lib/siteProjectsApi";
 import { createBrandingProject as createBrand } from "@/lib/brandingApi";
+import { PromptCreator } from "@/components/app/PromptCreator";
 
 const CREATE_EXAMPLE = 'Crie um site profissional para uma clínica de fisioterapia chamada Movimento Saúde, com aparência moderna, premium e responsiva.';
 
@@ -32,6 +33,8 @@ export default function Sites() {
   const [creatingBrand, setCreatingBrand] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [creating, setCreating] = useState(false);
+  // Modo do Studio: gerar site (fluxo existente) OU criar prompt premium.
+  const [mode, setMode] = useState<"generate" | "prompt">("generate");
 
   async function load() {
     if (!user) return;
@@ -101,7 +104,23 @@ export default function Sites() {
             Crie e gerencie seus projetos de site e identidade visual. Cada projeto guarda identidade, conteúdo e estrutura prontos para edição e publicação futura.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="inline-flex rounded-lg border border-border/60 bg-muted/40 p-0.5">
+            <button
+              type="button"
+              onClick={() => setMode("generate")}
+              className={`px-3 py-1.5 text-xs rounded-md transition-colors ${mode === "generate" ? "bg-background shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Gerar Site
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("prompt")}
+              className={`px-3 py-1.5 text-xs rounded-md transition-colors flex items-center gap-1 ${mode === "prompt" ? "bg-background shadow-sm font-medium" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              <MessageSquareText className="h-3.5 w-3.5" /> Criar Prompt
+            </button>
+          </div>
           {!HIDE_IDENTITY_CREATION && (
             <Button variant="outline" onClick={() => { setBrandPrompt(""); setOpenBrand(true); }}>
               <Palette className="h-4 w-4 mr-1" /> Criar Identidade
@@ -113,7 +132,17 @@ export default function Sites() {
         </div>
       </div>
 
-      {loading ? (
+      {mode === "prompt" && (
+        <PromptCreator
+          onUseInGenerator={(p) => {
+            setPrompt(p);
+            setMode("generate");
+            setOpenCreate(true);
+          }}
+        />
+      )}
+
+      {mode === "generate" && (loading ? (
         <div className="flex items-center justify-center py-20 text-muted-foreground gap-2">
           <Loader2 className="h-5 w-5 animate-spin" /> Carregando projetos…
         </div>
@@ -169,7 +198,7 @@ export default function Sites() {
             </Card>
           ))}
         </div>
-      )}
+      ))}
 
       {openBrand && !HIDE_IDENTITY_CREATION && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => !creatingBrand && setOpenBrand(false)}>
