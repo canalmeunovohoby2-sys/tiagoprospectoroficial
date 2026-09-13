@@ -13,7 +13,7 @@ import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsCh
 import { analyzeVisualEvidence } from "./visual-analysis.js";
 import { hasImageReferenceChange, requestsImageSwap, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
-import { computeWorkEvidence, type WorkEventLike } from "./work-evidence.js";
+import { computeWorkEvidence, verificationToolsAfterLastEdit, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -34,12 +34,13 @@ export function isSurgicalEditTask(instruction: string): boolean {
 
 const SURGICAL_HINT = `
 
-[TAREFA CIRÚRGICA — modo rápido, obrigatório]
-Esta é uma alteração PONTUAL. Execute no MÍNIMO de passos possível:
+[TAREFA CIRÚRGICA — modo rápido, com verificação OBRIGATÓRIA]
+Esta é uma alteração PONTUAL. Execute com o mínimo de passos, mas SEMPRE verificando o resultado REAL:
 1) Se precisar localizar, faça NO MÁXIMO um read_file apenas do arquivo/trecho-alvo (src/site.css, o <img> do logo no index.html etc.).
 2) Aplique a mudança exata com UM edit_file (nunca reescreva o arquivo inteiro).
-3) Confira com um read_file do trecho alterado e finalize.
-NESTA TAREFA É PROIBIDO: list_files, get_site_context, browser_* , visual_review, reescrever arquivos completos, tocar em outras seções/arquivos, reanalisar o projeto ou refazer o que já está pronto.`;
+3) VERIFIQUE no NAVEGADOR que a mudança realmente apareceu: browser_open (ou browser_reload) e confirme com browser_inspect/browser_eval — ex.: cor/tamanho computado do elemento, texto, presença do elemento. Para QUALQUER mudança visual (cor, tamanho, botão, logo, imagem, espaçamento) isso é OBRIGATÓRIO.
+4) Se o resultado não estiver como pedido, corrija e verifique de novo; só então finalize.
+PROIBIDO: list_files, get_site_context, reanalisar o projeto, reescrever arquivos completos, tocar em outras seções/arquivos.`;
 
 const BUG_HINT = `
 
@@ -547,6 +548,10 @@ export class ProspectorSiteAgent {
       // FASE 7 (revisada): a AUSÊNCIA de finish_task é falta de CONFIRMAÇÃO
       // formal, não prova de falha. `classifyCompletion` separa os estados e só
       // declara falha com evidência concreta (gate/regressão/erro de ferramenta).
+      // Evidência REAL da run para o relatório final (arquivos editados + quais
+      // verificações rodaram depois da última edição + se houve render no browser).
+      const workEvidence = computeWorkEvidence(this.currentToolEvents);
+      const verificationTools = verificationToolsAfterLastEdit(this.currentToolEvents);
       const verdict = classifyCompletion({
         mode: this.options.mode ?? "edit",
         terminalReason: terminal,
@@ -556,6 +561,10 @@ export class ProspectorSiteAgent {
         toolFailure: this.toolFailure,
         toolFailureDetail: this.toolFailureDetail,
         touched,
+        editedPaths: workEvidence.editedPaths,
+        verificationTools,
+        renderVerified: workEvidence.renderVerifiedAfterLastEdit === true,
+        visualEdit: workEvidence.visualEdit === true,
       });
       return {
         ok: verdict.ok,

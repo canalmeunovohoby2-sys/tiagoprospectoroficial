@@ -87,6 +87,20 @@ export function isWorkToolStarted(e: WorkEventLike): boolean {
   return e?.type === "tool-started" && !!workToolName(e) && e.ok !== false;
 }
 
+/** Nomes (distintos, em ordem) das ferramentas de VERIFICAÇÃO executadas DEPOIS
+ *  da última alteração — usados no relatório final ao usuário. */
+export function verificationToolsAfterLastEdit(events: WorkEventLike[]): string[] {
+  const seq = (events ?? []).filter(isWorkToolStarted).map((e) => workToolName(e));
+  let lastEdit = -1;
+  for (let i = 0; i < seq.length; i++) if (EDIT_TOOLS.has(seq[i])) lastEdit = i;
+  if (lastEdit === -1) return [];
+  const names: string[] = [];
+  for (let i = lastEdit + 1; i < seq.length; i++) {
+    if (VERIFY_TOOLS.has(seq[i]) && !names.includes(seq[i])) names.push(seq[i]);
+  }
+  return names;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toolInputPath(e: WorkEventLike): string {
   const input = e?.toolCall?.input ?? e?.input;

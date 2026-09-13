@@ -38,8 +38,11 @@ export function hasImageReferenceChange(before: SiteFiles, after: SiteFiles): bo
 export function requestsImageSwap(instruction: string): boolean {
   const text = String(instruction ?? "").trim();
   if (!text) return false;
-  return /(troque|troca|trocar|substitua|substitui|substituir|altere)\s+(?:a|a[s]|essa|esta|aquela)?\s*(imagem|foto|fotografia|banner|background)/i.test(text)
-    || /(imagem|foto|fotografia|banner|background).*(troque|troca|trocar|substitua|substitui|substituir|altere)/i.test(text);
+  // Enquadramento/zoom/corte/posição NÃO são troca de imagem — é edição visual
+  // de CSS (object-fit/object-position/aspect-ratio). Não exigir troca de URL.
+  if (/(enquadr|zoom|cortad|cortou|cortar|recort|object-position|object-fit|background-position|background-size|posicion|reposicion|ajust)/i.test(text)) return false;
+  return /(troque|troca|trocar|substitua|substitui|substituir)\s+(?:a|as|essa|esta|aquela)?\s*(imagem|foto|fotografia|banner|background)/i.test(text)
+    || /(imagem|foto|fotografia|banner|background).*(troque|troca|trocar|substitua|substitui|substituir)/i.test(text);
 }
 
 export interface SiteMetrics {

@@ -237,6 +237,14 @@ export interface CompletionState {
   toolFailureDetail?: string | null;
   /** Arquivos alterados nesta execução (para a mensagem honesta). */
   touched: string[];
+  /** Arquivos realmente editados (work evidence) — usado no relatório. */
+  editedPaths?: string[];
+  /** Ferramentas de verificação executadas APÓS a última edição (nomes). */
+  verificationTools?: string[];
+  /** Houve verificação por RENDERIZAÇÃO real (browser) após a última edição. */
+  renderVerified?: boolean;
+  /** A alteração afeta renderização (html/css/js/assets). */
+  visualEdit?: boolean;
 }
 
 export interface CompletionStates {
@@ -259,6 +267,40 @@ export interface CompletionVerdict {
   states: CompletionStates;
 }
 
+// ── RELATÓRIO FINAL DA EDIÇÃO (closed-loop: o que mudou + verificação) ──────
+export interface ChangeReportInput {
+  editedPaths: string[];
+  verificationTools: string[];
+  renderVerified: boolean;
+  visualEdit: boolean;
+  /** finish_task aprovado = verificação formal concluída. */
+  verified: boolean;
+}
+
+export function buildChangeReport(i: ChangeReportInput): string {
+  const files = (i.editedPaths ?? []).filter(Boolean);
+  const verifs = [...new Set(i.verificationTools ?? [])];
+  const lines: string[] = [];
+  lines.push("Fiz a alteração no projeto.");
+  lines.push("Arquivos alterados:");
+  lines.push(files.length ? files.slice(0, 15).map((f) => `- ${f}`).join("\n") : "- (nenhum arquivo registrado)");
+  if (verifs.length > 0) {
+    const how = i.renderVerified ? "render conferido no navegador" : "verificação por ferramentas";
+    lines.push(`Verificação: ${how} (${verifs.join(", ")}).`);
+  } else if (i.visualEdit) {
+    lines.push("Verificação: não houve verificação visual no navegador nesta execução.");
+  } else {
+    lines.push("Verificação: não executada nesta execução.");
+  }
+  lines.push(
+    i.verified
+      ? "Resultado: alteração aplicada e validada."
+      : "Resultado: alteração aplicada. A verificação final formal não foi concluída, então não vou afirmar que foi validada.",
+  );
+  if (i.visualEdit && !i.renderVerified) lines.push("Observação: confirme o resultado visual no navegador (desktop e mobile).");
+  return lines.join("\n");
+}
+
 export function classifyCompletion(s: CompletionState): CompletionVerdict {
   const terminal = s.terminalReason ?? null;
   const unverified = !terminal && s.verificationRequired && !s.finishTaskCalled;
@@ -272,8 +314,7 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
     finish_task_called: s.finishTaskCalled,
   };
 
-  // 1) BLOQUEIO CONCRETO (gate de qualidade/regressão/visual/console no limite):
-  //    aqui SIM é falha, com motivo real — preservado integralmente.
+  // 1) BLOQUEIO CONCRETO (gate/regressão/visual/console no limite): falha real.
   if (terminal) {
     return { ok: false, reply: terminal, error: terminal, unverified: false, states };
   }
@@ -286,28 +327,34 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
     return { ok: false, reply: msg, error: msg, unverified, states };
   }
 
-  // 3) SEM finish_task, mas SEM falha concreta. Em EDIÇÃO, isso é ausência de
-  //    confirmação formal — NÃO prova de falha. Resposta honesta e natural,
-  //    sem mandar o usuário refazer sem evidência.
-  if (unverified && s.mode !== "generate") {
-    const label = s.touched.length === 0
-      ? ""
-      : s.touched.length === 1
-        ? ` em ${s.touched[0]}`
-        : ` em ${s.touched.length} arquivos (${s.touched.slice(0, 3).join(", ")}${s.touched.length > 3 ? "…" : ""})`;
-    const msg = s.changeApplied
-      ? `Fiz a alteração${label}. Não houve erro na aplicação nem sinal de regressão. A verificação final formal não foi concluída, então não vou afirmar que ela foi validada.`
-      : `Não houve alteração a aplicar nesta execução e a verificação final formal não foi concluída, então não vou afirmar que algo foi validado.`;
-    return { ok: true, reply: msg, error: null, unverified, states };
+  // 3) EDIÇÃO SEM falha concreta. Fecha o ciclo com um RELATÓRIO CLARO:
+  //    o que mudou, arquivos, verificação e resultado. Se nada mudou apesar do
+  //    pedido, explica objetivamente (sem "refaça"). Se foi só conversa/análise
+  //    (não pedia alteração), deixa a resposta do modelo.
+  if (s.mode !== "generate") {
+    if (s.changeApplied) {
+      const msg = buildChangeReport({
+        editedPaths: (s.editedPaths && s.editedPaths.length ? s.editedPaths : s.touched).filter(Boolean),
+        verificationTools: s.verificationTools ?? [],
+        renderVerified: s.renderVerified === true,
+        visualEdit: s.visualEdit === true,
+        verified: s.finishTaskCalled,
+      });
+      return { ok: true, reply: msg, error: null, unverified, states };
+    }
+    if (s.verificationRequired) {
+      const msg = "Nada foi alterado nesta execução. Se você pediu uma mudança, eu não localizei/apontei o elemento ou arquivo correspondente (ou a alteração já estava aplicada). Diga o texto, seção, elemento ou arquivo exato — ou uma referência mais específica — e eu aplico a alteração.";
+      return { ok: true, reply: msg, error: null, unverified, states };
+    }
+    return { ok: true, reply: null, error: null, unverified: false, states };
   }
 
-  // 4) GERAÇÃO sem finish_task: comportamento ATUAL preservado — o server decide
-  //    pela evidência objetiva do Quality Gate (não alteramos a geração aqui).
+  // 4) GERAÇÃO sem finish_task: comportamento ATUAL preservado (o server decide).
   if (unverified) {
     const msg = "Não concluí a VERIFICAÇÃO FINAL desta alteração (finish_task não foi executado com os gates aprovados). Por segurança, NÃO declaro a tarefa como concluída — revise ou refaça a alteração.";
     return { ok: false, reply: msg, error: msg, unverified, states };
   }
 
-  // 5) Verificação formal concluída (finish_task aprovado) ou nada a verificar.
+  // 5) Geração com verificação formal concluída (ou nada a verificar).
   return { ok: true, reply: null, error: null, unverified: false, states };
 }
