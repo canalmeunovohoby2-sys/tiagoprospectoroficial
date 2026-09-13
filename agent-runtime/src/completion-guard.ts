@@ -189,3 +189,104 @@ export function decideFinishBlock(opts: {
   if (gate.ok) return { block: false };
   return blocked("quality", `A revisão automática ainda detecta problemas obrigatórios antes de finalizar. Corrija TODOS e só então chame finish_task novamente:\n${gate.issues.map((i) => `- ${i}`).join("\n")}`);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTERPRETAÇÃO DA CONCLUSÃO (resposta final ao usuário)
+//
+// Regra central: "não verificado" ≠ "falhou". A ausência de finish_task é
+// ausência de CONFIRMAÇÃO FORMAL — não é prova de que a alteração falhou.
+// Só declaramos falha quando há EVIDÊNCIA concreta (gate bloqueou, regressão
+// detectada ou erro real de ferramenta). Nada aqui relaxa os gates: eles rodam
+// antes e continuam bloqueando; isto só traduz o estado final em linguagem
+// honesta.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface CompletionState {
+  mode: "edit" | "generate" | string;
+  /** Motivo terminal de um guard concreto (gate/regressão/visual/console) — null quando não houve. */
+  terminalReason: string | null;
+  /** A missão pedia alteração/layout (verificação faz sentido). */
+  verificationRequired: boolean;
+  /** Algum arquivo mudou nesta execução. */
+  changeApplied: boolean;
+  /** finish_task executado E aprovado pelos gates. */
+  finishTaskCalled: boolean;
+  /** Alguma ferramenta terminou com erro real (tool-result isError). */
+  toolFailure: boolean;
+  toolFailureDetail?: string | null;
+  /** Arquivos alterados nesta execução (para a mensagem honesta). */
+  touched: string[];
+}
+
+export interface CompletionStates {
+  change_applied: boolean;
+  verification_required: boolean;
+  verification_performed: boolean;
+  verification_passed: boolean;
+  regression_detected: boolean;
+  tool_failure: boolean;
+  finish_task_called: boolean;
+}
+
+export interface CompletionVerdict {
+  ok: boolean;
+  /** Mensagem honesta a exibir. `null` = use a resposta do modelo (sucesso normal). */
+  reply: string | null;
+  /** Só é preenchido quando é FALHA real — nunca para "não verificado". */
+  error: string | null;
+  unverified: boolean;
+  states: CompletionStates;
+}
+
+export function classifyCompletion(s: CompletionState): CompletionVerdict {
+  const terminal = s.terminalReason ?? null;
+  const unverified = !terminal && s.verificationRequired && !s.finishTaskCalled;
+  const states: CompletionStates = {
+    change_applied: s.changeApplied,
+    verification_required: s.verificationRequired,
+    verification_performed: s.finishTaskCalled,
+    verification_passed: s.finishTaskCalled,
+    regression_detected: !!terminal,
+    tool_failure: s.toolFailure,
+    finish_task_called: s.finishTaskCalled,
+  };
+
+  // 1) BLOQUEIO CONCRETO (gate de qualidade/regressão/visual/console no limite):
+  //    aqui SIM é falha, com motivo real — preservado integralmente.
+  if (terminal) {
+    return { ok: false, reply: terminal, error: terminal, unverified: false, states };
+  }
+
+  // 2) FALHA REAL DE FERRAMENTA: relata (não finge sucesso, não mascara).
+  if (s.toolFailure) {
+    const detail = s.toolFailureDetail ? ` Detalhe: ${s.toolFailureDetail}.` : "";
+    const partial = s.changeApplied ? " A alteração pode ter ficado parcial." : "";
+    const msg = `Não concluí a alteração: uma ferramenta falhou durante a execução.${partial}${detail}`.trim();
+    return { ok: false, reply: msg, error: msg, unverified, states };
+  }
+
+  // 3) SEM finish_task, mas SEM falha concreta. Em EDIÇÃO, isso é ausência de
+  //    confirmação formal — NÃO prova de falha. Resposta honesta e natural,
+  //    sem mandar o usuário refazer sem evidência.
+  if (unverified && s.mode !== "generate") {
+    const label = s.touched.length === 0
+      ? ""
+      : s.touched.length === 1
+        ? ` em ${s.touched[0]}`
+        : ` em ${s.touched.length} arquivos (${s.touched.slice(0, 3).join(", ")}${s.touched.length > 3 ? "…" : ""})`;
+    const msg = s.changeApplied
+      ? `Fiz a alteração${label}. Não houve erro na aplicação nem sinal de regressão. A verificação final formal não foi concluída, então não vou afirmar que ela foi validada.`
+      : `Não houve alteração a aplicar nesta execução e a verificação final formal não foi concluída, então não vou afirmar que algo foi validado.`;
+    return { ok: true, reply: msg, error: null, unverified, states };
+  }
+
+  // 4) GERAÇÃO sem finish_task: comportamento ATUAL preservado — o server decide
+  //    pela evidência objetiva do Quality Gate (não alteramos a geração aqui).
+  if (unverified) {
+    const msg = "Não concluí a VERIFICAÇÃO FINAL desta alteração (finish_task não foi executado com os gates aprovados). Por segurança, NÃO declaro a tarefa como concluída — revise ou refaça a alteração.";
+    return { ok: false, reply: msg, error: msg, unverified, states };
+  }
+
+  // 5) Verificação formal concluída (finish_task aprovado) ou nada a verificar.
+  return { ok: true, reply: null, error: null, unverified: false, states };
+}

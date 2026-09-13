@@ -9,7 +9,7 @@ import { buildBrowserTools } from "./browser-tools.js";
 import { BrowserSession } from "./browser-session.js";
 import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
-import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
+import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, classifyCompletion, type CompletionStates, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
 import { analyzeVisualEvidence } from "./visual-analysis.js";
 import { hasImageReferenceChange, requestsImageSwap, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
@@ -82,6 +82,8 @@ export interface AgentRunOutcome {
   unverified?: boolean;
   /** Resposta crua do modelo (antes do aviso honesto do guard). */
   rawReply?: string;
+  /** Estados explícitos da conclusão (auditoria/observabilidade). */
+  completion?: CompletionStates;
 }
 
 export interface ProspectorAgentOptions {
@@ -141,6 +143,9 @@ export class ProspectorSiteAgent {
   private lastBrokenImages: number | null = null;
   /** finish_task aceito pelos gates nesta missão (verificação final concluída). */
   private finishCalled = false;
+  /** Falha real de ferramenta nesta execução (tool-result com isError). */
+  private toolFailure = false;
+  private toolFailureDetail: string | null = null;
   /** Pesquisas web REALMENTE executadas nesta missão (prova de não-simulação). */
   private researchTrace: ResearchTraceItem[] = [];
 
@@ -397,6 +402,9 @@ export class ProspectorSiteAgent {
   async runTask(instruction: string, opts?: { continueSession?: boolean }): Promise<AgentRunOutcome> {
     const events: AgentRuntimeEvent[] = [];
     this.currentToolEvents = []; // nova missão → nova trilha de evidência da run
+    // Falha de ferramenta é por EXECUÇÃO (não acumula entre runs).
+    this.toolFailure = false;
+    this.toolFailureDetail = null;
     // RECUPERAÇÃO do Cline: se a sessão ficou presa numa run anterior (ex.: o
     // cliente desistiu após timeout e o engine continua "already running"),
     // abortamos a tarefa em voo ANTES de rodar — sem isso a próxima execução
@@ -428,6 +436,15 @@ export class ProspectorSiteAgent {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const isError = Array.isArray(content) && content.some((c: any) => c?.type === "tool-result" && c?.isError === true);
           rec.ok = !isError;
+          if (isError) {
+            this.toolFailure = true;
+            if (!this.toolFailureDetail) {
+              const toolName = ev.toolName ?? ev.toolCall?.toolName ?? rec.toolName ?? "ferramenta";
+              const firstErr = content.find((c: any) => c?.type === "tool-result" && c?.isError === true);
+              const text = typeof firstErr?.content === "string" ? firstErr.content : "";
+              this.toolFailureDetail = `${toolName}${text ? `: ${text.slice(0, 160)}` : ""}`;
+            }
+          }
         }
         if (toolStart) {
           timing.tools[toolStart.name].ms += Date.now() - toolStart.at;
@@ -478,21 +495,30 @@ export class ProspectorSiteAgent {
       const activity = ProspectorSiteAgent.operationalEvents(events as unknown as never[]);
       this.finalizeTiming(timing, tStart);
       const terminal = this.terminalReason;
-      // FASE 7 — anti-falso-sucesso: se a missão pedia mudança/layout, a run só
-      // conta como concluída se o finish_task passou pelos gates (finishCalled).
-      const unverified = !terminal && instructionRequestsChange(this.currentInstruction) && !this.finishCalled;
-      const honest = terminal
-        ?? (unverified ? "Não concluí a VERIFICAÇÃO FINAL desta alteração (finish_task não foi executado com os gates aprovados). Por segurança, NÃO declaro a tarefa como concluída — revise ou refaça a alteração." : null);
+      // FASE 7 (revisada): a AUSÊNCIA de finish_task é falta de CONFIRMAÇÃO
+      // formal, não prova de falha. `classifyCompletion` separa os estados e só
+      // declara falha com evidência concreta (gate/regressão/erro de ferramenta).
+      const verdict = classifyCompletion({
+        mode: this.options.mode ?? "edit",
+        terminalReason: terminal,
+        verificationRequired: instructionRequestsChange(this.currentInstruction),
+        changeApplied: touched.length > 0,
+        finishTaskCalled: this.finishCalled,
+        toolFailure: this.toolFailure,
+        toolFailureDetail: this.toolFailureDetail,
+        touched,
+      });
       return {
-        ok: terminal || unverified ? false : true,
-        reply: honest ?? this.honestReply(reply, files, touched),
+        ok: verdict.ok,
+        reply: verdict.reply ?? this.honestReply(reply, files, touched),
         files, touched, iterations: 0, events, activity, timing,
-        error: honest ?? undefined,
-        finishSkips: this.finishSkips, finishBlocked: this.finishBlocked || !!terminal || unverified,
+        error: verdict.error ?? undefined,
+        finishSkips: this.finishSkips, finishBlocked: this.finishBlocked || !!terminal,
         researchTrace: this.researchTrace.slice(),
         conversationMessages: result?.messages ?? [],
         terminalReason: terminal ?? null,
-        unverified,
+        unverified: verdict.unverified,
+        completion: verdict.states,
         rawReply: reply,
       };
     } catch (e) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideFinishBlock, instructionRequestsChange, isBroadQualityRequest, MAX_FINISH_SKIPS_DEFAULT, MAX_VISUAL_ITERATIONS_DEFAULT } from "../src/completion-guard";
+import { decideFinishBlock, instructionRequestsChange, isBroadQualityRequest, classifyCompletion, MAX_FINISH_SKIPS_DEFAULT, MAX_VISUAL_ITERATIONS_DEFAULT } from "../src/completion-guard";
 
 const GOOD = {
   "index.html": `<!doctype html><html><head><title>Academia Forte</title></head><body>
@@ -381,5 +381,88 @@ describe("Veracidade absoluta (6.0) — criação/exclusão/falha/parcial", () =
     // alterou (evidência passa) mas não verificou → bloqueia por VERIFICAÇÃO (não mascara parcial como pronto)
     expect(d.block).toBe(true);
     expect(d.reason ?? "").toMatch(/verifica/i);
+  });
+});
+
+describe("Interpretação da conclusão — 'não verificado' ≠ 'falhou' (classifyCompletion)", () => {
+  const base = {
+    mode: "edit" as const,
+    terminalReason: null as string | null,
+    verificationRequired: true,
+    changeApplied: true,
+    finishTaskCalled: false,
+    toolFailure: false,
+    toolFailureDetail: null as string | null,
+    touched: ["src/site.css"],
+  };
+
+  it("Caso A — alteração válida + finish_task aprovado → sucesso (sem mensagem de falha)", () => {
+    const v = classifyCompletion({ ...base, finishTaskCalled: true });
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
+    expect(v.reply).toBeNull(); // usa a resposta do modelo
+    expect(v.states.verification_performed).toBe(true);
+    expect(v.states.verification_passed).toBe(true);
+    expect(v.states.finish_task_called).toBe(true);
+  });
+
+  it("Caso B — válida + sem finish_task + sem erro/regressão → NÃO é falha; honesto e sem 'refaça'", () => {
+    const v = classifyCompletion({ ...base });
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
+    expect(v.reply ?? "").toMatch(/Fiz a alteração em src\/site\.css/);
+    expect(v.reply ?? "").toMatch(/não foi concluída|não vou afirmar/i);
+    expect(v.reply ?? "").not.toMatch(/refaça|revise|falhou|NÃO declaro a tarefa/i);
+    expect(v.states.change_applied).toBe(true);
+    expect(v.states.verification_performed).toBe(false);
+    expect(v.states.verification_passed).toBe(false);
+  });
+
+  it("Caso C — erro real de ferramenta → bloqueia e relata (não finge sucesso)", () => {
+    const v = classifyCompletion({ ...base, toolFailure: true, toolFailureDetail: "edit_file: ENOENT" });
+    expect(v.ok).toBe(false);
+    expect(v.error ?? "").toMatch(/ferramenta falhou/i);
+    expect(v.reply ?? "").toMatch(/edit_file/);
+    expect(v.states.tool_failure).toBe(true);
+  });
+
+  it("Caso D — regressão detectada (terminal) → bloqueia e preserva o motivo real", () => {
+    const motivo = "REGRESSÃO detectada na edição — preserve o trabalho existente.";
+    const v = classifyCompletion({ ...base, terminalReason: motivo });
+    expect(v.ok).toBe(false);
+    expect(v.error).toBe(motivo);
+    expect(v.reply).toBe(motivo);
+    expect(v.states.regression_detected).toBe(true);
+  });
+
+  it("Caso E — alteração visual SEM verificação → aplicada, mas NÃO declara validado", () => {
+    const v = classifyCompletion({ ...base, touched: ["src/site.css"] });
+    expect(v.ok).toBe(true);
+    expect(v.reply ?? "").not.toMatch(/validado|validada com sucesso|Pronto/i);
+    expect(v.reply ?? "").toMatch(/não vou afirmar que ela foi validada/i);
+    expect(v.states.verification_passed).toBe(false);
+  });
+
+  it("Caso F — alteração visual + browser/gates aprovados → validação concluída", () => {
+    const v = classifyCompletion({ ...base, finishTaskCalled: true });
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
+    expect(v.reply).toBeNull();
+    expect(v.states.verification_passed).toBe(true);
+  });
+
+  it("geração sem finish_task mantém o comportamento atual (server decide pelo gate)", () => {
+    const v = classifyCompletion({ ...base, mode: "generate" });
+    expect(v.ok).toBe(false);
+    expect(v.error ?? "").toMatch(/VERIFICAÇÃO FINAL/);
+    expect(v.unverified).toBe(true);
+  });
+
+  it("sem alteração aplicada e sem verificação → honesto, nunca 'falhou'", () => {
+    const v = classifyCompletion({ ...base, changeApplied: false, touched: [] });
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
+    expect(v.reply ?? "").toMatch(/Não houve alteração/i);
+    expect(v.reply ?? "").not.toMatch(/refaça|falhou/i);
   });
 });
