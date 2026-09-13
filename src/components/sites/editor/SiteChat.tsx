@@ -39,6 +39,27 @@ function fileToDataUrl(file: File): Promise<{ dataUrl: string; label: string }> 
   });
 }
 
+/**
+ * Junta dois trechos de transcrição removendo a sobreposição de borda (o
+ * reconhecimento do navegador pode repetir o fim de uma frase ao reiniciar).
+ * Mantém a ordem e nunca "inventa" texto.
+ */
+function mergeTranscript(a: string, b: string): string {
+  const A = a.trim();
+  const B = b.trim();
+  if (!A) return B;
+  if (!B) return A;
+  const aw = A.split(/\s+/);
+  const bw = B.split(/\s+/);
+  const max = Math.min(aw.length, bw.length, 12);
+  for (let n = max; n >= 1; n--) {
+    if (aw.slice(-n).join(" ").toLowerCase() === bw.slice(0, n).join(" ").toLowerCase()) {
+      return [...aw, ...bw.slice(n)].join(" ");
+    }
+  }
+  return `${A} ${B}`;
+}
+
 const LIVE_ICONS: Record<string, string> = {
   analyzing: "🔎",
   editing: "🛠️",
@@ -100,7 +121,20 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
   const fileRef = useRef<HTMLInputElement>(null);
   const recRef = useRef<{ stop: () => void } | null>(null);
   const keepMicRef = useRef(false);
-  const lastFinalRef = useRef("");
+  /** Finais confirmados em sessões anteriores desta gravação (acumulado). */
+  const accumulatedRef = useRef("");
+  /** Finais da sessão ATUAL do reconhecedor (recalculado a cada onresult). */
+  const currentFinalRef = useRef("");
+  /** Garante UMA única finalização por gravação (evita duplicar por onend duplo). */
+  const finalizedRef = useRef(false);
+
+  // Cancelar ao desmontar: para a captura e DESCARTA (não insere texto).
+  useEffect(() => () => {
+    keepMicRef.current = false;
+    const rec = recRef.current;
+    recRef.current = null;
+    if (rec) { try { rec.stop(); } catch { /* já parado */ } }
+  }, []);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
@@ -157,21 +191,36 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
     }
   }
 
-  function stopMic() {
+  // Finaliza a gravação UMA única vez e só ENTÃO insere o texto no campo.
+  // Cancelar = descarta. Erro real = descarta. Nada é inserido durante a gravação.
+  function finalizeMic(cancelled: boolean) {
+    if (finalizedRef.current) return;
+    finalizedRef.current = true;
+    const total = mergeTranscript(accumulatedRef.current, currentFinalRef.current).trim();
+    accumulatedRef.current = "";
+    currentFinalRef.current = "";
+    keepMicRef.current = false;
+    setListening(false);
+    if (cancelled || !total) return;
+    setInstruction((prev) => (prev.trim() ? `${prev.trim()} ${total}` : total));
+  }
+
+  function stopMic(cancelled = false) {
     keepMicRef.current = false;
     const rec = recRef.current;
     recRef.current = null;
     if (rec) {
       try { rec.stop(); } catch { /* já parado */ }
     }
-    setListening(false);
+    finalizeMic(cancelled);
   }
 
-  // Gravação contínua: ao clicar, grava e SÓ PARA quando clicar de novo. O
-  // reconhecimento do navegador pode encerrar sozinho após uma fala — nesse caso
-  // a sessão reinicia automaticamente até o usuário pedir para parar.
+  // Gravação estilo "gravador" (WhatsApp): ao clicar, grava; SÓ finaliza quando
+  // o usuário clicar de novo. O reconhecedor do navegador pode encerrar sozinho
+  // após uma pausa — nesse caso a sessão reinicia e o que já saiu é ACUMULADO,
+  // sem inserir NADA no campo até a parada explícita. Silêncio nunca finaliza.
   function toggleMic() {
-    if (keepMicRef.current) { stopMic(); return; }
+    if (keepMicRef.current) { stopMic(false); return; }
     const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
     const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
     if (!SR) return;
@@ -180,7 +229,10 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
       onresult: (ev: unknown) => void; onend: () => void; onerror: (e: { error?: string }) => void;
       start: () => void; stop: () => void;
     };
-    lastFinalRef.current = "";
+    // Nova gravação → estado limpo (sessões independentes).
+    accumulatedRef.current = "";
+    currentFinalRef.current = "";
+    finalizedRef.current = false;
     keepMicRef.current = true;
 
     const startSession = () => {
@@ -193,23 +245,34 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
         rec.onresult = (ev: unknown) => {
           const results = (ev as { results?: ArrayLike<ArrayLike<{ transcript?: string }> & { isFinal?: boolean }> }).results;
           if (!results) return;
-          const finals = Array.from(results).filter((r) => r?.isFinal).map((r) => r[0]?.transcript ?? "").join(" ").trim();
-          if (finals && finals !== lastFinalRef.current) {
-            lastFinalRef.current = finals;
-            setInstruction((prev) => (prev ? `${prev} ${finals}` : finals).trim());
+          let finals = "";
+          for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            if (r?.isFinal) finals += r[0]?.transcript ?? "";
           }
+          // Apenas ACUMULA — NÃO insere no campo enquanto a gravação está ativa.
+          currentFinalRef.current = finals.trim();
         };
         rec.onend = () => {
-          // Encerrou por si só (fim de frase/silêncio) → continua gravando.
-          if (keepMicRef.current) startSession();
-          else { recRef.current = null; setListening(false); }
+          if (keepMicRef.current) {
+            // Encerrou sozinho (silêncio/fim de frase): acumula e CONTINUA gravando.
+            accumulatedRef.current = mergeTranscript(accumulatedRef.current, currentFinalRef.current);
+            currentFinalRef.current = "";
+            startSession();
+          } else {
+            recRef.current = null;
+            finalizeMic(false);
+          }
         };
         rec.onerror = (e) => {
           const err = e?.error ?? "";
           if (err === "not-allowed" || err === "service-not-allowed" || err === "not-supported") {
-            stopMic();
+            // Erro real: encerra e DESCARTA (não deixa texto parcial).
+            stopMic(true);
           } else if (keepMicRef.current) {
-            // erro temporário (ex.: no-speech/audio-capture) → tenta seguir gravando
+            // Erro temporário (ex.: no-speech/audio-capture) → segue gravando.
+            accumulatedRef.current = mergeTranscript(accumulatedRef.current, currentFinalRef.current);
+            currentFinalRef.current = "";
             startSession();
           }
         };
@@ -217,7 +280,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
         rec.start();
         setListening(true);
       } catch {
-        stopMic();
+        stopMic(true);
       }
     };
     startSession();

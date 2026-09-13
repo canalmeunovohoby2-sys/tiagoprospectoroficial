@@ -17,7 +17,7 @@ import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
 import { SiteVersionsDialog } from "@/components/sites/editor/SiteVersionsDialog";
 import { supabase } from "@/integrations/supabase/client";
-import { exportProjectZip, saveBlob, fetchImageAsDataUrl } from "@/lib/siteDownload";
+import { exportProjectZip, exportWorkspaceZip, saveBlob, fetchImageAsDataUrl } from "@/lib/siteDownload";
 import { buildCommercialPdf, pdfFileName } from "@/lib/sitePdf";
 import { buildConversationContext, buildDesignMemory } from "@/lib/aiEditContext";
 import { materializeProjectFiles, GENERATION_STEPS, EDIT_STEPS, type AgentProgress } from "@/lib/agentProject";
@@ -270,10 +270,28 @@ export default function SiteProjectPage() {
 
   async function handleZip() {
     if (busyAction) return;
-    const specData = currentSpec();
-    if (!specData) { toast.error("Gere o site antes de baixar o projeto."); return; }
     setBusyAction("zip");
     try {
+      // FONTE DE VERDADE = estado ATUAL do projeto (workspace real), não a spec.
+      // O ZIP passa a ser o MESMO site do Preview, com paths relativos preservados
+      // (inclui assets/brand/*.svg, logo SVG, favicon, imagens, CSS/JS, site.json).
+      const persistedCode = project?.generated_code && typeof project.generated_code === "object"
+        ? (project.generated_code as Record<string, unknown>)
+        : {};
+      const persistedFiles = Object.keys(persistedCode).length
+        ? (Object.fromEntries(Object.entries(persistedCode).filter(([, v]) => typeof v === "string")) as Record<string, string>)
+        : null;
+      const realFiles = draftFiles && Object.keys(draftFiles).length ? draftFiles : persistedFiles;
+      const hasRealSite = !!realFiles && Object.keys(realFiles).some((p) => p.endsWith("index.html"));
+      if (hasRealSite) {
+        const { blob, name } = await exportWorkspaceZip(realFiles!);
+        saveBlob(blob, name);
+        toast.success("Projeto baixado");
+        return;
+      }
+      // Projeto legado sem workspace real → reconstrói a partir da spec.
+      const specData = currentSpec();
+      if (!specData) { toast.error("Gere o site antes de baixar o projeto."); return; }
       const { blob, name } = await exportProjectZip(specData as never);
       saveBlob(blob, name);
       toast.success("Projeto baixado");

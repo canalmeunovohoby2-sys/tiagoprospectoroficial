@@ -1,4 +1,4 @@
-import { useState, useRef, type ChangeEvent, type ReactNode } from "react";
+import { useState, useRef, useEffect, type ChangeEvent, type ReactNode } from "react";
 import { ChevronDown, ArrowUp, ArrowDown, Plus, Trash2, Palette, Type, LayoutGrid, MousePointerClick, AlignLeft, Sparkles, RotateCcw, Loader2, AlertTriangle, Mic, Paperclip, Send, X } from "lucide-react";
 import type { SiteSpec, SiteCta } from "@/data/siteProjects";
 import { normalizeSpec } from "@/data/siteProjects";
@@ -191,7 +191,20 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const recRef = useRef<{ stop: () => void } | null>(null);
   const keepMicRef = useRef(false);
-  const lastFinalRef = useRef("");
+  /** Finais confirmados em sessões anteriores desta gravação (acumulado). */
+  const accumulatedRef = useRef("");
+  /** Finais da sessão ATUAL do reconhecedor (recalculado a cada onresult). */
+  const currentFinalRef = useRef("");
+  /** Garante UMA única finalização por gravação (evita duplicar por onend duplo). */
+  const finalizedRef = useRef(false);
+
+  // Cancelar ao desmontar: para a captura e DESCARTA (não insere texto).
+  useEffect(() => () => {
+    keepMicRef.current = false;
+    const rec = recRef.current;
+    recRef.current = null;
+    if (rec) { try { rec.stop(); } catch { /* já parado */ } }
+  }, []);
 
   const chatMsgs = aiPanel?.messages ?? [];
 
@@ -206,6 +219,26 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
     });
   }
 
+  /**
+   * Junta dois trechos de transcrição removendo a sobreposição de borda (o
+   * reconhecimento do navegador pode repetir o fim de uma frase ao reiniciar).
+   */
+  function mergeTranscript(a: string, b: string): string {
+    const A = a.trim();
+    const B = b.trim();
+    if (!A) return B;
+    if (!B) return A;
+    const aw = A.split(/\s+/);
+    const bw = B.split(/\s+/);
+    const max = Math.min(aw.length, bw.length, 12);
+    for (let n = max; n >= 1; n--) {
+      if (aw.slice(-n).join(" ").toLowerCase() === bw.slice(0, n).join(" ").toLowerCase()) {
+        return [...aw, ...bw.slice(n)].join(" ");
+      }
+    }
+    return `${A} ${B}`;
+  }
+
   async function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -217,20 +250,35 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
     }
   }
 
-  function stopMic() {
+  // Finaliza a gravação UMA única vez e só ENTÃO insere o texto no campo.
+  // Cancelar = descarta. Erro real = descarta. Nada é inserido durante a gravação.
+  function finalizeMic(cancelled: boolean) {
+    if (finalizedRef.current) return;
+    finalizedRef.current = true;
+    const total = mergeTranscript(accumulatedRef.current, currentFinalRef.current).trim();
+    accumulatedRef.current = "";
+    currentFinalRef.current = "";
+    keepMicRef.current = false;
+    setListening(false);
+    if (cancelled || !total) return;
+    setAiInstruction((prev) => (prev.trim() ? `${prev.trim()} ${total}` : total));
+  }
+
+  function stopMic(cancelled = false) {
     keepMicRef.current = false;
     const rec = recRef.current;
     recRef.current = null;
     if (rec) {
       try { rec.stop(); } catch { /* já parado */ }
     }
-    setListening(false);
+    finalizeMic(cancelled);
   }
 
-  // Gravação contínua: grava ao clicar e SÓ PARA quando clicar de novo. Se o
-  // navegador encerrar a sessão após uma fala, ela reinicia automaticamente.
+  // Gravação estilo "gravador" (WhatsApp): grava e SÓ finaliza no clique de
+  // parada. Pausas/silêncio não finalizam nem inserem nada; o texto é acumulado
+  // internamente e inserido UMA única vez ao parar.
   function toggleMic() {
-    if (keepMicRef.current) { stopMic(); return; }
+    if (keepMicRef.current) { stopMic(false); return; }
     const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
     const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
     if (!SR) { if (aiPanel) { /* sem suporte */ } return; }
@@ -239,7 +287,10 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
       onresult: (ev: unknown) => void; onend: () => void; onerror: (e: { error?: string }) => void;
       start: () => void; stop: () => void;
     };
-    lastFinalRef.current = "";
+    // Nova gravação → estado limpo (sessões independentes).
+    accumulatedRef.current = "";
+    currentFinalRef.current = "";
+    finalizedRef.current = false;
     keepMicRef.current = true;
 
     const startSession = () => {
@@ -252,21 +303,34 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
         rec.onresult = (ev: unknown) => {
           const results = (ev as { results?: ArrayLike<ArrayLike<{ transcript?: string }> & { isFinal?: boolean }> }).results;
           if (!results) return;
-          const finals = Array.from(results).filter((r) => r?.isFinal).map((r) => r[0]?.transcript ?? "").join(" ").trim();
-          if (finals && finals !== lastFinalRef.current) {
-            lastFinalRef.current = finals;
-            setAiInstruction((prev) => (prev ? `${prev} ${finals}` : finals).trim());
+          let finals = "";
+          for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            if (r?.isFinal) finals += r[0]?.transcript ?? "";
           }
+          // Apenas ACUMULA — NÃO insere no campo enquanto a gravação está ativa.
+          currentFinalRef.current = finals.trim();
         };
         rec.onend = () => {
-          if (keepMicRef.current) startSession();
-          else { recRef.current = null; setListening(false); }
+          if (keepMicRef.current) {
+            // Encerrou sozinho (silêncio/fim de frase): acumula e CONTINUA gravando.
+            accumulatedRef.current = mergeTranscript(accumulatedRef.current, currentFinalRef.current);
+            currentFinalRef.current = "";
+            startSession();
+          } else {
+            recRef.current = null;
+            finalizeMic(false);
+          }
         };
         rec.onerror = (e) => {
           const err = e?.error ?? "";
           if (err === "not-allowed" || err === "service-not-allowed" || err === "not-supported") {
-            stopMic();
+            // Erro real: encerra e DESCARTA (não deixa texto parcial).
+            stopMic(true);
           } else if (keepMicRef.current) {
+            // Erro temporário (ex.: no-speech/audio-capture) → segue gravando.
+            accumulatedRef.current = mergeTranscript(accumulatedRef.current, currentFinalRef.current);
+            currentFinalRef.current = "";
             startSession();
           }
         };
@@ -274,7 +338,7 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
         rec.start();
         setListening(true);
       } catch {
-        stopMic();
+        stopMic(true);
       }
     };
     startSession();
