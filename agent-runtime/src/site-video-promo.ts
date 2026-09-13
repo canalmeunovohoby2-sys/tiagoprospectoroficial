@@ -173,6 +173,30 @@ async function discoverTargets(page: Page): Promise<{ docH: number; vw: number; 
   return raw as { docH: number; vw: number; vh: number; targets: PromoPlanItem[] };
 }
 
+/** Ritmo da apresentação: rolagem LENTA e proporcional à distância + pausas
+ *  maiores nas seções importantes, ajustado para caber em ~totalMs. Puro/testável. */
+export function computePacing(plan: PromoPlanItem[], startY: number, totalMs: number): { scrolls: number[]; dwells: number[]; pauseBefore: number } {
+  const important = new Set(["hero", "cta", "whatsapp", "form", "gallery", "portfolio", "testimonials", "card", "faq", "stats"]);
+  const pauseBefore = 350;
+  const positions = plan.map((t) => Math.max(0, t.top - 60));
+  // Rolagem lenta (~650px/s): duração proporcional à distância, com limites.
+  const scrolls: number[] = [];
+  let prev = Math.max(0, startY);
+  for (const y of positions) {
+    const dist = Math.abs(y - prev);
+    scrolls.push(Math.max(900, Math.min(3400, Math.round(dist * 1.5))));
+    prev = y;
+  }
+  const scrollTotal = scrolls.reduce((a, b) => a + b, 0);
+  const baseDwell = plan.map((t) => (important.has(t.kind) ? 2400 : 1600));
+  // tempo real por cena: pausa antes + movimento do cursor (~900ms) + descida final
+  const fixed = scrollTotal + plan.length * (pauseBefore + 900) + 1500;
+  const nominal = baseDwell.reduce((a, b) => a + b, 0) || 1;
+  const scale = Math.max(0, totalMs - fixed) / nominal;
+  const dwells = baseDwell.map((d) => Math.max(1200, Math.min(3600, Math.round(d * scale))));
+  return { scrolls, dwells, pauseBefore };
+}
+
 /** Roteiro ADAPTATIVO: topo → conteúdo real do site (priorizando o que existe) → fim. */
 export function pickPlan(docH: number, vh: number, targets: PromoPlanItem[]): PromoPlanItem[] {
   const top: PromoPlanItem = targets.find((t) => t.kind === "hero") ?? targets.find((t) => t.kind === "header") ?? { kind: "hero", text: "Topo", top: 0 };
@@ -211,30 +235,31 @@ export function pickPlan(docH: number, vh: number, targets: PromoPlanItem[]): Pr
 }
 
 async function navigateAndRecord(page: Page, plan: PromoPlanItem[], targetSeconds: number): Promise<void> {
-  const n = Math.max(1, plan.length);
-  const budget = Math.max(8000, targetSeconds * 1000 - 2500);
-  const dwellBudget = budget - n * 1500;
-  const heavy = new Set(["gallery", "portfolio", "testimonials", "card", "image", "hero", "cta"]);
+  const startY = (await page.evaluate(`(() => window.scrollY)()`)) as number;
+  const totalMs = Math.max(28000, Math.min(42000, Math.round(targetSeconds * 1000)));
+  const pacing = computePacing(plan, typeof startY === "number" ? startY : 0, totalMs);
   for (let i = 0; i < plan.length; i++) {
     const t = plan[i];
     const cx = t.x ?? 640;
     const cy = t.y ?? 360;
-    await smoothScroll(page, Math.max(0, t.top - 60), 1000);
-    await moveCursor(page, cx, cy, 650);
-    try { await page.mouse.move(cx, cy, { steps: 8 }); } catch { /* hover opcional */ }
+    // pequena pausa ANTES de ir para a próxima seção (naturalidade)
+    await page.waitForTimeout(pacing.pauseBefore);
+    await smoothScroll(page, Math.max(0, t.top - 60), pacing.scrolls[i]);
+    // cursor se move devagar e o mouse real passa por cima (hover REAL)
+    await moveCursor(page, cx, cy, 900);
+    try { await page.mouse.move(cx, cy, { steps: 15 }); } catch { /* hover opcional */ }
     if (t.kind === "cta" || t.kind === "form" || t.kind === "whatsapp") {
       try { await ripple(page, cx, cy); } catch { /* noop */ }
     }
-    const share = heavy.has(t.kind) ? 1.35 : 0.8;
-    const dwell = Math.max(900, Math.min(2800, Math.round((dwellBudget / n) * share)));
-    await page.waitForTimeout(dwell);
+    // permanece na seção (mais tempo nas importantes)
+    await page.waitForTimeout(pacing.dwells[i]);
   }
-  // Encerra mostrando o fim REAL da página (site completo).
+  // Encerra descendo SUAVEMENTE até o fim real da página (footer).
   const endRaw = await page.evaluate(`(() => ({ endY: Math.max(0, document.documentElement.scrollHeight - window.innerHeight), curY: window.scrollY }))()`);
   const end = endRaw as { endY: number; curY: number };
   if (Math.abs(end.curY - end.endY) > 40) {
-    await smoothScroll(page, end.endY, 1200);
-    await page.waitForTimeout(700);
+    await smoothScroll(page, end.endY, 1800);
+    await page.waitForTimeout(1500);
   }
 }
 
@@ -246,7 +271,7 @@ function encodeMp4(webmPath: string, mp4Path: string, w: number, h: number, cine
   const enc = ["-c:v", "libx264", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", mp4Path];
   const attempts: string[][] = [];
   if (cinematic) {
-    attempts.push([...base, "-vf", `zoompan=z='min(1+0.0007*on,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}:fps=30`, ...enc]);
+    attempts.push([...base, "-vf", `zoompan=z='min(1+0.0002*on,1.02)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}:fps=30`, ...enc]);
   }
   attempts.push([...base, ...enc]);
   for (const args of attempts) {
@@ -294,8 +319,8 @@ function validateMp4(mp4Path: string, w: number, h: number): { ok: boolean; chec
 export async function generateSitePromoVideo(opts: PromoVideoOptions): Promise<PromoVideoResult> {
   const w = opts.width ?? DEFAULT_W;
   const h = opts.height ?? DEFAULT_H;
-  const targetSeconds = Math.max(20, Math.min(45, opts.target ?? 30));
-  const cinematic = opts.cinematic !== false;
+  const targetSeconds = Math.max(30, Math.min(45, opts.target ?? 35));
+  const cinematic = opts.cinematic === true; // natural por padrão (sem zoom exagerado)
   const store = opts.store ?? createArtifactStore();
 
   if (!existsSync(join(opts.workspaceRoot, "index.html"))) {
