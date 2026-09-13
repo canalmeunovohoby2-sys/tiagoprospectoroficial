@@ -17,6 +17,7 @@ import { assertGenerationQuality } from "./generation-gate.js";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js";
 import { buildGenerationSeed, formatBaseDirective } from "./site-bases.js";
 import { ensureClientFavicon } from "./site-favicon.js";
+import { generateSitePromoVideo } from "./site-video-promo.js";
 import { buildGenerateSystemPrompt, needsBrandIdentity } from "./agent-identity.js";
 import { materializeAttachments, type ChatAttachment } from "./attachments.js";
 import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
@@ -890,6 +891,46 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           if (!out.ok) { send(res, out.status, { error: out.content }); return; }
           sendBinary(res, out.status, out.contentType ?? "application/octet-stream", out.bytes!);
           return;
+      }
+
+      // GERA VÍDEO do site real (apresentação para o cliente) — MP4 H.264.
+      // SÓ LEITURA: grava o estado atual do projeto, nunca altera arquivos.
+      if (url.pathname === "/video" && req.method === "POST") {
+        const body = (await readJson(req)) as Record<string, unknown>;
+        const projectId = String(body.projectId ?? "").trim();
+        const identity = await resolveIdentity(req.headers.authorization, projectId || undefined);
+        if (!identity) { sendDenied(res, "Autenticação necessária para gerar o vídeo.", 401); return; }
+        if (!projectId || (identity.pid && identity.pid !== projectId)) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
+        const rawFiles = body.files && typeof body.files === "object" ? (body.files as Record<string, unknown>) : {};
+        const files: Record<string, string> = {};
+        for (const [p, c] of Object.entries(rawFiles)) if (typeof c === "string") files[p] = c;
+        if (!Object.keys(files).some((p) => p.endsWith("index.html"))) {
+          send(res, 400, { status: "error", ok: false, error: "projeto sem index.html — não há site para gravar." });
+          return;
+        }
+        ensureWorkspaceDir(projectId, files);
+        const root = resolveWorkspaceRoot(projectId);
+        const phases: string[] = [];
+        const target = Number(body.target ?? 30) || 30;
+        const result = await generateSitePromoVideo({ workspaceRoot: root, projectId, target, onPhase: (ph) => phases.push(ph) });
+        if (!result.ok) {
+          send(res, 200, { status: "error", ok: false, error: result.reason ?? "falha ao gerar o vídeo.", reason: result.reason ?? null, checks: result.checks ?? [], issues: result.issues ?? [], phases });
+          return;
+        }
+        send(res, 200, {
+          status: "ready",
+          ok: true,
+          duration: result.duration ?? null,
+          width: result.width ?? null,
+          height: result.height ?? null,
+          fileSize: result.fileSize ?? null,
+          codec: result.codec ?? "h264",
+          videoUrl: `/artifacts/branding/${projectId}/video/current.mp4`,
+          posterUrl: result.posterRelPath ? `/artifacts/branding/${projectId}/${result.posterRelPath}` : null,
+          checks: result.checks ?? [],
+          phases,
+        });
+        return;
       }
 
       if (url.pathname === "/run" && req.method === "POST") {

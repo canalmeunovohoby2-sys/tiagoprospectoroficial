@@ -32,7 +32,7 @@ export interface SiteVideoManifest {
 }
 const SHA = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
-function serve(root: string): Promise<{ server: Server; url: string }> {
+export function serve(root: string): Promise<{ server: Server; url: string }> {
   return new Promise((done) => {
     const server = createServer((req, res) => {
       let path = decodeURIComponent((req.url ?? "/").split("?")[0]);
