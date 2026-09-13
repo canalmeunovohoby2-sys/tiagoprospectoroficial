@@ -352,6 +352,74 @@ export async function captureWorkspaceScreenshots(files: Record<string, string>)
   }
 }
 
+export interface SiteVideoResult {
+  ok: boolean;
+  status: "ready" | "error";
+  duration?: number | null;
+  width?: number | null;
+  height?: number | null;
+  fileSize?: number | null;
+  codec?: string | null;
+  videoUrl?: string | null;
+  posterUrl?: string | null;
+  error?: string | null;
+  issues?: string[];
+  phases?: string[];
+}
+
+/**
+ * GERA VÍDEO do site real do projeto (MP4 H.264) no Agent Runtime.
+ * Envia o estado ATUAL do projeto (draftFiles) — o runtime grava em Chromium e
+ * devolve a URL do artifact. O download é feito via fetchRuntimeArtifact (auth).
+ */
+export async function generateSiteVideo(input: {
+  files: Record<string, string>;
+  projectId: string;
+  target?: number;
+}): Promise<SiteVideoResult> {
+  const sel = await resolveEditorRuntime();
+  if (sel.state === "none") return { ok: false, status: "error", error: "not_configured" };
+  if (sel.state === "ollama_local_missing") {
+    return { ok: false, status: "error", error: "Agent Runtime Local não está em execução neste computador." };
+  }
+  if (!input.files || !Object.keys(input.files).some((k) => k.endsWith("index.html"))) {
+    return { ok: false, status: "error", error: "O projeto não tem index.html — não há site para gravar." };
+  }
+  const token = await editorRuntimeAuth(sel, input.projectId);
+  if (!token) return { ok: false, status: "error", error: "Não foi possível autenticar. Recarregue a página e tente novamente." };
+  try {
+    const res = await fetch(`${sel.url.replace(/\/$/, "")}/video`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ files: input.files, projectId: input.projectId, target: input.target ?? 30 }),
+      signal: AbortSignal.timeout(300_000),
+    });
+    const data = (await res.json().catch(() => ({}))) as SiteVideoResult;
+    if (!res.ok) return { ok: false, status: "error", error: data?.error ?? `Falha no runtime (HTTP ${res.status}).` };
+    return { ...data, ok: data.ok === true && data.status === "ready" };
+  } catch (e) {
+    return { ok: false, status: "error", error: e instanceof Error ? e.message : "Falha de rede/runtime ao gerar o vídeo." };
+  }
+}
+
+/** Baixa um artifact do runtime (com autenticação) como Blob — player e download. */
+export async function fetchRuntimeArtifact(relUrl: string, projectId: string): Promise<Blob | null> {
+  const sel = await resolveEditorRuntime();
+  if (sel.state !== "local" && sel.state !== "remote") return null;
+  const token = await editorRuntimeAuth(sel, projectId);
+  if (!token) return null;
+  try {
+    const res = await fetch(`${sel.url.replace(/\/$/, "")}${relUrl}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch {
+    return null;
+  }
+}
+
 export async function invokeProspectorAgent(input: {
   instruction: string;
   files: Record<string, string>;

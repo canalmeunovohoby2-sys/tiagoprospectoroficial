@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon, Code2, Send } from "lucide-react";
+import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon, Code2, Send, Video, Download } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,7 @@ import {
   fetchSiteProject, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
   createSiteVersion, invokeAgentExecute, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
-  captureWorkspaceScreenshots,} from "@/lib/siteProjectsApi";
+  captureWorkspaceScreenshots, generateSiteVideo, fetchRuntimeArtifact,} from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
 import { SiteVersionsDialog } from "@/components/sites/editor/SiteVersionsDialog";
@@ -108,6 +108,12 @@ export default function SiteProjectPage() {
   const [aiHistory, setAiHistory] = useState<Array<{ spec: SiteSpec; files?: Record<string, string> | null }>>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<"pdf" | "zip" | null>(null);
+  // Vídeo de apresentação do site (MP4 H.264) — gerado no Agent Runtime.
+  const [generatingVideo, setGeneratingVideo] = useState(false);
+  const [videoPhase, setVideoPhase] = useState<string | null>(null);
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [videoInfo, setVideoInfo] = useState<{ duration: number; width: number; height: number; fileSize: number; codec: string } | null>(null);
+  const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
@@ -299,6 +305,63 @@ export default function SiteProjectPage() {
       toast.error(e instanceof Error ? e.message : "Erro ao gerar o ZIP");
     } finally {
       setBusyAction(null);
+    }
+  }
+
+  function videoFileName(): string {
+    const raw = String(projectLead?.name || (project?.spec as { business?: { name?: string } } | null)?.business?.name || "cliente");
+    const slug = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "cliente";
+    return `${slug}-apresentacao-site.mp4`;
+  }
+
+  async function handleGenerateVideo() {
+    if (generatingVideo) return;
+    const persistedCode = project?.generated_code && typeof project.generated_code === "object"
+      ? (project.generated_code as Record<string, unknown>)
+      : {};
+    const persistedFiles = Object.keys(persistedCode).length
+      ? (Object.fromEntries(Object.entries(persistedCode).filter(([, v]) => typeof v === "string")) as Record<string, string>)
+      : null;
+    const realFiles = draftFiles && Object.keys(draftFiles).length ? draftFiles : persistedFiles;
+    if (!project?.id || !realFiles || !Object.keys(realFiles).some((p) => p.endsWith("index.html"))) {
+      toast.error("Gere o site antes de criar o vídeo.");
+      return;
+    }
+    setGeneratingVideo(true);
+    setVideoError(null);
+    setVideoInfo(null);
+    if (videoBlobUrl) { URL.revokeObjectURL(videoBlobUrl); setVideoBlobUrl(null); }
+    const phases = ["Preparando…", "Abrindo o site no navegador…", "Gravando navegação…", "Processando vídeo (MP4/H.264)…", "Finalizando…"];
+    let pi = 0;
+    setVideoPhase(phases[0]);
+    const timer = window.setInterval(() => { pi = Math.min(pi + 1, phases.length - 1); setVideoPhase(phases[pi]); }, 5000);
+    try {
+      const res = await generateSiteVideo({ files: realFiles, projectId: project.id, target: 30 });
+      if (!res.ok || !res.videoUrl) {
+        setVideoError(res.error ?? "Não foi possível gerar o vídeo.");
+        toast.error("Falha ao gerar o vídeo");
+        return;
+      }
+      setVideoPhase("Baixando o vídeo…");
+      const blob = await fetchRuntimeArtifact(res.videoUrl, project.id);
+      if (!blob) { setVideoError("O vídeo foi gerado, mas não foi possível baixá-lo do runtime."); return; }
+      const url = URL.createObjectURL(blob);
+      setVideoBlobUrl(url);
+      setVideoInfo({
+        duration: Math.round(res.duration ?? 0),
+        width: res.width ?? 1280,
+        height: res.height ?? 720,
+        fileSize: res.fileSize ?? blob.size,
+        codec: String(res.codec ?? "h264").toUpperCase(),
+      });
+      setVideoPhase("Vídeo pronto");
+      toast.success("Vídeo gerado");
+    } catch (e) {
+      setVideoError(e instanceof Error ? e.message : "Falha ao gerar o vídeo.");
+      toast.error("Falha ao gerar o vídeo");
+    } finally {
+      window.clearInterval(timer);
+      setGeneratingVideo(false);
     }
   }
 
@@ -969,6 +1032,35 @@ export default function SiteProjectPage() {
             </Button>
             <GitHubProjectButton projectId={project.id} userId={user?.id} />
           </div>
+        </Card>
+      )}
+
+      {hasSpec && (
+        <Card className="p-3.5 border-primary/20 bg-primary/5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Vídeo de apresentação</p>
+              <p className="text-xs text-muted-foreground">Grava o site real no navegador (Chromium) e gera um MP4 H.264 para enviar ao cliente.</p>
+            </div>
+            <Button size="sm" onClick={handleGenerateVideo}
+              disabled={generatingVideo || !(draftFiles && Object.keys(draftFiles).some((p) => p.endsWith("index.html")))}>
+              {generatingVideo ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Video className="h-3.5 w-3.5 mr-1" />}
+              {generatingVideo ? "Gerando vídeo…" : videoBlobUrl ? "Gerar novamente" : "Gerar vídeo"}
+            </Button>
+          </div>
+          {generatingVideo && videoPhase && <p className="text-xs text-muted-foreground mt-3">{videoPhase}</p>}
+          {videoError && !generatingVideo && <p className="text-xs text-destructive mt-3">⚠ {videoError}</p>}
+          {videoBlobUrl && videoInfo && (
+            <div className="mt-3 space-y-2">
+              <video src={videoBlobUrl} controls className="w-full max-w-xl rounded-lg border bg-black" />
+              <p className="text-[11px] text-muted-foreground">
+                {videoInfo.duration}s · {videoInfo.width}×{videoInfo.height} · {(videoInfo.fileSize / (1024 * 1024)).toFixed(1)} MB · {videoInfo.codec}
+              </p>
+              <Button asChild size="sm" variant="outline">
+                <a href={videoBlobUrl} download={videoFileName()}><Download className="h-3.5 w-3.5 mr-1" /> Baixar MP4</a>
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 
