@@ -86,6 +86,53 @@ export interface AgentRunOutcome {
   completion?: CompletionStates;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Detecção de FALHA DE FERRAMENTA
+// Duas formas contam como falha real:
+//   1) o SDK marcou o tool-result com isError === true; ou
+//   2) a ferramenta retornou um resultado ESTRUTURADO com `error` real
+//      (ex.: { error: "..." } ou { ok: false, error: "..." }).
+// NÃO conta como falha: { ok: true }, resultado normal, ou texto que apenas
+// MENCIONE a palavra "error" (sem campo estruturado `error`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Texto de um tool-result (string direta ou array de partes de texto). */
+function toolResultText(part: unknown): string {
+  const p = part as { content?: unknown };
+  if (typeof p?.content === "string") return p.content;
+  if (Array.isArray(p?.content)) {
+    return (p.content as unknown[])
+      .map((x) => (typeof x === "string" ? x : typeof (x as { text?: unknown })?.text === "string" ? String((x as { text: string }).text) : ""))
+      .join("");
+  }
+  return "";
+}
+
+/** Se o JSON estruturado da ferramenta indica erro real, devolve a mensagem; senão null. */
+export function parseStructuredToolError(text: string): string | null {
+  const t = String(text ?? "").trim();
+  if (!t.startsWith("{")) return null;
+  let obj: unknown;
+  try { obj = JSON.parse(t); } catch { return null; }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+  const err = (obj as { error?: unknown }).error;
+  if (typeof err === "string" && err.trim()) return err.trim();
+  return null;
+}
+
+/** Detecção unificada de falha de ferramenta (SDK isError OU `{error}` estruturado). */
+export function toolResultReportsError(content: unknown): { isError: boolean; message?: string } {
+  if (!Array.isArray(content)) return { isError: false };
+  for (const c of content as Array<{ type?: unknown; isError?: unknown }>) {
+    if (c?.type !== "tool-result") continue;
+    const text = toolResultText(c);
+    if (c?.isError === true) return { isError: true, message: text.slice(0, 160) || undefined };
+    const msg = parseStructuredToolError(text);
+    if (msg) return { isError: true, message: msg };
+  }
+  return { isError: false };
+}
+
 export interface ProspectorAgentOptions {
   workspaceRoot: string;
   business: BusinessContext;
@@ -433,16 +480,14 @@ export class ProspectorSiteAgent {
         if (rec) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const content = (ev as any)?.message?.content;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const isError = Array.isArray(content) && content.some((c: any) => c?.type === "tool-result" && c?.isError === true);
-          rec.ok = !isError;
-          if (isError) {
+          // Falha REAL: SDK isError OU resultado estruturado com `error`/`ok:false`.
+          const detection = toolResultReportsError(content);
+          rec.ok = !detection.isError;
+          if (detection.isError) {
             this.toolFailure = true;
             if (!this.toolFailureDetail) {
               const toolName = ev.toolName ?? ev.toolCall?.toolName ?? rec.toolName ?? "ferramenta";
-              const firstErr = content.find((c: any) => c?.type === "tool-result" && c?.isError === true);
-              const text = typeof firstErr?.content === "string" ? firstErr.content : "";
-              this.toolFailureDetail = `${toolName}${text ? `: ${text.slice(0, 160)}` : ""}`;
+              this.toolFailureDetail = `${toolName}${detection.message ? `: ${detection.message}` : ""}`;
             }
           }
         }
@@ -490,7 +535,8 @@ export class ProspectorSiteAgent {
       const result = (await (shouldContinue ? this.agent.continue(prompt) : this.agent.run(prompt))) as { messages?: unknown[] };
       this.conversationStarted = true;
       const files = readWorkspace(this.options.workspaceRoot);
-      const touched = Object.keys(files).filter((p) => stateBefore[p] !== files[p]);
+      // Inclui caminhos REMOVIDOS (delete/rename/move) além dos criados/alterados.
+      const touched = [...new Set([...Object.keys(files), ...Object.keys(stateBefore)])].filter((p) => stateBefore[p] !== files[p]);
       const reply = extractLastAssistantText(result?.messages ?? []) || "Concluído.";
       const activity = ProspectorSiteAgent.operationalEvents(events as unknown as never[]);
       this.finalizeTiming(timing, tStart);

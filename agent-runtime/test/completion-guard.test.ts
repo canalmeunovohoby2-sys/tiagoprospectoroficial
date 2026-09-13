@@ -384,6 +384,33 @@ describe("Veracidade absoluta (6.0) — criação/exclusão/falha/parcial", () =
   });
 });
 
+describe("Compreensão de intenção (natural) — pedido de mudança sem palavra exata", () => {
+  const requests = [
+    "Coloca umas animações no site.",
+    "O site está muito parado, dá mais movimento.",
+    "Quero que as coisas apareçam conforme eu rolar.",
+    "Quando eu navegar pela página, quero os elementos entrando suavemente.",
+    "Dá mais vida para esse site com efeitos de movimento.",
+    "Quero efeitos de entrada nas seções.",
+    "O site está muito parado. Conforme a gente for navegando pelo site, as coisas vão aparecendo com algum tipo de efeito de movimento.",
+    "deixe o site mais dinâmico",
+  ];
+  it("reconhece pedidos naturais de mudança (inclusive movimento/animação) como ALTERAÇÃO", () => {
+    for (const q of requests) expect(instructionRequestsChange(q), q).toBe(true);
+  });
+  it("continua NÃO tratando pergunta/explicação nem conversa fiada como alteração", () => {
+    for (const q of ["qual classe controla o título?", "o que dá pra melhorar nesse site?", "me explique a estrutura do projeto", "obrigado", "valeu!", "ok"]) {
+      expect(instructionRequestsChange(q), q).toBe(false);
+    }
+  });
+  it("pedido natural de motion rearma o guard de evidência (sem alteração → bloqueia)", () => {
+    const START = { "index.html": "<h1>Loja</h1>" };
+    const d = decideFinishBlock({ mode: "edit", files: START, startFiles: START, instruction: "O site está muito parado, quero que as coisas apareçam conforme eu rolo", finishSkips: 0 });
+    expect(d.block).toBe(true);
+    expect(d.kind).toBe("evidence");
+  });
+});
+
 describe("Interpretação da conclusão — 'não verificado' ≠ 'falhou' (classifyCompletion)", () => {
   const base = {
     mode: "edit" as const,

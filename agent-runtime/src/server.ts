@@ -11,11 +11,12 @@ import { ProspectorSiteAgent, isSurgicalEditTask } from "./prospector-site-agent
 import { BrowserSession } from "./browser-session.js";
 import { auditSiteInteractions } from "./interaction-audit.js";
 import { isBugReport } from "./completion-guard.js";
-import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace } from "./workspace.js";
+import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace, materializeWorkspace } from "./workspace.js";
 import type { BusinessContext } from "./tools.js";
 import { assertGenerationQuality } from "./generation-gate.js";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js";
 import { buildGenerationSeed, formatBaseDirective } from "./site-bases.js";
+import { ensureClientFavicon } from "./site-favicon.js";
 import { buildGenerateSystemPrompt, needsBrandIdentity } from "./agent-identity.js";
 import { materializeAttachments, type ChatAttachment } from "./attachments.js";
 import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
@@ -777,6 +778,13 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         const interaction = await runInteractionGate(agent, resolveWorkspaceRoot(projectId), activity);
         if (interaction.cycles > 0) activity.push({ phase: "verifying", detail: interaction.ok ? "Interações corrigidas e revalidadas." : "Interações ainda com problema (entrega bloqueada)." });
         const finalFiles = readWorkspace(resolveWorkspaceRoot(projectId));
+        // FAVICON DO CLIENTE (final): se o Branding Studio criou a logo do cliente
+        // (assets/brand/*.svg), o favicon passa a usar o SÍMBOLO dela; senão mantém
+        // o monograma do cliente já semeado na base. Persiste index.html + asset.
+        const fav = ensureClientFavicon(finalFiles, business, creativeBrief.tokens.palette);
+        if (fav.changed) materializeWorkspace(resolveWorkspaceRoot(projectId), fav.files);
+        const deliveredFiles = fav.changed ? fav.files : finalFiles;
+        genLog(genId, "CLIENT_FAVICON", { source: fav.source, href: fav.href, changed: fav.changed });
         const genBlocked = !interaction.ok;
         // Move o agente de geração para o pool de edição do mesmo projectId,
         // para que o chat continue a MESMA conversa/sessão após a geração.
@@ -822,7 +830,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           interaction_blocked: genBlocked || undefined,
           changed: true,
           touched: finalOutcome.touched,
-          files: finalFiles,
+          files: deliveredFiles,
           model: genExec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
           provider: genExec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
           config_source: genExec.source,

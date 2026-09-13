@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { materializeWorkspace, readWorkspace } from "../src/workspace";
@@ -140,5 +140,128 @@ describe("ProspectorSiteAgent — workspace (Cline SDK runtime)", () => {
     expect(parsed.truncated).toBe(true);
     expect(parsed.files?.length).toBe(200);
     expect(parsed.total ?? 0).toBeGreaterThan(200);
+  });
+});
+
+describe("Autonomia — rename_file / move_file / run_command (workspace isolado)", () => {
+  let r = "";
+  let tl: ReturnType<typeof buildSiteTools>;
+
+  function callTool(name: string, input: Record<string, unknown>): Promise<string> {
+    const tool = tl.find((t) => (t as unknown as { name: string }).name === name);
+    if (!tool) return Promise.resolve(JSON.stringify({ error: "tool não encontrada" }));
+    const exec = (tool as unknown as { execute: (i: never) => Promise<string> }).execute;
+    return exec(input as never);
+  }
+
+  beforeAll(() => {
+    r = mkdtempSync(join(tmpdir(), "prospector-agent-tools2-"));
+    tl = buildSiteTools({ workspaceRoot: r, business: { name: "Empresa X" } });
+    mkdirSync(join(r, "assets"), { recursive: true });
+    writeFileSync(join(r, "assets/logo.svg"), '<svg id="logo"></svg>', "utf8");
+    writeFileSync(join(r, "a.txt"), "CONTEUDO-A", "utf8");
+    writeFileSync(join(r, "index.html"), "<!doctype html><html><body>x</body></html>", "utf8");
+  });
+  afterAll(() => {
+    // O teste de timeout mata a árvore de processos; aguarda um instante caso o
+    // SO ainda esteja liberando o diretório antes de remover.
+    try { rmSync(r, { recursive: true, force: true }); }
+    catch { try { rmSync(r, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }); } catch { /* noop */ } }
+  });
+
+  it("rename_file válido: preserva conteúdo, cria pasta e move o caminho", async () => {
+    const out = JSON.parse(await callTool("rename_file", { from: "assets/logo.svg", to: "assets/brand/logo-v1.svg" })) as { ok?: boolean; from?: string; to?: string };
+    expect(out.ok).toBe(true);
+    expect(out.to).toBe("assets/brand/logo-v1.svg");
+    expect(existsSync(join(r, "assets/logo.svg"))).toBe(false);
+    expect(readFileSync(join(r, "assets/brand/logo-v1.svg"), "utf8")).toBe('<svg id="logo"></svg>');
+  });
+
+  it("rename_file rejeita '..', caminho absoluto e origem inexistente", async () => {
+    expect(await callTool("rename_file", { from: "../x.txt", to: "y.txt" })).toContain("fora do workspace");
+    expect(await callTool("rename_file", { from: "a.txt", to: "../../y.txt" })).toContain("fora do workspace");
+    expect(await callTool("rename_file", { from: "a.txt", to: "/tmp/y.txt" })).toContain("absoluto");
+    expect(await callTool("rename_file", { from: "naoexiste.txt", to: "z.txt" })).toContain("não encontrado");
+  });
+
+  it("rename_file protege arquivos ESTRUTURAIS", async () => {
+    const out = await callTool("rename_file", { from: "index.html", to: "home.html" });
+    expect(out).toContain("ESTRUTURAL");
+    expect(existsSync(join(r, "index.html"))).toBe(true);
+  });
+
+  it("move_file válido: cria destino seguro e preserva o conteúdo", async () => {
+    const out = JSON.parse(await callTool("move_file", { from: "a.txt", to: "src/deep/b.txt" })) as { ok?: boolean; to?: string };
+    expect(out.ok).toBe(true);
+    expect(out.to).toBe("src/deep/b.txt");
+    expect(existsSync(join(r, "a.txt"))).toBe(false);
+    expect(readFileSync(join(r, "src/deep/b.txt"), "utf8")).toBe("CONTEUDO-A");
+  });
+
+  it("move_file rejeita traversal/absoluto/inexistente", async () => {
+    expect(await callTool("move_file", { from: "src/deep/b.txt", to: "../fora.txt" })).toContain("fora do workspace");
+    expect(await callTool("move_file", { from: "src/deep/b.txt", to: "C:\\Windows\\x.txt" })).toContain("absoluto");
+    expect(await callTool("move_file", { from: "naoexiste.txt", to: "x.txt" })).toContain("não encontrado");
+  });
+
+  it("run_command sem package.json devolve erro real", async () => {
+    const out = await callTool("run_command", { action: "run", script: "build" });
+    expect(out).toContain("package.json");
+  });
+
+  it("run_command roda script do próprio package.json (ok, cwd=workspace)", async () => {
+    writeFileSync(join(r, "package.json"), JSON.stringify({
+      name: "t", private: true,
+      scripts: {
+        hello: "node -e \"console.log('HI-RUN')\"",
+        touch: "node -e \"require('fs').writeFileSync('ran-in-workspace.txt','1')\"",
+        fail: "node -e \"process.exit(3)\"",
+        slow: "node -e \"setTimeout(()=>{}, 4000)\"",
+        big: "node -e \"console.log('x'.repeat(250000))\"",
+        printsecret: "node -e \"console.log('SEC='+(process.env.SUPER_SECRET_TOKEN ?? 'absent'))\"",
+      },
+    }), "utf8");
+    const hello = JSON.parse(await callTool("run_command", { action: "run", script: "hello" })) as { ok?: boolean; code?: number; stdout?: string };
+    expect(hello.ok).toBe(true);
+    expect(hello.code).toBe(0);
+    expect(hello.stdout).toContain("HI-RUN");
+    const touch = JSON.parse(await callTool("run_command", { action: "run", script: "touch" })) as { ok?: boolean };
+    expect(touch.ok).toBe(true);
+    expect(existsSync(join(r, "ran-in-workspace.txt"))).toBe(true); // rodou com cwd = workspace
+  });
+
+  it("run_command rejeita script inexistente e nome inválido (sem shell livre)", async () => {
+    expect(await callTool("run_command", { action: "run", script: "naoexiste" })).toContain("não existe");
+    expect(await callTool("run_command", { action: "run", script: "hello; rm -rf /" })).toContain("inválido");
+  });
+
+  it("run_command: exit code != 0 vira falha real", async () => {
+    const out = JSON.parse(await callTool("run_command", { action: "run", script: "fail" })) as { error?: string; code?: number };
+    expect(out.code).toBe(3);
+    expect(out.error ?? "").toContain("exit 3");
+  });
+
+  it("run_command: timeout é falha real", async () => {
+    const out = JSON.parse(await callTool("run_command", { action: "run", script: "slow", timeoutMs: 1200 })) as { error?: string; timedOut?: boolean };
+    expect(out.timedOut).toBe(true);
+    expect(out.error ?? "").toContain("timeout");
+  }, 20000);
+
+  it("run_command: saída limitada (truncada)", async () => {
+    const out = JSON.parse(await callTool("run_command", { action: "run", script: "big" })) as { ok?: boolean; stdout?: string };
+    expect(out.ok).toBe(true);
+    expect((out.stdout ?? "").length).toBeLessThanOrEqual(200_100);
+    expect(out.stdout ?? "").toContain("truncada");
+  }, 20000);
+
+  it("run_command NÃO propaga secrets no ambiente", async () => {
+    process.env.SUPER_SECRET_TOKEN = "LEAK-ME";
+    try {
+      const out = JSON.parse(await callTool("run_command", { action: "run", script: "printsecret" })) as { stdout?: string };
+      expect(out.stdout ?? "").toContain("SEC=absent");
+      expect(out.stdout ?? "").not.toContain("LEAK-ME");
+    } finally {
+      delete process.env.SUPER_SECRET_TOKEN;
+    }
   });
 });

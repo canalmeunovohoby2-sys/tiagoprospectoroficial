@@ -194,6 +194,11 @@ export function buildEditSystemPrompt(opts?: { branding?: boolean }): string {
   const brand = opts?.branding ? `\n\n${BRAND_IDENTITY_SKILL}` : "";
   return `${AGENT_IDENTITY}${brand}
 
+INTERPRETAÇÃO DO PEDIDO (edição):
+- Se o usuário DESCREVE um comportamento/resultado desejado do site — mesmo SEM um verbo de comando (ex.: "o site está muito parado, queria que as coisas aparecessem conforme eu rolo a página", "quero efeitos de entrada nas seções") — isso É um pedido de alteração: LOCALIZE no código existente e EXECUTE. Não responda apenas com uma sugestão ("posso adicionar…") nem peça confirmação quando a intenção é clara.
+- PRESERVAR significa não mexer no que NÃO foi pedido — NÃO significa recusar, adiar ou apenas sugerir a mudança solicitada.
+- Você escolhe a implementação (HTML/CSS/JS) lendo o código existente; não presuma uma tecnologia fixa (ex.: motion pode ser feito com @keyframes, classes de animação, IntersectionObserver ou o JS já existente — conforme o projeto).
+
 ${BROWSER_QA_INSTRUCTIONS}
 
 O site DEVE continuar válido: index.html com <!doctype html>, <style> balanceado, src/site.json JSON válido.`;

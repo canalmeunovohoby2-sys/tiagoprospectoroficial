@@ -32,6 +32,19 @@ describe("classifyTask — classificação de tarefa (6.0)", () => {
     expect(requiresVisualCycle("content")).toBe(false);
     expect(requiresVisualCycle("code")).toBe(false);
   });
+
+  it("movimento/animação/scroll reveal → visual (alteração visual real, exige ciclo)", () => {
+    for (const q of [
+      "o site está muito parado, queria que as coisas aparecessem conforme eu rolo a página",
+      "coloque efeitos de movimento conforme eu navego pelo site",
+      "quero animações de entrada nas seções",
+      "deixe o site mais dinâmico com efeitos",
+      "revele as seções conforme aparecem na tela",
+      "fade-in ao entrar na viewport",
+    ]) {
+      expect(classifyTask(q), q).toBe("visual");
+    }
+  });
 });
 
 describe("Ciclo visual autônomo no completion guard (6.0)", () => {

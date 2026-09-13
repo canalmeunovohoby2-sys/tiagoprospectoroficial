@@ -3,7 +3,8 @@
 // (zod + lifecycle). Nada acessa fora do root do projeto.
 import { z } from "zod";
 import { createTool } from "@cline/sdk";
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync, renameSync, existsSync, readdirSync, statSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { join, dirname, relative, sep } from "node:path";
 import { resolve } from "node:path";
 import { classifyTask } from "./visual-task.js";
@@ -107,6 +108,12 @@ function safeJoin(root: string, path: string): string | null {
 
 function relOf(root: string, abs: string): string {
   return relative(root, abs).split(sep).join("/");
+}
+
+// Caminho absoluto (POSIX `/...` ou Windows `C:\...` / `\\`) — nunca aceito nas
+// ferramentas de arquivo (devem ser sempre relativos ao workspace).
+function isAbsoluteInput(p: unknown): boolean {
+  return /^(?:[A-Za-z]:[\\/]|[\\/])/.test(String(p ?? "").trim());
 }
 
 export function buildSiteTools(env: ToolEnv) {
@@ -545,7 +552,155 @@ export function buildSiteTools(env: ToolEnv) {
     },
   });
 
-  const tools = [list, read, write, edit, remove, context, imagePlan, branding, mockup, brand_pdf, brand_package, site_video];
+  // ── rename_file / move_file / run_command (autonomia de projeto) ──────────
+  // Todas usam safeJoin (mesma proteção do resto): sem `..`, sem absoluto, sem
+  // `.env*`, sempre dentro do workspace. Arquivos ESTRUTURAIS não podem ser
+  // removidos do seu caminho (mesma regra do delete_file).
+  const rename = createTool({
+    name: "rename_file",
+    description:
+      "Renomeia um arquivo DENTRO do projeto (mesma pasta ou outra), preservando o conteúdo. Cria o diretório de destino se necessário. Não sai do workspace e não renomeia arquivos ESTRUTURAIS (index.html, src/site.css, src/main.js, src/site.json, package.json).",
+    inputSchema: z.object({
+      from: z.string().describe("caminho atual (relativo ao workspace)"),
+      to: z.string().describe("novo caminho (relativo ao workspace)"),
+    }),
+    async execute(input) {
+      if (isAbsoluteInput(input.from) || isAbsoluteInput(input.to)) {
+        return JSON.stringify({ error: "caminho absoluto não permitido (use caminho relativo ao projeto)" });
+      }
+      const cleanFrom = String(input.from ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+      if (CRITICAL_SITE_FILES.has(cleanFrom)) {
+        return JSON.stringify({ error: `"${cleanFrom}" é um arquivo ESTRUTURAL do site e não pode ser renomeado (quebraria o site). Altere o conteúdo com edit_file.` });
+      }
+      const src = safeJoin(root, input.from);
+      const dst = safeJoin(root, input.to);
+      if (!src || !dst) return JSON.stringify({ error: "caminho inválido (fora do workspace)" });
+      if (!existsSync(src)) return JSON.stringify({ error: `arquivo de origem não encontrado: ${relOf(root, src)}` });
+      try {
+        mkdirSync(dirname(dst), { recursive: true });
+        renameSync(src, dst);
+      } catch (e) {
+        return JSON.stringify({ error: `falha ao renomear: ${e instanceof Error ? e.message : String(e)}` });
+      }
+      return JSON.stringify({ ok: true, from: relOf(root, src), to: relOf(root, dst) });
+    },
+  });
+
+  const move = createTool({
+    name: "move_file",
+    description:
+      "Move um arquivo para outra pasta DENTRO do projeto, preservando o conteúdo e criando o diretório de destino. Não sai do workspace e não move arquivos ESTRUTURAIS (index.html, src/site.css, src/main.js, src/site.json, package.json).",
+    inputSchema: z.object({
+      from: z.string().describe("origem (relativa ao workspace)"),
+      to: z.string().describe("destino (relativo ao workspace, incluindo o nome do arquivo)"),
+    }),
+    async execute(input) {
+      if (isAbsoluteInput(input.from) || isAbsoluteInput(input.to)) {
+        return JSON.stringify({ error: "caminho absoluto não permitido (use caminho relativo ao projeto)" });
+      }
+      const cleanFrom = String(input.from ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+      if (CRITICAL_SITE_FILES.has(cleanFrom)) {
+        return JSON.stringify({ error: `"${cleanFrom}" é um arquivo ESTRUTURAL do site e não pode ser movido (quebraria o site).` });
+      }
+      const src = safeJoin(root, input.from);
+      const dst = safeJoin(root, input.to);
+      if (!src || !dst) return JSON.stringify({ error: "caminho inválido (fora do workspace)" });
+      if (!existsSync(src)) return JSON.stringify({ error: `arquivo de origem não encontrado: ${relOf(root, src)}` });
+      try {
+        mkdirSync(dirname(dst), { recursive: true });
+        renameSync(src, dst);
+      } catch (e) {
+        return JSON.stringify({ error: `falha ao mover: ${e instanceof Error ? e.message : String(e)}` });
+      }
+      return JSON.stringify({ ok: true, from: relOf(root, src), to: relOf(root, dst) });
+    },
+  });
+
+  // EXECUTOR CONTROLADO (sem shell livre): só `npm install|ci|run <script-do-package.json>`.
+  // cwd = workspace; ambiente SEM segredos; timeout; limite de saída; exit!=0 = falha.
+  const runCmd = createTool({
+    name: "run_command",
+    description:
+      "Executa comandos de DESENVOLVIMENTO do próprio projeto: 'install' (npm install), 'ci' (npm ci) ou 'run' (npm run <script definido no package.json>). NÃO é um shell livre — só estas ações. Roda com cwd no workspace, sem propagar secrets, com timeout e limite de saída. Exit code != 0 = falha.",
+    inputSchema: z.object({
+      action: z.enum(["install", "ci", "run"]),
+      script: z.string().optional().describe("nome do script do package.json (obrigatório para action=run): build, lint, test, dev…"),
+      timeoutMs: z.number().int().positive().optional().describe("timeout em ms (default 120000, máx 300000)"),
+    }),
+    async execute(input) {
+      const pkgPath = join(root, "package.json");
+      if (!existsSync(pkgPath)) return JSON.stringify({ error: "run_command: não há package.json no projeto (nada para instalar/rodar)." });
+      let argv: string[];
+      if (input.action === "install") {
+        argv = ["install", "--no-audit", "--no-fund"];
+      } else if (input.action === "ci") {
+        argv = ["ci", "--no-audit", "--no-fund"];
+      } else {
+        const script = String(input.script ?? "").trim();
+        if (!/^[a-z0-9:_-]{1,40}$/i.test(script)) return JSON.stringify({ error: "run_command: nome de script inválido." });
+        let scripts: Record<string, unknown> = {};
+        try { scripts = (JSON.parse(readFileSync(pkgPath, "utf8")) as { scripts?: Record<string, unknown> }).scripts ?? {}; }
+        catch { return JSON.stringify({ error: "run_command: package.json inválido." }); }
+        if (!Object.prototype.hasOwnProperty.call(scripts, script)) {
+          return JSON.stringify({ error: `run_command: o script "${script}" não existe no package.json.` });
+        }
+        argv = ["run", script];
+      }
+      const timeoutMs = Math.min(Math.max(input.timeoutMs ?? 120000, 1000), 300000);
+      // Ambiente SEM segredos: nunca propaga KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL/API/AUTH/COOKIE.
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (typeof v !== "string") continue;
+        if (/key|token|secret|password|passwd|credential|api|auth|cookie|session/i.test(k)) continue;
+        env[k] = v;
+      }
+      env.npm_config_audit = "false";
+      env.npm_config_fund = "false";
+      env.CI = "1";
+      const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+      return await new Promise<string>((resolve) => {
+        const LIMIT = 200_000;
+        let out = "";
+        let err = "";
+        let done = false;
+        let child: ReturnType<typeof spawn>;
+        try {
+          // shell apenas no Windows para resolver npm.cmd; argv é 100% fixo/validado (sem texto livre do usuário).
+          child = spawn(npmCmd, argv, { cwd: root, env, shell: process.platform === "win32", windowsHide: true });
+        } catch (e) {
+          resolve(JSON.stringify({ error: `run_command: falha ao iniciar (${e instanceof Error ? e.message : String(e)})` }));
+          return;
+        }
+        const clamp = (s: string) => (s.length > LIMIT ? `${s.slice(0, LIMIT)}\n…(saída truncada em ${LIMIT} caracteres)` : s);
+        const finish = (code: number | null, timedOut: boolean) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          if (timedOut) {
+            // Mata a ÁRVORE de processos (o npm gera um filho node, que segura o cwd).
+            try {
+              if (process.platform === "win32" && child.pid) {
+                spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+              } else {
+                child.kill("SIGKILL");
+              }
+            } catch { /* noop */ }
+          }
+          const payload = { code: code ?? -1, stdout: clamp(out), stderr: clamp(err), timedOut };
+          if (timedOut) resolve(JSON.stringify({ error: `run_command: timeout de ${timeoutMs}ms em "npm ${argv.join(" ")}"`, ...payload }));
+          else if ((code ?? 1) !== 0) resolve(JSON.stringify({ error: `run_command: "npm ${argv.join(" ")}" falhou (exit ${code}).`, ...payload }));
+          else resolve(JSON.stringify({ ok: true, ...payload }));
+        };
+        const timer = setTimeout(() => finish(null, true), timeoutMs);
+        child.stdout?.on("data", (d) => { if (out.length < LIMIT) out += String(d); });
+        child.stderr?.on("data", (d) => { if (err.length < LIMIT) err += String(d); });
+        child.on("error", (e) => { err += `\n${e.message}`; finish(-1, false); });
+        child.on("close", (code) => finish(code, false));
+      });
+    },
+  });
+
+  const tools = [list, read, write, edit, remove, rename, move, runCmd, context, imagePlan, branding, mockup, brand_pdf, brand_package, site_video];
   // Geração de site: remove a toolset de identidade/deliverables para o agente
   // focar no site (e não criar uma identidade visual automaticamente).
   if (env.mode === "generate") {

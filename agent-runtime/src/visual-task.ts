@@ -7,7 +7,7 @@ export type TaskClass = "visual" | "content" | "code";
 
 // Termos de impacto visual/estrutural forte → exige ciclo visual (medir/renderizar).
 const VISUAL_TERMS =
-  /hero|layout|espa[çc]|gap|padding|margin|alinh|posicion|dimens|largura|altura|tamanho|card|bot[aã]o|cta|\bcor\b|font|tipograf|imagem|foto|banner|se[çc][ãa]o|section|responsiv|mobile|tablet|desktop|header|footer|menu|navega|grid|coluna|centraliz|propor[çc]|sobrepost|overlap|dist[aâ]ncia|hierarquia|composi[çc]|z-?index/i;
+  /hero|layout|espa[çc]|gap|padding|margin|alinh|posicion|dimens|largura|altura|tamanho|card|bot[aã]o|cta|\bcor\b|font|tipograf|imagem|foto|banner|se[çc][ãa]o|section|responsiv|mobile|tablet|desktop|header|footer|menu|navega|grid|coluna|centraliz|propor[çc]|sobrepost|overlap|dist[aâ]ncia|hierarquia|composi[çc]|z-?index|anima|movimento|movi|efeito|transi[çc]|fade|reveal|scroll|rola|desliz|surgi|aparec|din[aâ]mic|parado|est[aá]tic|hover|motion/i;
 
 // Termos puramente de conteúdo/texto → sem exaurir ciclo geométrico.
 const CONTENT_TERMS =

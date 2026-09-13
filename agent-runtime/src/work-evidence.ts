@@ -42,7 +42,7 @@ const VISUAL_EDIT_RE = /\.(html?|css|m?js|c?jsx?|tsx?)$/i;
 // Assets de imagem (referências que precisam resolver no navegador).
 const ASSET_EDIT_RE = /\.(png|jpe?g|webp|svg|gif|avif|ico)$/i;
 
-export const EDIT_TOOLS = new Set(["write_file", "edit_file", "delete_file"]);
+export const EDIT_TOOLS = new Set(["write_file", "edit_file", "delete_file", "rename_file", "move_file"]);
 export const INSPECT_TOOLS = new Set([
   "list_files",
   "read_file",
@@ -63,6 +63,7 @@ export const VERIFY_TOOLS = new Set([
   "browser_eval",
   "visual_review",
   "browser_measure",
+  "run_command",
 ]);
 // Verificação de RENDERIZAÇÃO real (browser/screenshot/measure) — o que conta
 // como evidência VISUAL para tarefas de layout (FASE 3). read_file NÃO conta aqui.

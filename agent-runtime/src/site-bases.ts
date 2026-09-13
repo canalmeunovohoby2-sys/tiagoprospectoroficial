@@ -16,6 +16,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CreativeBrief } from "./creative-direction.js";
 import type { FileMap } from "./workspace.js";
+import { ensureClientFavicon } from "./site-favicon.js";
 
 export const SITE_BASE_IDS = ["editorial", "conversion", "premium"] as const;
 export type SiteBaseId = (typeof SITE_BASE_IDS)[number];
@@ -216,7 +217,10 @@ export function prepareBaseWorkspace(
 
     out[path] = content;
   }
-  return out;
+  // FAVICON DO CLIENTE (na origem): a base não traz ícone; sem <link rel="icon">
+  // o navegador cairia no /favicon.ico da origem (Prospector). Aqui o site já
+  // nasce com favicon PRÓPRIO do cliente (logo do workspace ou monograma local).
+  return ensureClientFavicon(out, business, t?.palette).files;
 }
 
 export interface GenerationSeedInput {

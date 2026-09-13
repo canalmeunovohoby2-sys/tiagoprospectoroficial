@@ -36,13 +36,34 @@ export const MAX_VISUAL_ITERATIONS_DEFAULT = 3;
 
 // Heurística: a instrução pede mudança real (não é pergunta/conversa)?
 // Usada para detectar "afirmou que alterou mas nada mudou".
+//
+// ESTRUTURAL (não depende de listar cada palavra): qualquer instrução que NÃO
+// seja pergunta/explicação nem conversa fiada é tratada como pedido de alteração.
+// Assim, pedidos naturais (ex.: "o site está muito parado, queria que as coisas
+// aparecessem conforme eu rolo") armam os guards de evidência/verificação — quem
+// decide a IMPLEMENTAÇÃO é o modelo, não uma palavra-chave.
+const PURE_CHATTER = /^(ok(ay)?|beleza|blz|valeu|vlw|obrigad[oa]|brigad[oa]|muito obrigad[oa]|de nada|legal|bacana|show|perfeito|muito bom|ótimo|otimo|top|boa|certo|entendi|entendido|combinado|isso mesmo|isso|sim|não|nao|nada|tudo bem|bom dia|boa tarde|boa noite)[\s!.,?]*$/i;
+const EXPLAIN_ASK = /^(me\s+)?(explica|explique|explicar|resuma|resume|resumir|liste|lista|listar|diga|dizer|conte|contar|fale|falar|descreva|descrever|mostre|mostrar|ensina|ensine|ensinar)\b/i;
+// Sinal de AÇÃO/DESEJO: usado só para decidir se uma pergunta é, na verdade, um
+// pedido ("pode colocar animações?"). NÃO é uma whitelist de tarefas.
+const ACTION_HINT = /coloc|adicion|inclu|cria|criar|faz|fazer|fa[çc]a|muda|mudar|mude|troc|altera|ajust|deixa|deixar|deixe|remov|apaga|aument|diminu|reduz|move|moviment|anim|efeito|transi[çc]|hover|fade|reveal|scroll|\brol|desliz|aparec|surgi|entrar|entrando|din[aâ]mic|quero|queria|gostaria|preciso|implementa|aplica/i;
+// Instruções de SOMENTE LEITURA (análise/relatório) NÃO são pedido de mudança.
+const READ_ONLY = /somente\s+leitura|s[oó]\s+leitura|n[aã]o\s+altere\s+nenhum|n[aã]o\s+alterar\s+nenhum|n[aã]o\s+modifique\s+nenhum|n[aã]o\s+edite\s+nenhum|n[aã]o\s+use\s+(?:write_file|edit_file|delete_file|write|edit|delete)|apenas\s+(?:analis|relat|leitura)|somente\s+(?:analis|relat|leitura)/i;
+const ANALYZE_LEAD = /^(?:fa[çc]a\s+uma\s+)?(?:an[aá]lise|analise|analisa|avalie|avalia|revise|revisa|audite|audita|diagnostique|inspecione)\b/i;
+
 export function instructionRequestsChange(instruction: string): boolean {
   const text = String(instruction ?? "").trim();
   if (!text) return false;
-  const asks = /adiciona|adicionar|adicione|inclui|incluir|inclua|cria|criar|crie|coloca|colocar|coloque|muda|mudar|mude|troca|trocar|troque|remove|remover|remova|apaga|apagar|apague|deixa|deixar|deixe|faz|fazer|fa[cç]a|transforma|transformar|reconstruir|refina|refinar|refine|melhora|melhore|melhorar|aprimor|otimiz|reescreve|reescrever|substitui|substituir|insere|inserir|edita|editar|edite|implementa|implementar|aplica|aplicar|corrige|corrigir|arruma|arrumar|monta|montar|monte|ajust\w*|altera\w*|aument\w*|diminu\w*|reduz\w*|reposicion\w*|centraliz\w*|alinh\w*|move[r]?|premium|profissional|sofisticad|primeiro\s+mundo|site\s+completo|site\s+novo/i;
-  const justAsks = /^(o\s+que|como|qual|quando|onde|por\s+que|pode|poderia|voc[eê]\s+acha|diga|explique|resuma|liste)/i;
-  if (justAsks.test(text)) return false;
-  return asks.test(text);
+  // Conversa fiada / agradecimento puro → não é pedido de alteração.
+  if (PURE_CHATTER.test(text)) return false;
+  // Análise/relatório SOMENTE LEITURA → não é pedido de alteração.
+  if (READ_ONLY.test(text)) return false;
+  if (ANALYZE_LEAD.test(text) && !ACTION_HINT.test(text)) return false;
+  // Pergunta/explicação SEM sinal de ação → não é pedido de alteração.
+  const looksQuestion = /\?\s*$/.test(text) || EXPLAIN_ASK.test(text);
+  if (looksQuestion && !ACTION_HINT.test(text)) return false;
+  // Qualquer outra instrução é tratada como pedido de alteração.
+  return true;
 }
 
 // Pedido AMPLO de qualidade/transformação (não cirúrgico)? Ex.: "deixe o site
