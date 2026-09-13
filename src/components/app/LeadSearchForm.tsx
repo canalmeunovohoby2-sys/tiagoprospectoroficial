@@ -340,12 +340,15 @@ export function LeadSearchForm({
       let data: SearchPlacesResponse | undefined = startData as SearchPlacesResponse | undefined;
       let asyncSearchId: string | null = null;
       let configuredSources: string[] = [];
+      let jobCounters: Record<string, unknown> | null = null;
       if (startData?.search_id) {
         asyncSearchId = startData.search_id;
         const polled = await pollGmapsSearch(startData.search_id, (attempt) => {
           setProgress((p) => Math.max(p, Math.min(95, 10 + attempt * 2)));
         });
         configuredSources = polled.sources_configured ?? [];
+        jobCounters = (polled.counters as Record<string, unknown> | undefined) ?? null;
+        console.info("[LeadSearchForm] counters do job", jobCounters);
         data = {
           leads: polled.leads ?? [],
           search_status: polled.status,
@@ -388,14 +391,25 @@ export function LeadSearchForm({
           : data?.error
             ? getSearchErrorMessage(null, data)
             : "Nenhum lead encontrado pelas fontes consultadas para este segmento e localização.";
+        // Diagnóstico persistente: quais fontes falharam e por quê (antes só
+        // aparecia em toast passageiro). Ajuda a distinguir falha de fonte de
+        // ausência real de empresas.
+        const diagnostics = warnings
+          .map((w) => `${SOURCE_LABEL[w.source] ?? w.source}: ${w.message}`)
+          .slice(0, 4)
+          .join(" | ");
+        const countersHint = jobCounters
+          ? ` Tempos(ms): ${JSON.stringify((jobCounters as { timings?: unknown }).timings ?? {})}.`
+          : "";
+        const baseDescription = isEmptyWithLimitations
+          ? "Fontes indisponíveis não permitem afirmar que não existem empresas. Refaça a busca em alguns segundos para tentar recuperar a cobertura."
+          : primaryWarning
+            ? `${primaryWarning.message} ${primaryWarning.action ?? ""}`.trim()
+            : "Tente outro segmento, uma cidade maior ou um termo mais amplo.";
         setNotice({
           tone: isEmptyWithLimitations ? "warning" : "error",
           title: msg,
-          description: isEmptyWithLimitations
-            ? "Fontes indisponíveis não permitem afirmar que não existem empresas. Refaça a busca em alguns segundos para tentar recuperar a cobertura."
-            : primaryWarning
-              ? `${primaryWarning.message} ${primaryWarning.action ?? ""}`.trim()
-              : "Tente outro segmento, uma cidade maior ou um termo mais amplo.",
+          description: `${baseDescription}${diagnostics ? ` Detalhe: ${diagnostics}.` : ""}${countersHint}`,
         });
         toast.warning(msg, { duration: 10000 });
         setSearching(false); stopStageRotation(); setProgress(0);

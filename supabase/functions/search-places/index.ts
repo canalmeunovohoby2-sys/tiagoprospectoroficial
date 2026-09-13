@@ -40,11 +40,14 @@ const GMAPS_SCRAPER_MAX = Math.max(10, Number(Deno.env.get("GMAPS_SCRAPER_MAX") 
 // termos multiplica a cobertura) e teto de resultados por variante.
 const MAP_SCRAPER_VARIANTS = Math.max(1, Math.min(10, Number(Deno.env.get("MAP_SCRAPER_VARIANTS") ?? "6")));
 const MAP_SCRAPER_PER_VARIANT = Math.max(20, Number(Deno.env.get("MAP_SCRAPER_PER_VARIANT") ?? "40"));
-// Concorrência das variantes do mapScraper. Cada variante é uma query completa
-// e independente; rodam em paralelo controlado (default 3, o mesmo limite que o
-// mapScraper usa para múltiplas queries) para reduzir o tempo SEM perder
-// cobertura — todas as variantes continuam sendo consultadas.
-const MAP_SCRAPER_VARIANTS_CONCURRENCY = Math.max(1, Math.min(10, Number(Deno.env.get("MAP_SCRAPER_VARIANTS_CONCURRENCY") ?? "3")));
+// Concorrência das variantes do mapScraper. ATENÇÃO: o padrão é 1 (sequencial),
+// que é o comportamento estável/validado do microserviço — requests simultâneos
+// podem fazer o scraper falhar (rate limit/consent wall do Google) e derrubar a
+// fonte inteira. Pode ser elevado via secret se o serviço suportar.
+const MAP_SCRAPER_VARIANTS_CONCURRENCY = (() => {
+  const raw = Number(Deno.env.get("MAP_SCRAPER_VARIANTS_CONCURRENCY"));
+  return Number.isFinite(raw) ? Math.max(1, Math.min(10, raw)) : 1;
+})();
 // FOTO: o mapScraper não traz imagem; completamos com a imagem real do site do
 // próprio estabelecimento (og:image), limitado por orçamento/concorrência.
 const MAP_PHOTO_ENRICH_BUDGET = Math.max(0, Number(Deno.env.get("MAP_PHOTO_ENRICH_BUDGET") ?? "80"));
@@ -2231,43 +2234,60 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
     const gmapsBudget = Math.max(20, Math.min(requested, GMAPS_SCRAPER_MAX));
 
     // Fontes habilitadas são consultadas EM PARALELO e os resultados mesclados.
-    type SourceRun = { key: LeadSource; places: GmapsScraperPlace[]; error?: string; raw?: number };
+    type SourceRun = { key: LeadSource; places: GmapsScraperPlace[]; error?: string; raw?: number; ms?: number };
     const tasks: Array<Promise<SourceRun>> = [];
+    const sourceTimings: Record<string, number> = {};
     if (GMAPS_SCRAPER_ENABLED) {
-      tasks.push(
-        callGmapsScraper({
-          baseUrl: GMAPS_SCRAPER_URL,
-          query,
-          maxPlaces: gmapsBudget,
-          apiKey: GMAPS_SCRAPER_API_KEY || undefined,
-          timeoutMs: Number.isFinite(GMAPS_SCRAPER_TIMEOUT_MS) ? GMAPS_SCRAPER_TIMEOUT_MS : 300000,
-        }).then((r) => ({ key: "google_maps_scraper" as LeadSource, places: r.results, error: r.error })),
-      );
+      tasks.push((async () => {
+        const t0 = Date.now();
+        try {
+          const r = await callGmapsScraper({
+            baseUrl: GMAPS_SCRAPER_URL,
+            query,
+            maxPlaces: gmapsBudget,
+            apiKey: GMAPS_SCRAPER_API_KEY || undefined,
+            timeoutMs: Number.isFinite(GMAPS_SCRAPER_TIMEOUT_MS) ? GMAPS_SCRAPER_TIMEOUT_MS : 300000,
+          });
+          return { key: "google_maps_scraper" as LeadSource, places: r.results, error: r.error };
+        } finally {
+          sourceTimings.google_maps_scraper = Date.now() - t0;
+        }
+      })());
     }
     if (MAP_SCRAPER_ENABLED) {
       const mapVariants = buildQueryVariants(p.segment, p.city, p.state, MAP_SCRAPER_VARIANTS);
-      tasks.push(
-        callMapScraperVariants({
-          baseUrl: MAP_SCRAPER_URL,
-          variants: mapVariants,
-          maxPlacesPerVariant: MAP_SCRAPER_PER_VARIANT,
-          lang: MAP_SCRAPER_LANG,
-          country: MAP_SCRAPER_COUNTRY,
-          apiKey: MAP_SCRAPER_API_KEY || undefined,
-          timeoutMs: Number.isFinite(MAP_SCRAPER_TIMEOUT_MS) ? MAP_SCRAPER_TIMEOUT_MS : 300000,
-          concurrency: MAP_SCRAPER_VARIANTS_CONCURRENCY,
-        }).then((r) => ({ key: "mapscraper" as LeadSource, places: r.places, error: r.places.length ? undefined : r.errors[0], raw: r.rawCount })),
-      );
+      tasks.push((async () => {
+        const t0 = Date.now();
+        try {
+          const r = await callMapScraperVariants({
+            baseUrl: MAP_SCRAPER_URL,
+            variants: mapVariants,
+            maxPlacesPerVariant: MAP_SCRAPER_PER_VARIANT,
+            lang: MAP_SCRAPER_LANG,
+            country: MAP_SCRAPER_COUNTRY,
+            apiKey: MAP_SCRAPER_API_KEY || undefined,
+            timeoutMs: Number.isFinite(MAP_SCRAPER_TIMEOUT_MS) ? MAP_SCRAPER_TIMEOUT_MS : 300000,
+            concurrency: MAP_SCRAPER_VARIANTS_CONCURRENCY,
+          });
+          return { key: "mapscraper" as LeadSource, places: r.places, error: r.places.length ? undefined : r.errors[0], raw: r.rawCount };
+        } finally {
+          sourceTimings.mapscraper = Date.now() - t0;
+        }
+      })());
     }
 
+    const sourcesT0 = Date.now();
     const sourceRuns: SourceRun[] = tasks.length > 0 ? await Promise.all(tasks) : [];
+    const sourcesMs = Date.now() - sourcesT0;
     const perSource: Record<string, number> = {};
     const perSourceRaw: Record<string, number> = {};
     for (const r of sourceRuns) { perSource[r.key] = r.places.length; if (typeof r.raw === "number") perSourceRaw[r.key] = r.raw; }
     (counters as unknown as Record<string, unknown>).sources = perSource;
     (counters as unknown as Record<string, unknown>).sourcesRaw = perSourceRaw;
+    (counters as unknown as Record<string, unknown>).sourceErrors = Object.fromEntries(sourceRuns.filter((r) => !!r.error).map((r) => [r.key, r.error]));
+    (counters as unknown as Record<string, unknown>).timings = { ...sourceTimings, sourcesMs };
     (counters as unknown as Record<string, unknown>).budgets = { gmaps: gmapsBudget, mapVariants: MAP_SCRAPER_VARIANTS, mapPerVariant: MAP_SCRAPER_PER_VARIANT, mapVariantsConcurrency: MAP_SCRAPER_VARIANTS_CONCURRENCY, requested: p.maxPages * 20 };
-    console.info("[search-places][gmaps] sources", JSON.stringify({ query, perSource, budgets: { gmapsBudget, MAP_SCRAPER_VARIANTS, MAP_SCRAPER_PER_VARIANT, MAP_SCRAPER_VARIANTS_CONCURRENCY } }));
+    console.info("[search-places][gmaps] sources", JSON.stringify({ query, perSource, sourceTimings, sourcesMs, budgets: { gmapsBudget, MAP_SCRAPER_VARIANTS, MAP_SCRAPER_PER_VARIANT, MAP_SCRAPER_VARIANTS_CONCURRENCY } }));
     const failedSources = sourceRuns.filter((r) => !!r.error);
     for (const r of failedSources) {
       warnings.push({ source: r.key, code: "SOURCE_FAILED", message: r.error! });
@@ -2356,6 +2376,11 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
         console.error("[search-places][gmaps] insert leads failed", insertErr);
       }
     }
+
+    (counters as unknown as Record<string, unknown>).timings = {
+      ...(((counters as unknown as Record<string, unknown>).timings as Record<string, number> | undefined) ?? {}),
+      totalMs: Date.now() - startedAt,
+    };
 
     await p.admin
       .from("searches")
