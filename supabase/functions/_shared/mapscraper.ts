@@ -21,6 +21,8 @@ export type MapScraperRecord = {
   coor?: string | null;
   stars?: number | string | null;
   reviews?: number | string | null;
+  thumbnail?: string | null;
+  images?: string[] | string | null;
   source_query?: string | null;
   [key: string]: unknown;
 };
@@ -79,6 +81,10 @@ export function mapMapScraperRecords(records: MapScraperRecord[]): GmapsScraperP
       review_rating: toNumber(record.stars),
       reviews_count: toNumber(record.reviews),
       link: (record.url_place as string | null) ?? null,
+      // FOTO real vinda do MESMO scrape do Maps (mesmo motor): a Edge converte
+      // em photoUrl via selectLeadImage/normalizeGmapsResults.
+      thumbnail: (record.thumbnail as string | null) || null,
+      images: (record.images as string[] | string | null) ?? null,
     });
   }
   return out;

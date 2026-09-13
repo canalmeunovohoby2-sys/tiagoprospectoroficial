@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { mapMapScraperRecords, callMapScraper, buildQueryVariants, callMapScraperVariants } from "../../supabase/functions/_shared/mapscraper";
+import { normalizeGmapsResults, toPublicLeadShape, dedupeGmapsLeads } from "../../supabase/functions/_shared/gmaps";
 
 describe("mapScraper — mapeamento para o shape compartilhado", () => {
   it("mapeia os campos do CSV do mapScraper", () => {
@@ -209,5 +210,44 @@ describe("mapScraper — variantes em concorrência controlada (performance sem 
     });
     expect(out.places.map((p) => p.place_id)).toEqual(["ok"]);
     expect(out.errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe("mapScraper — FOTO real do MESMO scrape do Maps (sem API paga)", () => {
+  const BIG = "https://lh3.googleusercontent.com/gps-cs-s/BIG=w408-h544-k-no";
+  const SMALL = "https://lh3.googleusercontent.com/gps-cs-s/SMALL=w86-h114-k-no";
+
+  it("mapeia thumbnail/images do record e produz photoUrl → photo_name", () => {
+    const places = mapMapScraperRecords([
+      {
+        id: "ChIJfoto1",
+        title: "Petz Guarulhos",
+        address: "Av. Paulo Faccini, 900, Guarulhos - SP",
+        thumbnail: BIG,
+        images: [BIG, SMALL],
+      },
+    ]);
+    expect(places[0].thumbnail).toBe(BIG);
+    expect(places[0].images).toEqual([BIG, SMALL]);
+
+    const leads = normalizeGmapsResults(places, "Guarulhos", "SP");
+    expect(leads[0].photoUrl).toBe(BIG);
+    const shape = toPublicLeadShape(leads[0]) as Record<string, unknown>;
+    expect(shape.photo_name).toBe(BIG);
+  });
+
+  it("record sem foto continua sem photoUrl (não inventa)", () => {
+    const places = mapMapScraperRecords([{ id: "ChIJsemfoto", title: "Sem Foto", address: "Rua X, 1, Bauru - SP" }]);
+    expect(places[0].thumbnail).toBeNull();
+    const leads = normalizeGmapsResults(places, "Bauru", "SP");
+    expect(leads[0].photoUrl).toBeNull();
+  });
+
+  it("dedupe entre variantes do mesmo motor mantém 1 lead e preserva a foto", () => {
+    const a = normalizeGmapsResults(mapMapScraperRecords([{ id: "ChIJdup", title: "Pet Duplicado", address: "Rua A, 10, Guarulhos - SP", thumbnail: BIG, images: [BIG] }]), "Guarulhos", "SP");
+    const b = normalizeGmapsResults(mapMapScraperRecords([{ id: "ChIJdup", title: "Pet Duplicado", address: "Rua A, 10, Guarulhos - SP" }]), "Guarulhos", "SP");
+    const { leads } = dedupeGmapsLeads([...a, ...b]);
+    expect(leads).toHaveLength(1);
+    expect(leads[0].photoUrl).toBe(BIG);
   });
 });

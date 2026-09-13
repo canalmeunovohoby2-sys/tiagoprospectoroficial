@@ -40,6 +40,33 @@ def _safe_get(obj, *indices, default=None):
         return default
 
 
+_IMG_WIDTH = re.compile(r"=w(\d+)", re.IGNORECASE)
+
+
+def _image_width(url):
+    """Largura declarada na URL do Google (…=w408-h544…). 0 se não houver."""
+    m = _IMG_WIDTH.search(url or "")
+    return int(m.group(1)) if m else 0
+
+
+def _extract_photos(result):
+    """
+    Fotos REAIS do estabelecimento extraídas da MESMA resposta do Maps (sem API
+    paga): a lista fica em [72][0] e cada entrada tem a URL em [6][0]. O Maps
+    devolve versões em tamanhos diferentes (ex.: w86 e w408) — devolvemos as
+    URLs da maior para a menor. Retorna [] quando não há foto.
+    """
+    album = _safe_get(result, 72, 0)
+    images = []
+    if isinstance(album, list):
+        for entry in album:
+            url = _safe_get(entry, 6, 0)
+            if isinstance(url, str) and url.startswith("http") and url not in images:
+                images.append(url)
+    images.sort(key=_image_width, reverse=True)
+    return images
+
+
 def _extract_place(result, query):
     """
     Extract a place dict from a single result entry (data[64][i][1]).
@@ -54,6 +81,7 @@ def _extract_place(result, query):
       [13][0]         str    – primary category
       [37][1]         int    – review count
       [39]            str    – full address
+      [72][0][*][6][0] str   – FOTOS reais do estabelecimento (cover/galeria)
       [78]            str    – ChIJ place ID
       [178][0][1][0][0] str  – local phone (e.g. "(716) 847-0070")
       [178][0][1][1][0] str  – international phone (e.g. "+1 716-847-0070")
@@ -62,6 +90,8 @@ def _extract_place(result, query):
     if not place_id:
         logger.debug('Skipping result with no place ID')
         return None
+
+    photos = _extract_photos(result)
 
     obj = {
         'id': place_id,
@@ -76,6 +106,8 @@ def _extract_place(result, query):
         'coor': '',
         'stars': _safe_get(result, 4, 7, default=''),
         'reviews': _safe_get(result, 37, 1, default=''),
+        'thumbnail': photos[0] if photos else '',
+        'images': photos,
         'source_query': query,
     }
 
@@ -278,7 +310,7 @@ def save_to_csv(data, filename='data/output.csv'):
     column_order = [
         'id', 'url_place', 'title', 'category', 'address',
         'phoneNumber', 'completePhoneNumber', 'domain', 'url',
-        'coor', 'stars', 'reviews', 'source_query',
+        'coor', 'stars', 'reviews', 'thumbnail', 'images', 'source_query',
     ]
 
     for record in data:
