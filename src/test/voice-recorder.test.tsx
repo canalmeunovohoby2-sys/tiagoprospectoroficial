@@ -156,4 +156,20 @@ describe("Gravador de voz do chat — só transcreve ao PARAR e UMA vez (silênc
     fireEvent.click(mic());
     expect(box().value).toBe("Após retry");
   });
+
+  it("11) navegador SEM suporte → mostra aviso (não falha em silêncio)", () => {
+    (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition = undefined;
+    renderChat();
+    fireEvent.click(mic());
+    expect(screen.getByText(/não é suportado neste navegador/i)).toBeTruthy();
+  });
+
+  it("12) microfone negado (not-allowed) → mostra aviso e não insere texto", () => {
+    renderChat();
+    fireEvent.click(mic());
+    act(() => lastRec().final("não deve entrar"));
+    act(() => lastRec().error("not-allowed"));
+    expect(screen.getByText(/Permita o acesso ao microfone/i)).toBeTruthy();
+    expect(box().value).toBe("");
+  });
 });

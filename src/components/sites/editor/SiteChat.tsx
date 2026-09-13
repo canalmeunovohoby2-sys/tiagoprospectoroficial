@@ -116,6 +116,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
   const [instruction, setInstruction] = useState("");
   const [attachment, setAttachment] = useState<{ dataUrl: string; label: string } | null>(null);
   const [listening, setListening] = useState(false);
+  const [micNotice, setMicNotice] = useState<string | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
   const [showJump, setShowJump] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -225,7 +226,8 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
     if (keepMicRef.current) { stopMic(false); return; }
     const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
     const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
-    if (!SR) return;
+    if (!SR) { setMicNotice("Ditado por voz não é suportado neste navegador (use Chrome ou Edge)."); return; }
+    setMicNotice(null);
     const Rec = SR as new () => {
       lang: string; continuous: boolean; interimResults: boolean;
       onresult: (ev: unknown) => void; onend: () => void; onerror: (e: { error?: string }) => void;
@@ -276,6 +278,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
           const err = e?.error ?? "";
           if (err === "not-allowed" || err === "service-not-allowed" || err === "not-supported") {
             // Erro real: encerra e DESCARTA (não deixa texto parcial).
+            setMicNotice("Não foi possível usar o microfone. Permita o acesso ao microfone no navegador e tente de novo.");
             stopMic(true);
           } else if (keepMicRef.current) {
             // Erro temporário (ex.: no-speech/audio-capture) → segue gravando.
@@ -495,6 +498,7 @@ export function SiteChat({ messages, running, error, canUndo, dirty, runningLabe
             </Button>
           </div>
           <p className="text-[10px] text-muted-foreground">Anexos ficam nesta conversa (sessão) como referência. Voz usa o reconhecimento do navegador.</p>
+          {micNotice && <p className="text-[10px] text-amber-600">{micNotice}</p>}
         </div>
       </div>
     </div>

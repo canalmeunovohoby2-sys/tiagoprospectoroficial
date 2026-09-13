@@ -188,6 +188,7 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
   const [aiInstruction, setAiInstruction] = useState("");
   const [aiAttachment, setAiAttachment] = useState<{ dataUrl: string; label: string } | null>(null);
   const [listening, setListening] = useState(false);
+  const [micNotice, setMicNotice] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const recRef = useRef<{ stop: () => void } | null>(null);
   const keepMicRef = useRef(false);
@@ -283,7 +284,8 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
     if (keepMicRef.current) { stopMic(false); return; }
     const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
     const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
-    if (!SR) { if (aiPanel) { /* sem suporte */ } return; }
+    if (!SR) { setMicNotice("Ditado por voz não é suportado neste navegador (use Chrome ou Edge)."); return; }
+    setMicNotice(null);
     const Rec = SR as new () => {
       lang: string; continuous: boolean; interimResults: boolean;
       onresult: (ev: unknown) => void; onend: () => void; onerror: (e: { error?: string }) => void;
@@ -333,6 +335,7 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
           const err = e?.error ?? "";
           if (err === "not-allowed" || err === "service-not-allowed" || err === "not-supported") {
             // Erro real: encerra e DESCARTA (não deixa texto parcial).
+            setMicNotice("Não foi possível usar o microfone. Permita o acesso ao microfone no navegador e tente de novo.");
             stopMic(true);
           } else if (keepMicRef.current) {
             // Erro temporário (ex.: no-speech/audio-capture) → segue gravando.
@@ -482,6 +485,7 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
             </Button>
           </div>
           <p className="text-[10px] text-muted-foreground">Anexos ficam visíveis nesta conversa (apenas na sessão) e são tratados como referência. Gravação de voz usa o reconhecimento de fala do navegador.</p>
+          {micNotice && <p className="text-[10px] text-amber-600">{micNotice}</p>}
         </div>
       )}
 
