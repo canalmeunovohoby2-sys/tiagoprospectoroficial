@@ -9,6 +9,7 @@ import { createServer, type Server } from "node:http";
 import { existsSync, readFileSync, statSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, extname, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { chromium, type Browser, type Page } from "playwright";
 import { ArtifactStore } from "./artifact-store.js";
@@ -203,8 +204,11 @@ export async function renderSiteVideo(workspaceRoot: string, brief: SiteVideoBri
 let ffmpegPath: string | null | undefined;
 export function resolveFfmpeg(): string | null {
   if (ffmpegPath !== undefined) return ffmpegPath;
-  try { // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const p = (require("ffmpeg-static") as string | null);
+  // 1) ffmpeg-static (bundled). `require` não existe em ESM puro (tsx/esm), então
+  //    usamos createRequire(import.meta.url) — funciona em ESM e em CJS.
+  try {
+    const req = createRequire(import.meta.url);
+    const p = req("ffmpeg-static") as string | null;
     if (typeof p === "string" && p && existsSync(p)) { ffmpegPath = p; return p; }
   } catch { /* sem ffmpeg-static */ }
   try { const r = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }); if (r.status === 0) { ffmpegPath = "ffmpeg"; return "ffmpeg"; } } catch { /* noop */ }

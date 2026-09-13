@@ -4,15 +4,15 @@ import { pickPlan, promoVideoFileName } from "../src/site-video-promo";
 describe("site-video-promo — plano de navegação cobre o SITE COMPLETO", () => {
   it("inclui topo, TODAS as seções do meio (em ordem) e o rodapé/CTA final", () => {
     const targets = [
-      { kind: "header", text: "", top: 0, x: 1, y: 1 },
-      { kind: "hero", text: "Hero", top: 0, x: 1, y: 1 },
-      { kind: "section", text: "Serviços", top: 800, x: 1, y: 1 },
-      { kind: "card", text: "Card", top: 1100, x: 1, y: 1 },
-      { kind: "image", text: "", top: 1500, x: 1, y: 1 },
-      { kind: "section", text: "Depoimentos", top: 2000, x: 1, y: 1 },
-      { kind: "section", text: "Sobre", top: 2500, x: 1, y: 1 },
-      { kind: "cta", text: "Contato", top: 3000, x: 1, y: 1 },
-      { kind: "footer", text: "", top: 3400, x: 1, y: 1 },
+      { kind: "header", text: "", top: 0 },
+      { kind: "hero", text: "Hero", top: 0 },
+      { kind: "section", text: "Serviços", top: 800 },
+      { kind: "card", text: "Card", top: 1100 },
+      { kind: "gallery", text: "Galeria", top: 1500 },
+      { kind: "testimonials", text: "Depoimentos", top: 2000 },
+      { kind: "section", text: "Sobre", top: 2500 },
+      { kind: "cta", text: "Contato", top: 3000 },
+      { kind: "footer", text: "", top: 3400 },
     ];
     const plan = pickPlan(4000, 720, targets);
     // topo primeiro
