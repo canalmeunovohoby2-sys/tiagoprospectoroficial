@@ -18,6 +18,7 @@ import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js
 import { buildGenerationSeed, formatBaseDirective } from "./site-bases.js";
 import { ensureClientFavicon } from "./site-favicon.js";
 import { generateSitePromoVideo } from "./site-video-promo.js";
+import { appendChange, appendMemory, makeChangeEntry, memoryLineFromChange, renderProjectContextBlock, normalizeContext, type ProjectContext } from "./project-context.js";
 import { buildGenerateSystemPrompt, needsBrandIdentity } from "./agent-identity.js";
 import { materializeAttachments, type ChatAttachment } from "./attachments.js";
 import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
@@ -303,6 +304,47 @@ async function saveConversation(userId: string, projectId: string, conversationI
     });
   } catch {
     // Non-blocking: persistência de conversa é best-effort
+  }
+}
+
+/** Endpoint do conversation-save (mesma base das outras funções). */
+async function conversationEndpoint(): Promise<string> {
+  const proxyBase = process.env.PROSPECTOR_BASE_URL ?? "";
+  const funcBase = process.env.SUPABASE_FUNCTIONS_URL || (proxyBase.includes("/functions/v1") ? proxyBase.split("/functions/v1")[0] + "/functions/v1" : "");
+  return funcBase ? `${funcBase.replace(/\/$/, "")}/conversation-save` : "";
+}
+
+/** Contexto persistente do PROJETO (memória + histórico de alterações). Isolado por projectId. */
+export async function loadProjectContext(userId: string, projectId: string, identity?: AuthIdentity | null): Promise<ProjectContext> {
+  const endpoint = await conversationEndpoint();
+  if (!endpoint || !projectId) return { memory: [], changes: [] };
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const body: Record<string, unknown> = { project_id: projectId, kind: "context_load" };
+    if (identity?.method === "jwt" && identity.token) headers.Authorization = `Bearer ${identity.token}`;
+    else if (process.env.RUNTIME_GATEWAY_SECRET) { headers.Authorization = `Bearer ${process.env.RUNTIME_GATEWAY_SECRET}`; body.user_id = userId; }
+    else return { memory: [], changes: [] };
+    const res = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return { memory: [], changes: [] };
+    return normalizeContext(await res.json());
+  } catch {
+    return { memory: [], changes: [] };
+  }
+}
+
+/** Salva o contexto do projeto (memória + alterações) — best-effort, não bloqueia. */
+export async function saveProjectContext(userId: string, projectId: string, ctx: ProjectContext, identity?: AuthIdentity | null, model?: string, provider?: string): Promise<void> {
+  const endpoint = await conversationEndpoint();
+  if (!endpoint || !projectId) return;
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const body: Record<string, unknown> = { project_id: projectId, kind: "context", memory: ctx.memory, changes: ctx.changes, model, provider };
+    if (identity?.method === "jwt" && identity.token) headers.Authorization = `Bearer ${identity.token}`;
+    else if (process.env.RUNTIME_GATEWAY_SECRET) { headers.Authorization = `Bearer ${process.env.RUNTIME_GATEWAY_SECRET}`; body.user_id = userId; }
+    else return;
+    await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(8_000) });
+  } catch {
+    // best-effort
   }
 }
 
@@ -951,6 +993,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           }
         const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
         const memory = Array.isArray(body.memory) ? (body.memory as unknown[]).filter((x): x is string => typeof x === "string") : [];
+        // CONTEXTO PERSISTENTE do projeto (memória + histórico de alterações).
+        // Carregado do banco por projectId → sobrevive a fechar/reabrir a aplicação.
+        const persistedContext = await loadProjectContext(identity.uid, projectId, identity);
+        const mergedMemory = [...persistedContext.memory, ...memory];
+        const recentConversation = Array.isArray(body.conversation) ? (body.conversation as unknown[]).filter((x): x is string => typeof x === "string") : [];
         const fresh = body.fresh === true; // força nova sessão (novo foco)
 
         pruneSessions();
@@ -1043,7 +1090,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           } catch { /* noop */ }
         });
 
-        const memoryBlock = memory.length ? `\nMEMÓRIA DE DECISÕES (preserve):\n- ${memory.join("\n- ")}\n` : "";
+        const memoryBlock = mergedMemory.length ? `\nMEMÓRIA DE DECISÕES (preserve):\n- ${mergedMemory.join("\n- ")}\n` : "";
+        // Histórico estruturado de alterações + conversa recente (continuidade em
+        // conversas longas SEM reenviar o chat inteiro ao modelo).
+        const changesBlock = renderProjectContextBlock({ memory: [], changes: persistedContext.changes });
+        const conversationBlock = recentConversation.length ? `\nCONVERSA RECENTE (contexto de continuidade):\n${recentConversation.map((c) => `- ${c}`).join("\n")}\n` : "";
 
         // ANEXOS (5.26): materializa arquivos anexados no workspace para o Cline
         // acessar/ler/usar de verdade. Nunca apenas dataURL.
@@ -1062,7 +1113,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           writeLine({ type: "start", runtime: "cline", resumed_session: resume });
         }
 
-        const outcome = await agent.runTask(`${memoryBlock}${attachBlock}${instruction}`, { continueSession: resume });
+        const outcome = await agent.runTask(`${memoryBlock}${changesBlock}${conversationBlock}${attachBlock}${instruction}`, { continueSession: resume });
 
         // Persiste transcript da conversa (best-effort, não bloqueia resposta)
         if (conversationId && outcome.conversationMessages) {
@@ -1073,6 +1124,17 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             exec.modelId, exec.providerId,
             identity,
           );
+        }
+
+        // HISTÓRICO DE ALTERAÇÕES + MEMÓRIA do projeto (persistente): registra a
+        // alteração aplicada para permitir referências futuras ("volta como estava",
+        // "mantém o tamanho que definimos", "usa a cor daquela seção").
+        if (outcome.ok && (outcome.touched ?? []).length > 0) {
+          const summary = String(outcome.reply ?? "").split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "alteração aplicada";
+          const entry = makeChangeEntry(instruction, outcome.touched ?? [], summary, new Date().toISOString());
+          const nextChanges = appendChange(persistedContext.changes, entry);
+          const nextMemory = appendMemory(mergedMemory, memoryLineFromChange(entry));
+          void saveProjectContext(identity.uid, projectId, { memory: nextMemory, changes: nextChanges }, identity, exec.modelId, exec.providerId);
         }
 
         // workspace final

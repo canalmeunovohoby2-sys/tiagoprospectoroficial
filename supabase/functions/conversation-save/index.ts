@@ -22,9 +22,19 @@ Deno.serve(async (req) => {
       files_changed?: string[];
       model?: string;
       provider?: string;
+      /** "context" = salvar memória+histórico do projeto | "context_load" = ler. */
+      kind?: string;
+      memory?: unknown;
+      changes?: unknown;
     };
 
-    if (!body.project_id || !body.conversation_id) {
+    // conversation_id reservado ao CONTEXTO persistente do projeto (não é conversa).
+    const PROJECT_CONTEXT_CONV = "00000000-0000-0000-0000-0000000000c7";
+    const contextConvId = body.kind === "context_load" || body.kind === "context"
+      ? PROJECT_CONTEXT_CONV
+      : (body.conversation_id ?? "");
+
+    if (!body.project_id || !contextConvId) {
       return json({ error: "project_id e conversation_id são obrigatórios" }, 400);
     }
 
@@ -45,16 +55,52 @@ Deno.serve(async (req) => {
     }
     if (!userId) return json({ error: "user_id obrigatório" }, 400);
 
-    const { error } = await admin.from("agent_conversation_memory").upsert({
-      user_id: userId,
-      project_id: body.project_id,
-      conversation_id: body.conversation_id,
-      messages: body.messages ?? [],
-      files_changed: body.files_changed ?? [],
-      model: body.model ?? null,
-      provider: body.provider ?? null,
-      updated_at: new Date().toISOString(),
-    });
+    // LER o contexto persistente do projeto (memória + histórico de alterações).
+    if (body.kind === "context_load") {
+      const { data, error } = await admin
+        .from("agent_conversation_memory")
+        .select("messages")
+        .eq("user_id", userId)
+        .eq("project_id", body.project_id)
+        .eq("conversation_id", PROJECT_CONTEXT_CONV)
+        .maybeSingle();
+      if (error) return json({ error: error.message }, 500);
+      const first = Array.isArray(data?.messages) ? (data?.messages as unknown[])[0] : null;
+      const ctx = (first && typeof first === "object" ? first : {}) as { memory?: unknown; changes?: unknown };
+      return json({
+        ok: true,
+        memory: Array.isArray(ctx.memory) ? ctx.memory : [],
+        changes: Array.isArray(ctx.changes) ? ctx.changes : [],
+      });
+    }
+
+    // GRAVAR contexto (memória+alterações) ou transcript da conversa.
+    const isContext = body.kind === "context";
+    const payload = isContext
+      ? {
+          user_id: userId,
+          project_id: body.project_id,
+          conversation_id: PROJECT_CONTEXT_CONV,
+          messages: [{ __project_context: true, memory: body.memory ?? [], changes: body.changes ?? [] }],
+          files_changed: [] as string[],
+          model: body.model ?? null,
+          provider: body.provider ?? null,
+          updated_at: new Date().toISOString(),
+        }
+      : {
+          user_id: userId,
+          project_id: body.project_id,
+          conversation_id: body.conversation_id,
+          messages: body.messages ?? [],
+          files_changed: body.files_changed ?? [],
+          model: body.model ?? null,
+          provider: body.provider ?? null,
+          updated_at: new Date().toISOString(),
+        };
+
+    const { error } = await admin
+      .from("agent_conversation_memory")
+      .upsert(payload, { onConflict: "user_id,project_id,conversation_id" });
 
     if (error) return json({ error: error.message }, 500);
     return json({ ok: true });
