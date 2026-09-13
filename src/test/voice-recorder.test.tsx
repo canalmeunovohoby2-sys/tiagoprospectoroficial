@@ -121,4 +121,39 @@ describe("Gravador de voz do chat — só transcreve ao PARAR e UMA vez (silênc
     expect(FakeRecognition.instances[0].started).toBe(true);
     expect(box().value).toBe("");
   });
+
+  it("9) SEGUNDA gravação funciona (regressão: funcionou 1x e parou) e sessão antiga não interfere", () => {
+    renderChat();
+    fireEvent.click(mic()); // sessão 1
+    act(() => lastRec().final("Primeira"));
+    fireEvent.click(mic()); // parar 1
+    expect(box().value).toBe("Primeira");
+    // Evento TARDIO da sessão antiga NÃO pode reiniciar/finalizar a nova gravação.
+    const old = FakeRecognition.instances[0];
+    act(() => old.end());
+    expect(box().value).toBe("Primeira");
+    // Segunda gravação precisa funcionar normalmente.
+    fireEvent.click(mic());
+    const rec2 = lastRec();
+    expect(rec2).not.toBe(old);
+    act(() => rec2.final("Segunda"));
+    fireEvent.click(mic());
+    expect(box().value).toBe("Primeira Segunda");
+  });
+
+  it("10) start que falha na 1ª tentativa é retentado e grava", async () => {
+    let first = true;
+    class FlakyRecognition extends FakeRecognition {
+      start() { if (first) { first = false; throw new Error("InvalidStateError"); } super.start(); }
+    }
+    (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition = FlakyRecognition;
+    renderChat();
+    fireEvent.click(mic());
+    await act(async () => { await new Promise((r) => setTimeout(r, 550)); });
+    expect(FakeRecognition.instances.length).toBeGreaterThanOrEqual(2);
+    expect(FakeRecognition.instances[FakeRecognition.instances.length - 1].started).toBe(true);
+    act(() => lastRec().final("Após retry"));
+    fireEvent.click(mic());
+    expect(box().value).toBe("Após retry");
+  });
 });

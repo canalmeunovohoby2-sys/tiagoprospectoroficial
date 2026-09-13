@@ -197,6 +197,8 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
   const currentFinalRef = useRef("");
   /** Garante UMA única finalização por gravação (evita duplicar por onend duplo). */
   const finalizedRef = useRef(false);
+  /** Identifica a SESSÃO de gravação atual — eventos de sessões antigas são ignorados. */
+  const sessionRef = useRef(0);
 
   // Cancelar ao desmontar: para a captura e DESCARTA (não insere texto).
   useEffect(() => () => {
@@ -287,20 +289,23 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
       onresult: (ev: unknown) => void; onend: () => void; onerror: (e: { error?: string }) => void;
       start: () => void; stop: () => void;
     };
-    // Nova gravação → estado limpo (sessões independentes).
+    // Nova gravação → estado limpo (sessões independentes). Incrementa a sessão
+    // para IGNORAR eventos tardios de sessões anteriores (bug "funciona 1x e para").
+    const mySession = ++sessionRef.current;
     accumulatedRef.current = "";
     currentFinalRef.current = "";
     finalizedRef.current = false;
     keepMicRef.current = true;
 
-    const startSession = () => {
-      if (!keepMicRef.current) return;
+    const startSession = (attempt = 0) => {
+      if (!keepMicRef.current || mySession !== sessionRef.current) return;
       try {
         const rec = new Rec();
         rec.lang = "pt-BR";
         rec.continuous = true;
         rec.interimResults = true;
         rec.onresult = (ev: unknown) => {
+          if (mySession !== sessionRef.current || recRef.current !== rec) return;
           const results = (ev as { results?: ArrayLike<ArrayLike<{ transcript?: string }> & { isFinal?: boolean }> }).results;
           if (!results) return;
           let finals = "";
@@ -312,6 +317,7 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
           currentFinalRef.current = finals.trim();
         };
         rec.onend = () => {
+          if (mySession !== sessionRef.current || recRef.current !== rec) return; // sessão antiga: ignora
           if (keepMicRef.current) {
             // Encerrou sozinho (silêncio/fim de frase): acumula e CONTINUA gravando.
             accumulatedRef.current = mergeTranscript(accumulatedRef.current, currentFinalRef.current);
@@ -323,6 +329,7 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
           }
         };
         rec.onerror = (e) => {
+          if (mySession !== sessionRef.current || recRef.current !== rec) return; // sessão antiga: ignora
           const err = e?.error ?? "";
           if (err === "not-allowed" || err === "service-not-allowed" || err === "not-supported") {
             // Erro real: encerra e DESCARTA (não deixa texto parcial).
@@ -335,7 +342,18 @@ export function SiteEditor({ spec, onChange, aiPanel }: SiteEditorProps) {
           }
         };
         recRef.current = rec;
-        rec.start();
+        try {
+          rec.start();
+        } catch {
+          // Microfone ainda liberando do stop anterior → tenta 1x após um instante.
+          if (attempt === 0 && keepMicRef.current && mySession === sessionRef.current) {
+            recRef.current = null;
+            window.setTimeout(() => startSession(1), 350);
+            return;
+          }
+          stopMic(true);
+          return;
+        }
         setListening(true);
       } catch {
         stopMic(true);
