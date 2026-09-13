@@ -117,10 +117,27 @@ const SOURCE_LABEL: Record<string, string> = {
   none: "Nenhuma fonte",
 };
 
-function getSearchErrorMessage(error: unknown, data?: unknown) {
+async function getSearchErrorMessage(error: unknown, data?: unknown): Promise<string> {
   const payload = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
-  const context = (error && typeof error === "object" ? error : {}) as Record<string, unknown>;
-  const message = String(payload.error ?? context.message ?? "Erro ao pesquisar");
+  const err = (error && typeof error === "object" ? error : {}) as Record<string, unknown>;
+  let message = String(payload.error ?? "");
+  // O supabase.functions.invoke devolve FunctionsHttpError com `context` = Response.
+  // Lemos o corpo real (ex.: {"error":"Não autenticado"}) e o status HTTP, em vez
+  // do texto genérico "Edge Function returned a non-2xx status code".
+  const ctx = err.context as Response | undefined;
+  if (!message && ctx && typeof ctx.clone === "function") {
+    try {
+      const body = (await ctx.clone().json()) as Record<string, unknown>;
+      message = String(body?.error ?? "");
+    } catch { /* corpo não-JSON */ }
+  }
+  const status = ctx && typeof ctx.status === "number" ? ctx.status : undefined;
+  if (!message && status) {
+    message = status === 401
+      ? "Sessão expirada ou não autenticada. Entre novamente."
+      : `Erro ${status} ao pesquisar.`;
+  }
+  if (!message) message = String(err.message ?? "Erro ao pesquisar");
   const action = typeof payload.action === "string" ? payload.action : "";
   return [message, action].filter(Boolean).join("\n");
 }
@@ -322,18 +339,24 @@ export function LeadSearchForm({
     startStageRotation();
     try {
       const startedAt = performance.now();
-      const { data: startData, error } = await supabase.functions.invoke<
-        SearchPlacesResponse & { search_id?: string; status?: string }
-      >("search-places", {
-        body: { state: safeState, city: safeCity, segment: safeSegment, maxPages: 3, module },
-      });
+      const invokeBody = { state: safeState, city: safeCity, segment: safeSegment, maxPages: 3, module };
+      type StartResponse = SearchPlacesResponse & { search_id?: string; status?: string };
+      let { data: startData, error } = await supabase.functions.invoke<StartResponse>("search-places", { body: invokeBody });
+      // Sessão expirada (401) ou indisponibilidade momentânea (5xx): renova/retenta 1x.
+      const errStatus = (error as { context?: Response } | null)?.context?.status;
+      if (error && (errStatus === 401 || (typeof errStatus === "number" && errStatus >= 500))) {
+        console.warn("[LeadSearchForm] busca falhou, retentando", { status: errStatus });
+        if (errStatus === 401) await supabase.auth.refreshSession().catch(() => undefined);
+        else await new Promise((r) => setTimeout(r, 1500));
+        ({ data: startData, error } = await supabase.functions.invoke<StartResponse>("search-places", { body: invokeBody }));
+      }
       console.info("[LeadSearchForm] resposta da busca", {
         durationMs: Math.round(performance.now() - startedAt),
         source: startData?.source,
         async: !!startData?.search_id,
         count: startData?.leads?.length ?? 0,
       });
-      if (error) throw new Error(getSearchErrorMessage(error, startData));
+      if (error) throw new Error(await getSearchErrorMessage(error, startData));
 
       // Fluxo assíncrono (Google Maps scraper): o backend cria o search_id e
       // processa em background. Aqui aguardamos o status final via polling.
@@ -389,7 +412,7 @@ export function LeadSearchForm({
         const msg = isEmptyWithLimitations
           ? "Nenhum lead encontrado pelas fontes consultadas. Algumas fontes estavam temporariamente indisponíveis e podem reduzir a cobertura da busca."
           : data?.error
-            ? getSearchErrorMessage(null, data)
+            ? await getSearchErrorMessage(null, data)
             : "Nenhum lead encontrado pelas fontes consultadas para este segmento e localização.";
         // Diagnóstico persistente: quais fontes falharam e por quê (antes só
         // aparecia em toast passageiro). Ajuda a distinguir falha de fonte de
