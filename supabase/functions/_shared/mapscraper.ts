@@ -201,9 +201,15 @@ export function buildQueryVariants(segment: string, city: string, state: string,
 }
 
 /**
- * Executa VÁRIAS queries no mapScraper (sequencial) e devolve os resultados
- * mesclados/deduplicados por place_id. É rápido (~3-4s por variante), então dá
- * para cobrir muito mais estabelecimentos do que uma única query de 20.
+ * Executa VÁRIAS queries no mapScraper e devolve os resultados mesclados/
+ * deduplicados por place_id.
+ *
+ * As variantes são independentes (cada uma é uma busca completa) e podem ser
+ * executadas com concorrência CONTROLADA. O padrão é 3 em paralelo — o mesmo
+ * limite que o próprio mapScraper adota para múltiplas queries
+ * (`search_multiple_async`, max_concurrent=3) — o que mantém a cobertura
+ * IDÊNTICA (todas as variantes são consultadas) reduzindo o tempo total.
+ * A ordem das variantes é preservada antes do dedupe, para resultado estável.
  */
 export async function callMapScraperVariants(opts: {
   baseUrl: string;
@@ -214,32 +220,45 @@ export async function callMapScraperVariants(opts: {
   apiKey?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** Máximo de variantes simultâneas (default 3). 1 = comportamento serial antigo. */
+  concurrency?: number;
 }): Promise<{ places: GmapsScraperPlace[]; rawCount: number; errors: string[] }> {
-  const places: GmapsScraperPlace[] = [];
+  const variants = opts.variants ?? [];
+  const conc = Math.max(1, Math.min(opts.concurrency ?? 3, variants.length || 1));
+  const perVariant: Array<{ places: GmapsScraperPlace[]; rawCount: number; error?: string }> = new Array(variants.length);
+
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < variants.length) {
+      const idx = cursor++;
+      perVariant[idx] = await callMapScraper({
+        baseUrl: opts.baseUrl,
+        query: variants[idx],
+        maxPlaces: opts.maxPlacesPerVariant,
+        lang: opts.lang,
+        country: opts.country,
+        apiKey: opts.apiKey,
+        timeoutMs: opts.timeoutMs,
+        fetchImpl: opts.fetchImpl,
+      });
+    }
+  };
+  await Promise.all(Array.from({ length: conc }, () => worker()));
+
   const errors: string[] = [];
   let rawCount = 0;
-  for (const query of opts.variants) {
-    const r = await callMapScraper({
-      baseUrl: opts.baseUrl,
-      query,
-      maxPlaces: opts.maxPlacesPerVariant,
-      lang: opts.lang,
-      country: opts.country,
-      apiKey: opts.apiKey,
-      timeoutMs: opts.timeoutMs,
-      fetchImpl: opts.fetchImpl,
-    });
-    if (r.error) errors.push(r.error);
-    rawCount += r.rawCount ?? r.places.length;
-    for (const p of r.places) places.push(p);
-  }
   const seen = new Set<string>();
   const out: GmapsScraperPlace[] = [];
-  for (const p of places) {
-    const key = String(p.place_id ?? `${p.name ?? ""}|${p.address ?? ""}`);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(p);
+  for (const r of perVariant) {
+    if (!r) continue;
+    if (r.error) errors.push(r.error);
+    rawCount += r.rawCount ?? r.places.length;
+    for (const p of r.places) {
+      const key = String(p.place_id ?? `${p.name ?? ""}|${p.address ?? ""}`);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(p);
+    }
   }
   return { places: out, rawCount, errors };
 }

@@ -123,3 +123,91 @@ describe("mapScraper — variantes de query (ampliar cobertura)", () => {
     expect(out.rawCount).toBe(4);
   });
 });
+
+describe("mapScraper — variantes em concorrência controlada (performance sem perda)", () => {
+  function makeFetch(delayMs = 10) {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      calls.push(String(url));
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        await new Promise((r) => setTimeout(r, delayMs));
+        const q = decodeURIComponent(String(url));
+        const n = q.includes("petshop") ? 2 : 1;
+        const items = Array.from({ length: n }, (_, i) => ({ id: `p${n}-${i}`, title: `Empresa ${n}-${i}` }));
+        return new Response(JSON.stringify(items), { status: 200 });
+      } finally {
+        inFlight--;
+      }
+    }) as unknown as typeof fetch;
+    return { fetchImpl, calls: () => calls, maxInFlight: () => maxInFlight };
+  }
+
+  const VARIANTS = [
+    "pet shop em X, SP",
+    "petshop em X, SP",
+    "banho e tosa em X, SP",
+    "loja de animais em X, SP",
+    "pet shop X",
+    "petshop X",
+  ];
+
+  it("consulta TODAS as variantes e respeita o teto de concorrência (sem reduzir cobertura)", async () => {
+    const { fetchImpl, calls, maxInFlight } = makeFetch(15);
+    const out = await callMapScraperVariants({
+      baseUrl: "https://mapscraper.test",
+      variants: VARIANTS,
+      maxPlacesPerVariant: 40,
+      fetchImpl,
+      concurrency: 3,
+    });
+    // Todas as variantes foram consultadas exatamente 1x (nada foi cortado).
+    expect(calls()).toHaveLength(VARIANTS.length);
+    expect(new Set(calls()).size).toBe(VARIANTS.length);
+    // Nunca mais que 3 requisições simultâneas.
+    expect(maxInFlight()).toBeLessThanOrEqual(3);
+    expect(maxInFlight()).toBeGreaterThan(1);
+    // Resultados das variantes "petshop" (2 itens) presentes.
+    expect(out.places.some((p) => p.name === "Empresa 2-0")).toBe(true);
+    expect(out.places.some((p) => p.name === "Empresa 2-1")).toBe(true);
+  });
+
+  it("mesmo conjunto de place_ids e mesmo rawCount em concorrência 1 e 3", async () => {
+    const serial = await callMapScraperVariants({
+      baseUrl: "https://mapscraper.test",
+      variants: VARIANTS,
+      maxPlacesPerVariant: 40,
+      fetchImpl: makeFetch(5).fetchImpl,
+      concurrency: 1,
+    });
+    const parallel = await callMapScraperVariants({
+      baseUrl: "https://mapscraper.test",
+      variants: VARIANTS,
+      maxPlacesPerVariant: 40,
+      fetchImpl: makeFetch(5).fetchImpl,
+      concurrency: 3,
+    });
+    expect(new Set(parallel.places.map((p) => p.place_id))).toEqual(new Set(serial.places.map((p) => p.place_id)));
+    expect(parallel.rawCount).toBe(serial.rawCount);
+    expect(parallel.places.length).toBe(serial.places.length);
+  });
+
+  it("falha de uma variante não descarta as que responderam (erros agregados)", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (decodeURIComponent(String(url)).includes("petshop")) return new Response("boom", { status: 502 });
+      return new Response(JSON.stringify([{ id: "ok", title: "OK" }]), { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await callMapScraperVariants({
+      baseUrl: "https://mapscraper.test",
+      variants: ["pet shop em X, SP", "petshop em X, SP"],
+      maxPlacesPerVariant: 40,
+      fetchImpl,
+      concurrency: 2,
+    });
+    expect(out.places.map((p) => p.place_id)).toEqual(["ok"]);
+    expect(out.errors.length).toBeGreaterThan(0);
+  });
+});

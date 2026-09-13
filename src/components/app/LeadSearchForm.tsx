@@ -186,10 +186,12 @@ async function pollGmapsSearch(
   onAttempt?: (attempt: number) => void,
   opts?: { attempts?: number; intervalMs?: number },
 ): Promise<SearchStatusResponse> {
-  const attempts = opts?.attempts ?? 60;
-  const intervalMs = opts?.intervalMs ?? 5000;
+  const attempts = opts?.attempts ?? 100;
+  const intervalMs = opts?.intervalMs ?? 3000;
   for (let i = 1; i <= attempts; i++) {
-    await new Promise((r) => setTimeout(r, intervalMs));
+    // Primeira checagem IMEDIATA (sem esperar um intervalo) e depois a cada
+    // `intervalMs`. Mantém o mesmo orçamento total de ~5 min para o job.
+    if (i > 1) await new Promise((r) => setTimeout(r, intervalMs));
     onAttempt?.(i);
     const { data, error } = await supabase.functions.invoke<SearchStatusResponse>("get-search-status", {
       body: { search_id: searchId },
