@@ -12,11 +12,11 @@
 import { assertGenerationQuality } from "./generation-gate.js";
 import { readWorkspace } from "./workspace.js";
 import type { WorkEvidence } from "./work-evidence.js";
-import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap } from "./regression-guard.js";
+import { editRegressionIssues, hasImageReferenceChange, requestsImageSwap, scopeViolations } from "./regression-guard.js";
 import { classifyTask } from "./visual-task.js";
 
 export type FinishBlockKind =
-  | "evidence" | "image" | "inspect" | "verify" | "visual" | "regression" | "quality" | "console" | "images";
+  | "evidence" | "image" | "inspect" | "verify" | "visual" | "regression" | "quality" | "console" | "images" | "scope";
 
 export interface FinishDecision {
   block: boolean;
@@ -200,6 +200,17 @@ export function decideFinishBlock(opts: {
     }
   }
 
+  // 4b) SCOPE GUARD — pedido PONTUAL (cor/texto/tamanho/framing) NÃO pode mexer
+  // em imagem/logo/texto/estrutura nem alterar arquivos demais. Roda DEPOIS do
+  // regression guard (regressão destrutiva tem precedência na mensagem). Se
+  // mexeu fora do escopo, o agente REVERTE antes de finalizar.
+  if (opts.mode === "edit" && hasStart && changed && opts.startFiles && requestedChange) {
+    const scopeIssues = scopeViolations(opts.startFiles, files, opts.instruction ?? "");
+    if (scopeIssues.length > 0) {
+      return blocked("scope", `Alterações FORA do escopo do pedido foram detectadas. Faça a MENOR alteração possível e REVERTA o que não foi pedido (ESCOPO = pedido do usuário):\n${scopeIssues.map((i) => `- ${i}`).join("\n")}`);
+    }
+  }
+
   // 5) QUALITY GATE (generate) — todas as tentativas.
   if (opts.mode !== "generate") return { block: false };
   const gate = assertGenerationQuality(files, {
@@ -245,6 +256,8 @@ export interface CompletionState {
   renderVerified?: boolean;
   /** A alteração afeta renderização (html/css/js/assets). */
   visualEdit?: boolean;
+  /** Pedido do usuário (para o relatório refletir o tipo real da alteração). */
+  instruction?: string;
 }
 
 export interface CompletionStates {
@@ -275,13 +288,37 @@ export interface ChangeReportInput {
   visualEdit: boolean;
   /** finish_task aprovado = verificação formal concluída. */
   verified: boolean;
+  /** Tipo do pedido (color|framing|swap|text|size|generic) — dá o tom do relatório. */
+  kind?: string;
+}
+
+/** Classe o TIPO do pedido para o relatório refletir o que realmente foi feito. */
+export function classifyEditKind(instruction: string): string {
+  const t = String(instruction ?? "").toLowerCase();
+  if (/(enquadr|cortad|cortou|cortando|recort|cabe[çc]a|rosto|sujeito|inteir|object-position|object-fit|background-position|zoom|aproxim|afast|desça a (foto|imagem)|suba a (foto|imagem))/.test(t)) return "framing";
+  if (/(troque|troca|trocar|substitua|substitui|outra foto|outra imagem|mude a foto|mude a imagem)/.test(t) && /(foto|imagem|fotografia|banner)/.test(t)) return "swap";
+  if (/(cor|color|paleta|laranja|vermelh|azul|verde|roxo|amarelo)/.test(t)) return "color";
+  if (/(texto|t[ií]tulo|subt[ií]tulo|frase|palavra|copy)/.test(t)) return "text";
+  if (/(tamanho|diminu|aument|margem|padding|espa[çc])/.test(t)) return "size";
+  return "generic";
+}
+
+function reportLead(kind: string): string {
+  switch (kind) {
+    case "framing": return "Pronto. Ajustei o enquadramento da imagem existente, sem trocar a foto.";
+    case "color": return "Pronto. Ajustei as cores conforme pedido, preservando logotipo, imagens, layout e conteúdo.";
+    case "swap": return "Pronto. Troquei a imagem conforme pedido, preservando o restante do site.";
+    case "text": return "Pronto. Atualizei os textos conforme pedido, preservando o restante do site.";
+    case "size": return "Pronto. Ajustei tamanho/espaçamento conforme pedido, preservando o restante do site.";
+    default: return "Fiz a alteração no projeto.";
+  }
 }
 
 export function buildChangeReport(i: ChangeReportInput): string {
   const files = (i.editedPaths ?? []).filter(Boolean);
   const verifs = [...new Set(i.verificationTools ?? [])];
   const lines: string[] = [];
-  lines.push("Fiz a alteração no projeto.");
+  lines.push(reportLead(i.kind ?? "generic"));
   lines.push("Arquivos alterados:");
   lines.push(files.length ? files.slice(0, 15).map((f) => `- ${f}`).join("\n") : "- (nenhum arquivo registrado)");
   if (verifs.length > 0) {
@@ -294,7 +331,7 @@ export function buildChangeReport(i: ChangeReportInput): string {
   }
   lines.push(
     i.verified
-      ? "Resultado: alteração aplicada e validada."
+      ? "Resultado: alteração aplicada e validada (restante do site preservado)."
       : "Resultado: alteração aplicada. A verificação final formal não foi concluída, então não vou afirmar que foi validada.",
   );
   if (i.visualEdit && !i.renderVerified) lines.push("Observação: confirme o resultado visual no navegador (desktop e mobile).");
@@ -339,6 +376,7 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
         renderVerified: s.renderVerified === true,
         visualEdit: s.visualEdit === true,
         verified: s.finishTaskCalled,
+        kind: classifyEditKind(s.instruction ?? ""),
       });
       return { ok: true, reply: msg, error: null, unverified, states };
     }

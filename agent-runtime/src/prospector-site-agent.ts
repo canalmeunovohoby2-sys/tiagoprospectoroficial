@@ -11,7 +11,7 @@ import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
 import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, classifyCompletion, type CompletionStates, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
 import { analyzeVisualEvidence } from "./visual-analysis.js";
-import { hasImageReferenceChange, requestsImageSwap, editRegressionIssues } from "./regression-guard.js";
+import { hasImageReferenceChange, requestsImageSwap, requestsFramingFix, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
 import { computeWorkEvidence, verificationToolsAfterLastEdit, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
@@ -34,13 +34,23 @@ export function isSurgicalEditTask(instruction: string): boolean {
 
 const SURGICAL_HINT = `
 
-[TAREFA CIRÚRGICA — modo rápido, com verificação OBRIGATÓRIA]
-Esta é uma alteração PONTUAL. Execute com o mínimo de passos, mas SEMPRE verificando o resultado REAL:
-1) Se precisar localizar, faça NO MÁXIMO um read_file apenas do arquivo/trecho-alvo (src/site.css, o <img> do logo no index.html etc.).
-2) Aplique a mudança exata com UM edit_file (nunca reescreva o arquivo inteiro).
-3) VERIFIQUE no NAVEGADOR que a mudança realmente apareceu: browser_open (ou browser_reload) e confirme com browser_inspect/browser_eval — ex.: cor/tamanho computado do elemento, texto, presença do elemento. Para QUALQUER mudança visual (cor, tamanho, botão, logo, imagem, espaçamento) isso é OBRIGATÓRIO.
+[TAREFA CIRÚRGICA — modo rápido, escopo mínimo e verificação OBRIGATÓRIA]
+Esta é uma alteração PONTUAL. Faça a MENOR alteração possível:
+1) ESCOPO = PEDIDO DO USUÁRIO. Altere SÓ o que foi pedido. NÃO troque logo, fotos, textos, fontes nem a estrutura sem pedido explícito — preserve o restante do site intacto.
+2) Se precisar localizar, faça NO MÁXIMO um read_file do arquivo/trecho-alvo. Aplique a mudança exata com UM edit_file (nunca reescreva o arquivo inteiro).
+3) VERIFIQUE no NAVEGADOR que a mudança realmente apareceu — RÁPIDO e objetivo: browser_open (ou browser_reload) + browser_inspect/browser_eval (ex.: cor/tamanho computado, texto, elemento). Para mudança visual, isso é OBRIGATÓRIO. NÃO use visual_review (é pesado) para tarefa trivial.
 4) Se o resultado não estiver como pedido, corrija e verifique de novo; só então finalize.
-PROIBIDO: list_files, get_site_context, reanalisar o projeto, reescrever arquivos completos, tocar em outras seções/arquivos.`;
+PROIBIDO: list_files, get_site_context, reanalisar o projeto, reescrever arquivos completos, tocar em arquivos/seções fora do pedido.`;
+
+const FRAMING_HINT = `
+
+[ENQUADRAMENTO / CORTE / ZOOM — NÃO TROQUE A IMAGEM]
+Este pedido é sobre o ENQUADRAMENTO da imagem EXISTENTE (cabeça/sujeito cortado, zoom, posição), NÃO sobre trocar a foto.
+- PRESERVE exatamente a MESMA imagem: NÃO altere o src/href, NÃO troque o asset, NÃO escolha outra foto/mulher/pessoa.
+- Corrija no CSS do elemento/container existente: object-fit (cover/contain) + object-position (ex.: "center top"), background-position/background-size, dimensões/aspect-ratio/altura do container/hero, overflow, transform/escala — SEM distorcer a imagem. Ajuste também o responsivo (desktop e mobile).
+- Para "zoom / aumente / aproxime / diminua / afaste": aplique uma mudança CONCRETA e visível (ex.: transform: scale, object-fit, width/height do container ou object-position) — NÃO conclua sem ter alterado algo de verdade. Se o pedido é "diminuir o zoom/afastar", mostre mais do ambiente (reduza escala/recorte) mantendo o sujeito inteiro.
+- Verificação RÁPIDA no navegador (browser_eval/browser_inspect): confirme que o sujeito (ex.: a cabeça) aparece por INTEIRO no desktop e no mobile. Se ainda estiver cortado, ajuste e verifique de novo. NÃO use visual_review.
+- NÃO altere logo, textos, outras seções nem qualquer coisa fora do enquadramento.`;
 
 const BUG_HINT = `
 
@@ -527,6 +537,8 @@ export class ProspectorSiteAgent {
     let prompt: string;
     if (this.options.mode === "edit" && isBugReport(instruction)) {
       prompt = `${instruction}\n${BUG_HINT}`;
+    } else if (this.options.mode === "edit" && requestsFramingFix(instruction)) {
+      prompt = `${instruction}\n${FRAMING_HINT}`;
     } else if (this.options.mode === "edit" && isSurgicalEditTask(instruction)) {
       prompt = `${instruction}\n${SURGICAL_HINT}`;
     } else {
@@ -565,6 +577,7 @@ export class ProspectorSiteAgent {
         verificationTools,
         renderVerified: workEvidence.renderVerifiedAfterLastEdit === true,
         visualEdit: workEvidence.visualEdit === true,
+        instruction: this.currentInstruction,
       });
       return {
         ok: verdict.ok,

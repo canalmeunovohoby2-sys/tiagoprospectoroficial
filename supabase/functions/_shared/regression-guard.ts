@@ -45,6 +45,85 @@ export function requestsImageSwap(instruction: string): boolean {
     || /(imagem|foto|fotografia|banner|background).*(troque|troca|trocar|substitua|substitui|substituir)/i.test(text);
 }
 
+/** FRAMING/CROP/ZOOM: ajustar o enquadramento da imagem EXISTENTE (NÃO trocar). */
+export function requestsFramingFix(instruction: string): boolean {
+  const t = String(instruction ?? "");
+  return /(enquadr|enquadramento|cortad|cortou|cortando|cortar|recort|cabe[çc]a|rosto|sujeito|apare[çc]a|mostre\s+mais|mostrar\s+mais|inteir[ao]|de\s+corpo\s+inteiro|zoom|afast|aproxim|desça\s+a\s+(foto|imagem)|suba\s+a\s+(foto|imagem)|object-position|object-fit|background-position|background-size|posi[cç][ãa]o\s+da\s+(foto|imagem))/i.test(t);
+}
+
+/** Pedido PONTUAL (cor/texto/tamanho/framing/posição CSS) — não é redesign. */
+const NARROW_INTENT = /(cor|color|paleta|laranja|vermelh|azul|verde|roxo|amarelo|bot[aã]o|btn|fonte|tipograf|tamanho|diminu|aument|margem|margin|padding|espa[çc]|enquadr|cabe[çc]a|rosto|sujeito|inteir|cortad|cortou|recort|zoom|aproxim|afast|posi[cç][ãa]o|object-position|object-fit|background-position|background-size|texto|t[ií]tulo|subt[ií]tulo|frase|palavra)/i;
+export function requestsNarrowScope(instruction: string): boolean {
+  const t = String(instruction ?? "");
+  return NARROW_INTENT.test(t) && !REBUILD_INTENT.test(t);
+}
+
+function extractLogoSig(files: SiteFiles): string {
+  const out = new Set<string>();
+  for (const [path, content] of Object.entries(files ?? {})) {
+    for (const m of content.match(/(?:src|href)=["']([^"']*(?:logo|logomarca|brand|marca|favicon)[^"']*)["']/gi) ?? []) out.add(m.toLowerCase());
+    for (const m of content.match(/url\(\s*["']?([^"')]*(?:logo|logomarca|brand|marca)[^"')]*)["']?\s*\)/gi) ?? []) out.add(m.toLowerCase());
+  }
+  return [...out].sort().join("\n");
+}
+
+function extractTextSig(files: SiteFiles): string {
+  const html = Object.entries(files ?? {}).find(([k]) => k.endsWith("index.html"))?.[1] ?? "";
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 4000);
+}
+
+function countChangedFiles(before: SiteFiles, after: SiteFiles): number {
+  const keys = new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]);
+  let n = 0;
+  for (const k of keys) if ((before ?? {})[k] !== (after ?? {})[k]) n++;
+  return n;
+}
+
+/**
+ * SCOPE GUARD — para pedidos PONTUAIS (cor/texto/tamanho/framing), detecta
+ * alterações FORA DO ESCOPO (imagem/logo/texto/estrutura/arquivos demais) para o
+ * agente reverter antes de finalizar. Nunca dispara em redesign explícito.
+ */
+export function scopeViolations(before: SiteFiles, after: SiteFiles, instruction: string): string[] {
+  const ins = String(instruction ?? "");
+  if (!requestsNarrowScope(ins)) return [];
+  const issues: string[] = [];
+
+  // 1) Imagens trocadas sem pedido de troca (framing/zoom NÃO troca a foto).
+  if (hasImageReferenceChange(before, after) && !requestsImageSwap(ins)) {
+    issues.push("As referências de IMAGEM mudaram sem você ter pedido troca de foto. Se o pedido era cor/enquadramento/texto, restaure a imagem ORIGINAL (mesmo src/asset) e ajuste apenas o CSS/enquadramento.");
+  }
+  // 2) Logo/identidade trocados sem pedido.
+  const logoSigB = extractLogoSig(before);
+  if (logoSigB && logoSigB !== extractLogoSig(after) && !/(logo|logomarca|logotipo|marca|identidade visual)/i.test(ins)) {
+    issues.push("O LOGOTIPO/identidade visual foi alterado sem pedido. Restaure o logo original.");
+  }
+  // 3) Texto/conteúdo visível alterado sem pedido.
+  const textB = extractTextSig(before);
+  const textA = extractTextSig(after);
+  if (textB && textB !== textA && !/(texto|t[ií]tulo|subt[ií]tulo|frase|palavra|copy|conte[uú]do|escrev|reescrev)/i.test(ins)) {
+    issues.push("O TEXTO/conteúdo visível mudou sem pedido. Restaure os textos originais — altere apenas a propriedade solicitada.");
+  }
+  // 4) Estrutura de seções mudou sem pedido.
+  const secB = siteMetrics(before).sections;
+  const secA = siteMetrics(after).sections;
+  if (secB > 0 && secA !== secB && !/(se[çc][ãa]o|secoes|se[çc][õo]es|adicion|remov|reorganiz|estrutur|layout|hero|p[aá]gina)/i.test(ins)) {
+    issues.push(`A ESTRUTURA de seções mudou (${secB} → ${secA}) sem pedido. Preserve a estrutura existente.`);
+  }
+  // 5) Arquivos demais para um pedido pontual.
+  const changed = countChangedFiles(before, after);
+  if (changed > 3 && !/(todos os arquivos|v[aá]rios arquivos|site inteiro|global|tema inteiro)/i.test(ins)) {
+    issues.push(`Muitos arquivos foram alterados (${changed}) para um pedido pontual. Restrinja a alteração ao necessário (arquivo/elemento do pedido).`);
+  }
+  return issues.slice(0, 4);
+}
+
 export interface SiteMetrics {
   contentLen: number;
   imgTags: number;
