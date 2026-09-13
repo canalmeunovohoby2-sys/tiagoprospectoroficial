@@ -795,12 +795,29 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           first_render_ms: firstRenderAt ? firstRenderAt - t0 : null,
           total_ms: Date.now() - t0,
         });
+        // FALHA FALSA EVITADA: se a run terminou sem `finish_task` aprovado
+        // (unverified), mas o QUALITY GATE objetivo passou E o site foi realmente
+        // criado nesta run, aceitamos a geração. O gate continua sendo a evidência
+        // real de qualidade — isto só evita punir o modelo por não ter chamado o
+        // finish_task após entregar um site válido.
+        const generationProduced = writeCount > 0 && !!finalFiles["index.html"];
+        const generationOk = finalOutcome.ok || (
+          finalOutcome.unverified === true && gateResult.ok && generationProduced && !genBlocked
+        );
+        genLog(genId, "GENERATION_VERDICT", {
+          outcome_ok: finalOutcome.ok,
+          unverified: finalOutcome.unverified === true,
+          gate_ok: gateResult.ok,
+          produced: generationProduced,
+          interaction_ok: interaction.ok,
+          accepted: generationOk,
+        });
         finishGenerate({
-          status: genBlocked ? "error" : (finalOutcome.ok ? "ok" : "error"),
-          reply: finalOutcome.reply,
+          status: genBlocked ? "error" : (generationOk ? "ok" : "error"),
+          reply: generationOk && !finalOutcome.ok ? (finalOutcome.rawReply || "Site gerado com sucesso.") : finalOutcome.reply,
           error: genBlocked
             ? "O site gerado reprovou na auditoria de interação (clique deixa a tela preta) e a correção automática não resolveu. A entrega foi BLOQUEADA — gere novamente para tentar de novo."
-            : finalOutcome.error,
+            : (generationOk ? undefined : finalOutcome.error),
           errors: genBlocked ? interaction.issues.slice(0, 5) : undefined,
           interaction_blocked: genBlocked || undefined,
           changed: true,

@@ -76,6 +76,12 @@ export interface AgentRunOutcome {
   timing?: AgentRunTiming;
   /** Transcript completo (messages do Cline Agent) para persistência de conversa. */
   conversationMessages?: unknown[];
+  /** Motivo terminal dos guards (bloqueio definitivo) — null quando não houve. */
+  terminalReason?: string | null;
+  /** true quando a run terminou sem finish_task aprovado (anti-falso-sucesso). */
+  unverified?: boolean;
+  /** Resposta crua do modelo (antes do aviso honesto do guard). */
+  rawReply?: string;
 }
 
 export interface ProspectorAgentOptions {
@@ -485,6 +491,9 @@ export class ProspectorSiteAgent {
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked || !!terminal || unverified,
         researchTrace: this.researchTrace.slice(),
         conversationMessages: result?.messages ?? [],
+        terminalReason: terminal ?? null,
+        unverified,
+        rawReply: reply,
       };
     } catch (e) {
       const files = readWorkspace(this.options.workspaceRoot);

@@ -2233,9 +2233,6 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
   let errorMsg: string | null = null;
   let resultSource: string | null = null;
   let finalLeads: Record<string, unknown>[] = [];
-  // Leads normalizados/ordenados desta busca — usados depois da entrega para
-  // completar a FOTO em background (fora do caminho crítico do polling).
-  let sortedLeads: GmapsNormalizedLead[] = [];
 
   try {
     const query = `${p.segment} em ${p.city}, ${p.state}`;
@@ -2340,14 +2337,19 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
       const validated = validateGmapsLeads(deduped.leads, p.city, p.state);
       counters.filtrado = validated.leads.length;
       const sorted = sortGmapsByPriority(validated.leads);
-      sortedLeads = sorted;
+      // FOTO: mapScraper não traz imagem; completa com a imagem REAL do site do
+      // próprio estabelecimento (og:image) ANTES de gravar, para a lista já vir
+      // com foto (nunca imagem de terceiros). Roda dentro do orçamento abaixo.
+      const photoEnrich = await enrichLeadsWithWebsiteImages(sorted, {
+        budget: MAP_PHOTO_ENRICH_BUDGET,
+        concurrency: MAP_PHOTO_ENRICH_CONCURRENCY,
+        timeoutMs: MAP_PHOTO_ENRICH_TIMEOUT_MS,
+      });
       counters.final = sorted.length;
       counters.comTelefone = sorted.filter((l) => !!l.phone).length;
       counters.comWhatsapp = sorted.filter((l) => inferWhatsapp(l.phone ?? undefined) !== null).length;
       (counters as unknown as Record<string, unknown>).comFoto = sorted.filter((l) => !!l.photoUrl).length;
-      // A FOTO por site (og:image) NÃO bloqueia mais a entrega: os leads são
-      // persistidos e a busca fica terminal primeiro; o enriquecimento de foto
-      // roda em seguida (abaixo), já fora do caminho crítico do polling.
+      (counters as unknown as Record<string, unknown>).fotoEnriquecida = photoEnrich.enriched;
       finalLeads = sorted.map((l) => toPublicLeadShape(l));
       resultSource = consulted.length > 0 ? consulted.join(",") : withPlaces.map((r) => r.key).join(",");
       if (validated.rejected.length > 0) {
@@ -2426,44 +2428,6 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
         updated_at: new Date().toISOString(),
       })
       .eq("id", p.searchId);
-
-    // ── FOTO em background (após a busca ficar terminal) ────────────────
-    // gmaps traz thumbnail; mapScraper não. Completa a foto dos leads sem
-    // imagem e COM site com a imagem real do PRÓPRIO estabelecimento
-    // (og:image) — nunca de terceiros. Roda depois de `searches.status` já
-    // estar terminal, então NÃO atrasa o resultado no front.
-    if (sortedLeads.length > 0) {
-      try {
-        const targets = sortedLeads.filter((l) => !l.photoUrl && l.website);
-        if (targets.length > 0) {
-          const photoEnrich = await enrichLeadsWithWebsiteImages(sortedLeads, {
-            budget: MAP_PHOTO_ENRICH_BUDGET,
-            concurrency: MAP_PHOTO_ENRICH_CONCURRENCY,
-            timeoutMs: MAP_PHOTO_ENRICH_TIMEOUT_MS,
-          });
-          let photoUpdated = 0;
-          for (const l of targets) {
-            if (!l.photoUrl) continue;
-            const { error: phErr } = await p.admin
-              .from("leads")
-              .update({ photo_name: l.photoUrl })
-              .eq("search_id", p.searchId)
-              .eq("external_id", l.sourceId);
-            if (!phErr) photoUpdated++;
-            else console.warn("[search-places][gmaps] photo update failed", l.sourceId, phErr.message);
-          }
-          counters.comFoto = sortedLeads.filter((l) => !!l.photoUrl).length;
-          (counters as unknown as Record<string, unknown>).fotoEnriquecida = photoUpdated;
-          (counters as unknown as Record<string, unknown>).fotoTentada = photoEnrich.attempted;
-          await p.admin.from("searches").update({ counters }).eq("id", p.searchId);
-          console.info("[search-places][gmaps] photo background done", {
-            searchId: p.searchId, attempted: photoEnrich.attempted, photoUpdated,
-          });
-        }
-      } catch (e) {
-        console.warn("[search-places][gmaps] photo background failed", e instanceof Error ? e.message : e);
-      }
-    }
 
     console.info("[search-places][gmaps] job done", {
       searchId: p.searchId,
