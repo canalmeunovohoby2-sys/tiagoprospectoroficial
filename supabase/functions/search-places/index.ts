@@ -15,6 +15,7 @@ import {
 } from "../_shared/gmaps.ts";
 import { buildQueryVariants, callMapScraperVariants } from "../_shared/mapscraper.ts";
 import { enrichLeadsWithWebsiteImages } from "../_shared/lead-photo.ts";
+import { settleWithin } from "../_shared/source-deadline.ts";
 
 // Supabase Edge Functions expõem EdgeRuntime.waitUntil para trabalho em
 // background que continua após a resposta HTTP.
@@ -47,6 +48,16 @@ const MAP_SCRAPER_PER_VARIANT = Math.max(20, Number(Deno.env.get("MAP_SCRAPER_PE
 const MAP_SCRAPER_VARIANTS_CONCURRENCY = (() => {
   const raw = Number(Deno.env.get("MAP_SCRAPER_VARIANTS_CONCURRENCY"));
   return Number.isFinite(raw) ? Math.max(1, Math.min(10, raw)) : 1;
+})();
+// Orçamento total das fontes. As Edge Functions são mortas no wall-clock
+// (150s no Free / 400s no pago). Se uma fonte passar disso, o worker morre SEM
+// gravar status/leads (kill não é exceção) e a busca fica "PROCESSING" eterno.
+// Este deadline garante que o job finalize dentro do limite com o que chegar a
+// tempo. Ajustável por secret (ex.: SOURCES_DEADLINE_MS=300000 em plano pago).
+const SOURCES_DEADLINE_MS = (() => {
+  const raw = Number(Deno.env.get("SOURCES_DEADLINE_MS"));
+  const v = Number.isFinite(raw) && raw > 0 ? raw : 100000;
+  return Math.max(15000, Math.min(v, 140000));
 })();
 // FOTO: o mapScraper não traz imagem; completamos com a imagem real do site do
 // próprio estabelecimento (og:image), limitado por orçamento/concorrência.
@@ -2234,60 +2245,80 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
     const gmapsBudget = Math.max(20, Math.min(requested, GMAPS_SCRAPER_MAX));
 
     // Fontes habilitadas são consultadas EM PARALELO e os resultados mesclados.
-    type SourceRun = { key: LeadSource; places: GmapsScraperPlace[]; error?: string; raw?: number; ms?: number };
-    const tasks: Array<Promise<SourceRun>> = [];
+    // O tempo total é limitado por SOURCES_DEADLINE_MS (ver topo) para o job
+    // SEMPRE finalizar dentro do wall-clock da Edge Function.
+    type SourceRun = { key: LeadSource; places: GmapsScraperPlace[]; error?: string; raw?: number };
     const sourceTimings: Record<string, number> = {};
+    const sourceTasks: Array<{ key: LeadSource; promise: Promise<SourceRun> }> = [];
+
     if (GMAPS_SCRAPER_ENABLED) {
-      tasks.push((async () => {
-        const t0 = Date.now();
-        try {
-          const r = await callGmapsScraper({
-            baseUrl: GMAPS_SCRAPER_URL,
-            query,
-            maxPlaces: gmapsBudget,
-            apiKey: GMAPS_SCRAPER_API_KEY || undefined,
-            timeoutMs: Number.isFinite(GMAPS_SCRAPER_TIMEOUT_MS) ? GMAPS_SCRAPER_TIMEOUT_MS : 300000,
-          });
-          return { key: "google_maps_scraper" as LeadSource, places: r.results, error: r.error };
-        } finally {
-          sourceTimings.google_maps_scraper = Date.now() - t0;
-        }
-      })());
+      sourceTasks.push({
+        key: "google_maps_scraper",
+        promise: (async (): Promise<SourceRun> => {
+          const t0 = Date.now();
+          try {
+            const r = await callGmapsScraper({
+              baseUrl: GMAPS_SCRAPER_URL,
+              query,
+              maxPlaces: gmapsBudget,
+              apiKey: GMAPS_SCRAPER_API_KEY || undefined,
+              timeoutMs: Math.min(Number.isFinite(GMAPS_SCRAPER_TIMEOUT_MS) ? GMAPS_SCRAPER_TIMEOUT_MS : SOURCES_DEADLINE_MS, SOURCES_DEADLINE_MS),
+            });
+            return { key: "google_maps_scraper" as LeadSource, places: r.results, error: r.error };
+          } finally {
+            sourceTimings.google_maps_scraper = Date.now() - t0;
+          }
+        })(),
+      });
     }
     if (MAP_SCRAPER_ENABLED) {
       const mapVariants = buildQueryVariants(p.segment, p.city, p.state, MAP_SCRAPER_VARIANTS);
-      tasks.push((async () => {
-        const t0 = Date.now();
-        try {
-          const r = await callMapScraperVariants({
-            baseUrl: MAP_SCRAPER_URL,
-            variants: mapVariants,
-            maxPlacesPerVariant: MAP_SCRAPER_PER_VARIANT,
-            lang: MAP_SCRAPER_LANG,
-            country: MAP_SCRAPER_COUNTRY,
-            apiKey: MAP_SCRAPER_API_KEY || undefined,
-            timeoutMs: Number.isFinite(MAP_SCRAPER_TIMEOUT_MS) ? MAP_SCRAPER_TIMEOUT_MS : 300000,
-            concurrency: MAP_SCRAPER_VARIANTS_CONCURRENCY,
-          });
-          return { key: "mapscraper" as LeadSource, places: r.places, error: r.places.length ? undefined : r.errors[0], raw: r.rawCount };
-        } finally {
-          sourceTimings.mapscraper = Date.now() - t0;
-        }
-      })());
+      sourceTasks.push({
+        key: "mapscraper",
+        promise: (async (): Promise<SourceRun> => {
+          const t0 = Date.now();
+          try {
+            const r = await callMapScraperVariants({
+              baseUrl: MAP_SCRAPER_URL,
+              variants: mapVariants,
+              maxPlacesPerVariant: MAP_SCRAPER_PER_VARIANT,
+              lang: MAP_SCRAPER_LANG,
+              country: MAP_SCRAPER_COUNTRY,
+              apiKey: MAP_SCRAPER_API_KEY || undefined,
+              timeoutMs: Math.min(Number.isFinite(MAP_SCRAPER_TIMEOUT_MS) ? MAP_SCRAPER_TIMEOUT_MS : SOURCES_DEADLINE_MS, SOURCES_DEADLINE_MS),
+              concurrency: MAP_SCRAPER_VARIANTS_CONCURRENCY,
+            });
+            return { key: "mapscraper" as LeadSource, places: r.places, error: r.places.length ? undefined : r.errors[0], raw: r.rawCount };
+          } finally {
+            sourceTimings.mapscraper = Date.now() - t0;
+          }
+        })(),
+      });
     }
 
     const sourcesT0 = Date.now();
-    const sourceRuns: SourceRun[] = tasks.length > 0 ? await Promise.all(tasks) : [];
+    const deadlineOutcome = sourceTasks.length > 0
+      ? await settleWithin(
+          sourceTasks.map((t) => t.promise.catch((e): SourceRun => ({ key: t.key, places: [], error: e instanceof Error ? e.message : String(e) }))),
+          SOURCES_DEADLINE_MS,
+        )
+      : { settled: [] as SourceRun[], pending: 0 };
+    const sourceRuns = deadlineOutcome.settled;
+    const pendingSources = deadlineOutcome.pending;
     const sourcesMs = Date.now() - sourcesT0;
     const perSource: Record<string, number> = {};
     const perSourceRaw: Record<string, number> = {};
     for (const r of sourceRuns) { perSource[r.key] = r.places.length; if (typeof r.raw === "number") perSourceRaw[r.key] = r.raw; }
     (counters as unknown as Record<string, unknown>).sources = perSource;
     (counters as unknown as Record<string, unknown>).sourcesRaw = perSourceRaw;
+    (counters as unknown as Record<string, unknown>).pendingSources = pendingSources;
     (counters as unknown as Record<string, unknown>).sourceErrors = Object.fromEntries(sourceRuns.filter((r) => !!r.error).map((r) => [r.key, r.error]));
-    (counters as unknown as Record<string, unknown>).timings = { ...sourceTimings, sourcesMs };
+    (counters as unknown as Record<string, unknown>).timings = { ...sourceTimings, sourcesMs, sourcesDeadlineMs: SOURCES_DEADLINE_MS };
     (counters as unknown as Record<string, unknown>).budgets = { gmaps: gmapsBudget, mapVariants: MAP_SCRAPER_VARIANTS, mapPerVariant: MAP_SCRAPER_PER_VARIANT, mapVariantsConcurrency: MAP_SCRAPER_VARIANTS_CONCURRENCY, requested: p.maxPages * 20 };
-    console.info("[search-places][gmaps] sources", JSON.stringify({ query, perSource, sourceTimings, sourcesMs, budgets: { gmapsBudget, MAP_SCRAPER_VARIANTS, MAP_SCRAPER_PER_VARIANT, MAP_SCRAPER_VARIANTS_CONCURRENCY } }));
+    console.info("[search-places][gmaps] sources", JSON.stringify({ query, perSource, sourceTimings, sourcesMs, pendingSources, budgets: { gmapsBudget, MAP_SCRAPER_VARIANTS, MAP_SCRAPER_PER_VARIANT, MAP_SCRAPER_VARIANTS_CONCURRENCY } }));
+    if (pendingSources > 0) {
+      warnings.push({ source: "sources", code: "SOURCES_DEADLINE", message: `${pendingSources} fonte(s) não responderam em ${Math.round(SOURCES_DEADLINE_MS / 1000)}s; resultado parcial com o que chegou a tempo.` });
+    }
     const failedSources = sourceRuns.filter((r) => !!r.error);
     for (const r of failedSources) {
       warnings.push({ source: r.key, code: "SOURCE_FAILED", message: r.error! });
@@ -2322,7 +2353,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
       if (validated.rejected.length > 0) {
         warnings.push({ source: "validation", code: "REJECTED", message: `${validated.rejected.length} lead(s) descartado(s) na validação` });
       }
-      status = failedSources.length > 0 ? "PARTIAL_RESULTS" : "SUCCESS";
+      status = (failedSources.length > 0 || pendingSources > 0) ? "PARTIAL_RESULTS" : "SUCCESS";
     } else {
       // Nenhum resultado das fontes primárias → fallback Geoapify.
       const gp = await searchGeoapifyLeads(p.segment, p.city, p.state);
@@ -2334,7 +2365,7 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
         counters.comTelefone = gp.leads.filter((l) => !!l.phone).length;
         counters.comWhatsapp = gp.leads.filter((l) => !!l.whatsapp).length;
         finalLeads = gp.leads as unknown as Record<string, unknown>[];
-      } else if (sourceRuns.length > 0 && failedSources.length === sourceRuns.length) {
+      } else if (pendingSources > 0 || (sourceRuns.length > 0 && failedSources.length === sourceRuns.length)) {
         status = "EXTERNAL_FAILURE";
       } else {
         status = "EMPTY_REAL";
