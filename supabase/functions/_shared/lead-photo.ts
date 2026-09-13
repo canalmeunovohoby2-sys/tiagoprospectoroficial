@@ -16,28 +16,98 @@ function toAbsolute(raw: string | null | undefined, base: string): string | null
   }
 }
 
-/** Extrai a melhor imagem do HTML (og:image → twitter:image → 1ª <img> raster). */
-export function extractWebsiteImage(html: string, baseUrl: string): string | null {
-  if (!html) return null;
-  const meta1 = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image:secure_url|og:image|twitter:image)["'][^>]+content=["']([^"']+)["']/i);
-  const meta2 = html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:image:secure_url|og:image|twitter:image)["']/i);
-  const fromMeta = meta1?.[1] ?? meta2?.[1] ?? null;
-  const firstImg = (html.match(/<img[^>]+src=["']([^"']+\.(?:jpe?g|png|webp|avif)(?:\?[^"']*)?)["']/i) ?? [])[1] ?? null;
-  for (const raw of [fromMeta, firstImg]) {
-    const abs = toAbsolute(raw, baseUrl);
-    if (abs) return abs;
-  }
-  return null;
+/** Rejeita candidatos que claramente NÃO são a foto do negócio (ícones/placeholders). */
+const BAD_IMAGE = /(sprite|favicon|placeholder|spacer|pixel|1x1|blank|loading|preloader|gravatar|\.svg(?:\?|$)|logo[-_.]?(?:pequen|small)?\.(?:png|jpe?g|webp))/i;
+/** Pistas de que a URL provavelmente é um LOGO (evita como foto principal). */
+const LOGO_HINT = /(logo|brand|marca)[-_.\/]?/i;
+/** Pistas de que a URL parece uma FOTO real (hero/ambiente/produto). */
+const PHOTO_HINT = /(hero|banner|capa|cover|foto|photo|ambiente|equipe|team|about|sobre|produto|product|galeria|gallery|slider|destaque|servico|service)/i;
+
+function looksLikeImageUrl(raw: string): boolean {
+  if (!raw || raw.startsWith("data:")) return false;
+  if (BAD_IMAGE.test(raw)) return false;
+  return /\.(jpe?g|png|webp|avif)(?:\?|#|$)/i.test(raw) || /(image|photo|img|media|cdn|cloudinary|imgix|wixstatic)/i.test(raw);
 }
 
-export async function resolveWebsiteImage(
-  website: string,
-  opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+function isBetterThan(current: string | null, candidate: string): boolean {
+  if (!current) return true;
+  const candLogo = LOGO_HINT.test(candidate) && !PHOTO_HINT.test(candidate);
+  const currLogo = LOGO_HINT.test(current) && !PHOTO_HINT.test(current);
+  if (candLogo && !currLogo) return false;
+  if (!candLogo && currLogo) return true;
+  return false;
+}
+
+/**
+ * Extrai a melhor imagem do HTML. Prefere (nesta ordem): og:image/twitter:image
+ * (com todas as variações), <link image_src>, JSON-LD "image", e por fim imagens
+ * do HTML em src/srcset/data-src/lazy/picture, evitando logos/ícones/placeholders.
+ */
+export function extractWebsiteImage(html: string, baseUrl: string): string | null {
+  if (!html) return null;
+  const explicit: string[] = []; // declarações explícitas (meta/link/JSON-LD)
+  const inline: string[] = [];   // imagens soltas do HTML (exigem heurística)
+
+  // 1) Metas sociais (og:image, og:image:url, og:image:secure_url, twitter:image, twitter:image:src).
+  for (const tag of html.match(/<meta\b[^>]*>/gi) ?? []) {
+    const key = (tag.match(/(?:property|name|itemprop)=["']([^"']+)["']/i) ?? [])[1] ?? "";
+    if (!/^(?:og:image(?::(?:url|secure_url))?|twitter:image(?::src)?|image)$/i.test(key)) continue;
+    const content = (tag.match(/content=["']([^"']+)["']/i) ?? [])[1];
+    if (content) explicit.push(content);
+  }
+  // 2) <link rel="image_src" href="...">
+  const linkSrc = html.match(/<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["']/i)
+    ?? html.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["']image_src["']/i);
+  if (linkSrc?.[1]) explicit.push(linkSrc[1]);
+  // 3) JSON-LD "image": "..." | ["..."]
+  for (const m of html.matchAll(/"image"\s*:\s*(?:"([^"]+)"|\[\s*"([^"]+)")/gi)) {
+    const v = m[1] ?? m[2];
+    if (v) explicit.push(v);
+  }
+  // 4) <picture><source srcset> e <img> (src/srcset/data-src/data-lazy-src/data-original).
+  for (const tag of html.match(/<source\b[^>]*>/gi) ?? []) {
+    const srcset = (tag.match(/srcset=["']([^"']+)["']/i) ?? [])[1];
+    if (srcset) inline.push(srcset.split(",")[0].trim().split(/\s+/)[0]);
+  }
+  for (const tag of html.match(/<img\b[^>]*>/gi) ?? []) {
+    const src = (tag.match(/(?:data-lazy-src|data-src|data-original|data-flickity-lazyload|src)=["']([^"']+)["']/i) ?? [])[1];
+    const srcset = (tag.match(/srcset=["']([^"']+)["']/i) ?? [])[1];
+    const fromSrcset = srcset ? srcset.split(",")[0].trim().split(/\s+/)[0] : null;
+    const candidate = src || fromSrcset;
+    if (candidate) inline.push(candidate);
+  }
+
+  const pick = (list: string[], strict: boolean): string | null => {
+    let best: string | null = null;
+    for (const raw of list) {
+      if (!raw || raw.startsWith("data:")) continue;
+      const abs = toAbsolute(raw, baseUrl);
+      if (!abs) continue;
+      if (BAD_IMAGE.test(abs)) continue;
+      if (strict && !looksLikeImageUrl(abs)) continue;
+      if (isBetterThan(best, abs)) best = abs;
+      // Já achou uma foto não-logo: é a melhor escolha possível nesta lista.
+      if (best && !LOGO_HINT.test(best)) break;
+    }
+    return best;
+  };
+
+  const ex = pick(explicit, false);
+  const inl = pick(inline, true);
+  // Prefere a explícita (og:image), a menos que ela seja só um logo e exista foto no HTML.
+  if (ex && inl) {
+    const exLogo = LOGO_HINT.test(ex) && !PHOTO_HINT.test(ex);
+    const inlLogo = LOGO_HINT.test(inl) && !PHOTO_HINT.test(inl);
+    if (exLogo && !inlLogo) return inl;
+  }
+  return ex ?? inl;
+}
+
+async function fetchImageOnce(
+  url: string,
+  timeoutMs: number,
+  fetchImpl: typeof fetch,
 ): Promise<string | null> {
-  const { timeoutMs = 4500, fetchImpl = fetch } = opts;
-  const base = String(website ?? "").trim();
-  if (!base) return null;
-  const url = /^https?:\/\//i.test(base) ? base : `https://${base}`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -51,13 +121,37 @@ export async function resolveWebsiteImage(
       signal: ctrl.signal,
     });
     if (!res.ok) return null;
-    const text = (await res.text()).slice(0, 300_000);
+    const text = (await res.text()).slice(0, 400_000);
     return extractWebsiteImage(text, res.url || url);
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function resolveWebsiteImage(
+  website: string,
+  opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+): Promise<string | null> {
+  const { timeoutMs = 6000, fetchImpl = fetch } = opts;
+  const base = String(website ?? "").trim();
+  if (!base) return null;
+  const primary = /^https?:\/\//i.test(base) ? base : `https://${base}`;
+  // Tenta a URL dada e, se falhar, www (ou sem www) — muitos sites só respondem
+  // em um dos hosts. Mantém no máximo 2 tentativas para não atrasar a busca.
+  const tries: string[] = [primary];
+  try {
+    const u = new URL(primary);
+    const alt = new URL(u);
+    alt.hostname = /^www\./i.test(u.hostname) ? u.hostname.replace(/^www\./i, "") : `www.${u.hostname}`;
+    tries.push(alt.toString());
+  } catch { /* URL inválida */ }
+  for (const url of tries) {
+    const img = await fetchImageOnce(url, timeoutMs, fetchImpl);
+    if (img) return img;
+  }
+  return null;
 }
 
 type PhotoLead = { photoUrl: string | null; website: string | null };

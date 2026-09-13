@@ -15,6 +15,7 @@ import {
 } from "../_shared/gmaps.ts";
 import { buildQueryVariants, callMapScraperVariants } from "../_shared/mapscraper.ts";
 import { enrichLeadsWithWebsiteImages } from "../_shared/lead-photo.ts";
+import { enrichLeadsWithGooglePhotos, isGooglePlaceId } from "../_shared/google-photo.ts";
 import { settleWithin } from "../_shared/source-deadline.ts";
 
 // Supabase Edge Functions expõem EdgeRuntime.waitUntil para trabalho em
@@ -63,7 +64,14 @@ const SOURCES_DEADLINE_MS = (() => {
 // próprio estabelecimento (og:image), limitado por orçamento/concorrência.
 const MAP_PHOTO_ENRICH_BUDGET = Math.max(0, Number(Deno.env.get("MAP_PHOTO_ENRICH_BUDGET") ?? "80"));
 const MAP_PHOTO_ENRICH_CONCURRENCY = Math.max(1, Number(Deno.env.get("MAP_PHOTO_ENRICH_CONCURRENCY") ?? "10"));
-const MAP_PHOTO_ENRICH_TIMEOUT_MS = Math.max(1000, Number(Deno.env.get("MAP_PHOTO_ENRICH_TIMEOUT_MS") ?? "4500"));
+const MAP_PHOTO_ENRICH_TIMEOUT_MS = Math.max(1000, Number(Deno.env.get("MAP_PHOTO_ENRICH_TIMEOUT_MS") ?? "6000"));
+// FOTO (2): Google Places (New) — foto oficial da ficha via proxy place-photo.
+// Só para leads que ficaram SEM foto e têm place_id. Best-effort/orçado. O
+// orçamento é baixo de propósito porque a cota de GetPlaceRequest é COMPARTILHADA
+// com o fetch-reviews; defina GOOGLE_PHOTO_BUDGET=0 para desligar.
+const GOOGLE_PHOTO_BUDGET = Math.max(0, Number(Deno.env.get("GOOGLE_PHOTO_BUDGET") ?? "30"));
+const GOOGLE_PHOTO_CONCURRENCY = Math.max(1, Number(Deno.env.get("GOOGLE_PHOTO_CONCURRENCY") ?? "8"));
+const GOOGLE_PHOTO_TIMEOUT_MS = Math.max(1000, Number(Deno.env.get("GOOGLE_PHOTO_TIMEOUT_MS") ?? "3000"));
 
 
 const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
@@ -2345,11 +2353,39 @@ async function runGmapsSearchJob(p: GmapsJobParams): Promise<void> {
         concurrency: MAP_PHOTO_ENRICH_CONCURRENCY,
         timeoutMs: MAP_PHOTO_ENRICH_TIMEOUT_MS,
       });
+      // FOTO (2): quem ficou SEM foto e TEM place_id do Google recebe a foto
+      // OFICIAL da ficha do Maps (Places New) via proxy `place-photo` — a key
+      // fica só no servidor. Best-effort e orçado; falha não quebra a busca.
+      let googlePhotoEnriched = 0;
+      if (GOOGLE_KEY_LOADED) {
+        try {
+          const gpLeads = sorted.map((l) => ({
+            photoUrl: l.photoUrl,
+            placeId: isGooglePlaceId(l.sourceId) ? l.sourceId : null,
+          }));
+          const gp = await enrichLeadsWithGooglePhotos(gpLeads, {
+            budget: GOOGLE_PHOTO_BUDGET,
+            concurrency: GOOGLE_PHOTO_CONCURRENCY,
+            timeoutMs: GOOGLE_PHOTO_TIMEOUT_MS,
+            apiKey: GOOGLE_KEY!,
+            proxyBase: Deno.env.get("SUPABASE_URL") ?? "",
+          });
+          for (let i = 0; i < sorted.length; i++) {
+            if (!sorted[i].photoUrl && gpLeads[i].photoUrl) sorted[i].photoUrl = gpLeads[i].photoUrl;
+          }
+          googlePhotoEnriched = gp.enriched;
+          (counters as unknown as Record<string, unknown>).googlePhotoSample = gp.sample ?? null;
+          (counters as unknown as Record<string, unknown>).googlePhotoAttempted = gp.attempted;
+        } catch (e) {
+          console.warn("[search-places] google photo failed", e instanceof Error ? e.message : e);
+        }
+      }
       counters.final = sorted.length;
       counters.comTelefone = sorted.filter((l) => !!l.phone).length;
       counters.comWhatsapp = sorted.filter((l) => inferWhatsapp(l.phone ?? undefined) !== null).length;
       (counters as unknown as Record<string, unknown>).comFoto = sorted.filter((l) => !!l.photoUrl).length;
       (counters as unknown as Record<string, unknown>).fotoEnriquecida = photoEnrich.enriched;
+      (counters as unknown as Record<string, unknown>).fotoGoogle = googlePhotoEnriched;
       finalLeads = sorted.map((l) => toPublicLeadShape(l));
       resultSource = consulted.length > 0 ? consulted.join(",") : withPlaces.map((r) => r.key).join(",");
       if (validated.rejected.length > 0) {

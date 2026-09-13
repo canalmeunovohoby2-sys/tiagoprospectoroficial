@@ -17,6 +17,33 @@ describe("lead-photo — imagem real do site do estabelecimento", () => {
     expect(extractWebsiteImage("<html>sem imagem</html>", "https://s.com")).toBeNull();
   });
 
+  it("extração reforçada: secure_url, JSON-LD, lazy/data-src, srcset e <picture>", () => {
+    expect(extractWebsiteImage('<meta property="og:image:secure_url" content="https://x/s.jpg">', "https://s.com")).toBe("https://x/s.jpg");
+    expect(extractWebsiteImage('<script type="application/ld+json">{"@type":"LocalBusiness","image":"https://x/ld.jpg"}</script>', "https://s.com")).toBe("https://x/ld.jpg");
+    expect(extractWebsiteImage('<img data-lazy-src="/uploads/foto-real.webp" src="/placeholder.png">', "https://s.com/p")).toBe("https://s.com/uploads/foto-real.webp");
+    expect(extractWebsiteImage('<img srcset="/img/hero-1600.jpg 1600w, /img/hero-800.jpg 800w">', "https://s.com")).toBe("https://s.com/img/hero-1600.jpg");
+    expect(extractWebsiteImage('<picture><source srcset="/img/capa.avif 1200w"></picture>', "https://s.com")).toBe("https://s.com/img/capa.avif");
+  });
+
+  it("prefere a foto real e ignora logos/favicon/placeholder", () => {
+    const html = '<img src="/assets/logo.png"><img src="/assets/logo-150x40.png"><img src="/wp-content/uploads/2024/05/sala-de-estetica.jpg">';
+    expect(extractWebsiteImage(html, "https://clinica.com")).toBe("https://clinica.com/wp-content/uploads/2024/05/sala-de-estetica.jpg");
+    expect(extractWebsiteImage('<img src="/favicon.ico"><img src="/spacer.gif">', "https://s.com")).toBeNull();
+    // og:image vence o logo inline
+    expect(extractWebsiteImage('<img src="/logo.png"><meta property="og:image" content="/og-equipe.jpg">', "https://s.com")).toBe("https://s.com/og-equipe.jpg");
+  });
+
+  it("resolveWebsiteImage tenta www quando o host direto não rende imagem", async () => {
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (u: string) => {
+      seen.push(u);
+      if (u.includes("www.")) return new Response('<meta property="og:image" content="https://x/f.jpg">', { status: 200 });
+      return new Response("<html>sem meta</html>", { status: 200 });
+    }) as unknown as typeof fetch;
+    expect(await resolveWebsiteImage("site.com", { fetchImpl })).toBe("https://x/f.jpg");
+    expect(seen.some((u) => u.includes("www.site.com"))).toBe(true);
+  });
+
   it("resolveWebsiteImage busca e extrai (fetch mock)", async () => {
     const fetchImpl = vi.fn(async () => new Response('<meta property="og:image" content="https://x/f.jpg">', { status: 200 })) as unknown as typeof fetch;
     expect(await resolveWebsiteImage("site.com", { fetchImpl })).toBe("https://x/f.jpg");
