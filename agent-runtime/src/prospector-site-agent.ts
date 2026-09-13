@@ -25,7 +25,10 @@ export function isSurgicalEditTask(instruction: string): boolean {
   const text = String(instruction ?? "").trim();
   if (!text) return false;
   if (/^(o\s+que|como|qual|quando|onde|por\s+que|pode|poderia|voc[eê]\s+acha|diga|explique|resuma|liste|analis|audit)/i.test(text)) return false;
-  if (/premium|profissional|sofisticad|primeiro\s+mundo|alto\s+n[ií]vel|melhore\s+o\s+(site|mobile|design)|redesenha|transforma\s+o|redesign\s+completo|reconstru|do\s+zero/i.test(text)) return false;
+  // Tarefas de IMAGEM/VISUAL (enquadramento, corte, zoom, hero, banner, logo,
+  // favicon) NÃO são "cirúrgicas": precisam do fluxo normal com inspeção e
+  // verificação real no navegador (senão o ajuste de enquadramento não é corrigido).
+  if (/(foto|fotografia|imagem|imagens|hero|banner|enquadr|cortad|cortou|cortar|recort|zoom|object-position|object-fit|background-position|background-size|cabe[çc]a|rosto|logomarca|\blogo\b|favicon|\bsvg\b|[íi]cone)/i.test(text)) return false;
   return /(troque?|troca|altere?|muda|mude|corrija?|conserta|adicione?|inclua?|coloque|remova?|apague|deixe|arrume|tire)\b/i.test(text);
 }
 

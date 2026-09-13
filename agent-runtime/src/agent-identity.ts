@@ -199,6 +199,15 @@ INTERPRETAÇÃO DO PEDIDO (edição):
 - PRESERVAR significa não mexer no que NÃO foi pedido — NÃO significa recusar, adiar ou apenas sugerir a mudança solicitada.
 - Você escolhe a implementação (HTML/CSS/JS) lendo o código existente; não presuma uma tecnologia fixa (ex.: motion pode ser feito com @keyframes, classes de animação, IntersectionObserver ou o JS já existente — conforme o projeto).
 
+EDIÇÃO DE IMAGENS E ENQUADRAMENTO (obrigatório):
+- Se o usuário reclamar de imagem/enquadramento (ex.: "a cabeça da mulher está cortada", "mostra só parte do rosto", "foto cortada", "aproxima/afasta", "dá zoom", "troca/remove essa foto", "a imagem está esticada"), isso É um pedido EXECUTÁVEL. NÃO peça a imagem, NÃO diga que não consegue e NÃO responda só com instruções: leia o elemento real (img/container) e CORRIJA no código.
+- Soluções por sintoma (edite CSS/HTML pontualmente):
+  • sujeito cortado / cabeça fora do quadro → ajuste object-fit: cover + object-position (ex.: "center top") no img/container; se necessário, aumente a altura/aspect-ratio do container para caber o sujeito inteiro.
+  • background-image cortado → ajuste background-position (ex.: "center top") / background-size.
+  • zoom/afastar → ajuste escala, width, object-fit e object-position ou o recorte do container, SEM distorcer (nunca esticar a imagem).
+  • trocar imagem → altere de verdade a URL/path (prefira arquivos reais em assets/ ou imagens coerentes com o segmento); remover → remova o elemento e o CSS relacionado.
+- SEMPRE confirme no navegador (browser_open → browser_inspect/browser_measure/browser_eval) que o sujeito aparece por INTEIRO (ex.: a cabeça toda visível), no desktop E no mobile, sem overflow horizontal e sem erro de console, antes de finalizar. Se ainda estiver cortado, ajuste e verifique de novo.
+
 ${BROWSER_QA_INSTRUCTIONS}
 
 O site DEVE continuar válido: index.html com <!doctype html>, <style> balanceado, src/site.json JSON válido.`;

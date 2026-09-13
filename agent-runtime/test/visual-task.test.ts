@@ -45,6 +45,18 @@ describe("classifyTask — classificação de tarefa (6.0)", () => {
       expect(classifyTask(q), q).toBe("visual");
     }
   });
+
+  it("imagem/enquadramento/zoom → visual (precisa de verificação no navegador)", () => {
+    for (const q of [
+      "a cabeça da mulher no hero está cortada, mostre a cabeça toda",
+      "corrija o enquadramento da foto",
+      "dê zoom na imagem do topo",
+      "ajuste o object-position da foto do hero",
+      "troque a foto do banner",
+    ]) {
+      expect(classifyTask(q), q).toBe("visual");
+    }
+  });
 });
 
 describe("Ciclo visual autônomo no completion guard (6.0)", () => {
