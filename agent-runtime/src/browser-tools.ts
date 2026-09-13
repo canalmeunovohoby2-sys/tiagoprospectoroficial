@@ -21,6 +21,8 @@ export interface BrowserToolOptions {
   visualAnalyze?: (ev: VisualEvidence, prompt: string) => Promise<VisualAnalysisResult>;
   /** Registra a última inspeção real (console/imagens) para o Completion Guard. */
   onInspect?: (insp: BrowserInspection) => void;
+  /** Marca uma captura JÁ enviada à IA, para não reenviar a MESMA imagem (dedup por hash). */
+  onImageSent?: (file: string) => void;
 }
 
 export function buildBrowserTools(
@@ -94,10 +96,16 @@ export function buildBrowserTools(
       const warns = insp.consoleWarnings;
       const failed = insp.failedRequests;
       if (!errs.length && !warns.length && !failed.length) return "Console limpo: nenhum erro ou warning JavaScript.";
+      // ECONOMIA SEGURA: limita o volume enviado ao modelo (mantém os sinais e o total).
+      const CAP = 20;
       const lines = ["CONSOLE / REQUESTS:"];
-      for (const e of errs) lines.push(`[error] ${e}`);
-      for (const w of warns) lines.push(`[warning] ${w}`);
-      for (const f of failed) lines.push(`[request-failed] ${f}`);
+      const push = (label: string, arr: string[]) => {
+        for (const x of arr.slice(0, CAP)) lines.push(`[${label}] ${x}`);
+        if (arr.length > CAP) lines.push(`[${label}] … +${arr.length - CAP} omitido(s) — mostrando ${CAP} de ${arr.length}.`);
+      };
+      push("error", errs);
+      push("warning", warns);
+      push("request-failed", failed);
       return lines.join("\n");
     },
   });
@@ -155,6 +163,7 @@ export function buildBrowserTools(
         purpose: input.purpose ?? "avaliar qualidade visual do site",
         projectId: options?.projectId,
       });
+      options?.onImageSent?.(file); // dedup: não reenviar exatamente a mesma captura
       return formatVisualReview(result);
     },
   });
@@ -294,6 +303,7 @@ export function buildBrowserTools(
         return `MODO structured (sem analisador configurado)\n` + summarizeStructuredEvidence(evidence);
       }
       const r = await analyzer(evidence, String(input.prompt ?? ""));
+      if (r.mode === "multimodal") options?.onImageSent?.(shotPath); // dedup por hash
       const head = r.mode === "multimodal"
         ? `ANÁLISE VISUAL (multimodal) — ${r.performed ? "REALIZADA" : "NÃO CONCLUÍDA"}${r.error ? "\nobs: " + r.error : ""}`
         : `ANÁLISE (structured) — SEM análise visual por imagem${r.error ? "\nobs: " + r.error : ""}`;

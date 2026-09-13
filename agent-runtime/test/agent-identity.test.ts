@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AGENT_IDENTITY, buildEditSystemPrompt, buildGenerateSystemPrompt } from "../src/agent-identity";
+import { AGENT_IDENTITY, buildEditSystemPrompt, buildGenerateSystemPrompt, BRAND_IDENTITY_SKILL, needsBrandIdentity } from "../src/agent-identity";
 
 describe("Agent Identity central (5.27) — profissional permanente", () => {
   it("identidade define papéis profissionais e proíbe template", () => {
@@ -76,5 +76,45 @@ describe("Agent Identity central (5.27) — profissional permanente", () => {
   it("prompt de geração SEM base mantém a instrução de criar do zero", () => {
     const noBase = buildGenerateSystemPrompt();
     expect(noBase).toContain("MISSÃO AGORA: criar o site do zero");
+  });
+});
+
+describe("ECONOMIA — BRAND IDENTITY condicional", () => {
+  it("classificador determinístico e conservador", () => {
+    for (const t of ["crie um logo para a clínica", "refaça a logomarca", "ajuste a identidade visual da marca", "brandbook", "troque o favicon", "novo monograma", "wordmark", "quero branding", "rebranding completo"]) {
+      expect(needsBrandIdentity(t)).toBe(true);
+    }
+    for (const t of ["troque o telefone do rodapé", "deixe o botão maior", "corrija o menu mobile", "troque a foto do hero", "adicione uma seção de depoimentos", "ajuste o CSS do header", "publique o site"]) {
+      expect(needsBrandIdentity(t)).toBe(false);
+    }
+    expect(needsBrandIdentity("")).toBe(true); // sem contexto → conservador (mantém)
+  });
+
+  it("edição: bloco de marca entra SÓ quando branding (resto intacto)", () => {
+    const withBrand = buildEditSystemPrompt({ branding: true });
+    const without = buildEditSystemPrompt({ branding: false });
+    const dflt = buildEditSystemPrompt();
+    expect(withBrand).toContain("BRAND IDENTITY / LOGOMARCA");
+    expect(withBrand.length).toBeGreaterThan(without.length);
+    expect(without).not.toContain("BRAND IDENTITY / LOGOMARCA");
+    expect(dflt).not.toContain("BRAND IDENTITY / LOGOMARCA");
+    // nada mais mudou
+    expect(without).toContain("PROTOCOLO DE TRABALHO");
+    expect(without).toContain("BROWSER QA");
+    expect(without).toContain("finish_task");
+  });
+
+  it("geração: bloco de marca entra SÓ quando branding", () => {
+    const withBrand = buildGenerateSystemPrompt({ hasBase: true, branding: true });
+    const without = buildGenerateSystemPrompt({ hasBase: true, branding: false });
+    expect(withBrand).toContain("BRAND IDENTITY / LOGOMARCA");
+    expect(without).not.toContain("BRAND IDENTITY / LOGOMARCA");
+    expect(withBrand).toContain("SELF-CHECK DE GERAÇÃO");
+    expect(without).toContain("BASE JÁ NO WORKSPACE");
+  });
+
+  it("AGENT_IDENTITY não contém mais o bloco de marca (base enxuta)", () => {
+    expect(AGENT_IDENTITY).not.toContain("BRAND IDENTITY / LOGOMARCA");
+    expect(BRAND_IDENTITY_SKILL).toContain("BRAND IDENTITY / LOGOMARCA");
   });
 });

@@ -16,7 +16,7 @@ import type { BusinessContext } from "./tools.js";
 import { assertGenerationQuality } from "./generation-gate.js";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js";
 import { buildGenerationSeed, formatBaseDirective } from "./site-bases.js";
-import { buildGenerateSystemPrompt } from "./agent-identity.js";
+import { buildGenerateSystemPrompt, needsBrandIdentity } from "./agent-identity.js";
 import { materializeAttachments, type ChatAttachment } from "./attachments.js";
 import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
 import { trimConversationWindow } from "./conversation-window.js";
@@ -386,7 +386,7 @@ function genLog(genId: string, event: string, data: Record<string, unknown> = {}
   } catch { /* noop */ }
 }
 
-async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>, exec?: ResolvedExec, opts?: { hasBase?: boolean }): Promise<ProspectorSiteAgent> {
+async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>, exec?: ResolvedExec, opts?: { hasBase?: boolean; branding?: boolean }): Promise<ProspectorSiteAgent> {
   const root = ensureWorkspaceDir(projectId, files);
   const resolved = exec ?? await prepareExec(body, undefined);
   const apiKey = resolved.apiKey ?? (typeof body.apiKey === "string" ? body.apiKey : undefined);
@@ -394,7 +394,7 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
   const mode = typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit";
   // Em GERAÇÃO, o system prompt precisa saber se há base pré-carregada — senão o
   // modelo é instruído a "criar do zero" e descarta a base (bug de integração).
-  const systemPrompt = mode === "generate" ? buildGenerateSystemPrompt({ hasBase: !!opts?.hasBase }) : undefined;
+  const systemPrompt = mode === "generate" ? buildGenerateSystemPrompt({ hasBase: !!opts?.hasBase, branding: !!opts?.branding }) : undefined;
 
   return new ProspectorSiteAgent({
     workspaceRoot: root,
@@ -409,6 +409,7 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
     initialFiles: files,
     mode,
     hasBase: !!opts?.hasBase,
+    branding: !!opts?.branding,
     enableBrowser: body.enableBrowser !== false,
     initialMessages: resolved.initialMessages?.length ? trimConversationWindow(resolved.initialMessages) : undefined,
   });
@@ -559,7 +560,7 @@ export function startServer(port = PORT, host = HOST) {
         const genProviderChanged = !!(existingGen?.agent && existingGen.execKey !== genExec.key);
         const agent = (existingGen?.agent && !genProviderChanged)
           ? existingGen.agent
-          : await makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser }, genExec, { hasBase: !!baseUsed });
+          : await makeAgent(genKey, projectId, seed, business, { ...body, mode: "generate", maxIterations: genIter, enableBrowser: genBrowser }, genExec, { hasBase: !!baseUsed, branding: needsBrandIdentity(`${String(body.prompt ?? "")} ${JSON.stringify(body.briefing ?? {})}`) });
         sessions.set(genKey, { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
         sessions.set(editKey(identity.uid, projectId), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: genExec.key });
 
@@ -930,7 +931,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           ensureWorkspaceDir(projectId, files);
         } else {
           if (providerChanged) sessions.delete(editKey(identity.uid, projectId, conversationId || undefined));
-          agent = await makeAgent(editKey(identity.uid, projectId, conversationId || undefined), projectId, files, business, body, exec);
+          agent = await makeAgent(editKey(identity.uid, projectId, conversationId || undefined), projectId, files, business, body, exec, { branding: needsBrandIdentity(`${String(body.instruction ?? "")} ${JSON.stringify(body.memory ?? [])}`) });
           sessions.set(editKey(identity.uid, projectId, conversationId || undefined), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
         }
 

@@ -15,6 +15,8 @@ import { hasImageReferenceChange, requestsImageSwap, editRegressionIssues } from
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
 import { computeWorkEvidence, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 // Detector de tarefa CIRÚRGICA (uma alteração pontual — cor, texto, botão, logo,
 // imagem, título, seção pequena). Para essas tarefas NÃO se reexecuta análise
@@ -91,6 +93,8 @@ export interface ProspectorAgentOptions {
   mode?: "edit" | "generate";
   /** geração partiu de uma BASE técnica pré-carregada (protege contra reescrita destrutiva). */
   hasBase?: boolean;
+  /** incluir a skill de BRAND IDENTITY (somente quando a tarefa exige marca/logo). */
+  branding?: boolean;
   /** habilita browser tools (Playwright) — browser real para QA do site. */
   enableBrowser?: boolean;
   /** habilita a tool web_search (quando há chave de pesquisa configurada). */
@@ -110,6 +114,8 @@ export class ProspectorSiteAgent {
   private browserSession: BrowserSession | null = null;
   private vision: VisionConfig;
   private pendingScreenshotPath: string | null = null;
+  /** Hashes das capturas JÁ enviadas à IA nesta execução (dedup — não reenvia a mesma imagem). */
+  private imageSentHashes = new Set<string>();
   private finishSkips = 0;
   private finishBlocked = false;
   /** Retentativas da barreira anti-reescrita destrutiva (write_file encolhedor). */
@@ -147,7 +153,7 @@ export class ProspectorSiteAgent {
     });
 
     this.beforeFiles = { ...(options.initialFiles ?? {}) };
-    const systemPrompt = options.systemPrompt ?? (options.mode === "generate" ? buildGenerateSystemPrompt() : buildEditSystemPrompt());
+    const systemPrompt = options.systemPrompt ?? (options.mode === "generate" ? buildGenerateSystemPrompt({ branding: options.branding }) : buildEditSystemPrompt({ branding: options.branding }));
     this.vision = resolveVisionCapability({ provider: options.providerId, model: options.modelId });
 
     // Browser tools: compartilham UMA sessão Playwright por agente (lazy).
@@ -170,6 +176,9 @@ export class ProspectorSiteAgent {
           this.lastConsoleErrors = Array.isArray(insp.consoleErrors) ? insp.consoleErrors : [];
           this.lastBrokenImages = Array.isArray(insp.images) ? insp.images.length : 0;
         },
+        // ECONOMIA SEGURA: marca a captura já enviada (visual_review/visual_analyze)
+        // para o hook beforeModel não reenviar EXATAMENTE a mesma imagem no mesmo turno.
+        onImageSent: (file) => this.markImageSent(file),
         // Analisador PROVIDER-AGNOSTIC (FASE 4): usa o provider/modelo do USUÁRIO.
         // NUNCA usa Gemini como fallback; nunca afirma análise visual que não ocorreu.
         visualAnalyze: (ev, prompt) => analyzeVisualEvidence({
@@ -207,9 +216,15 @@ export class ProspectorSiteAgent {
     // anexa a imagem como mensagem de usuário (ImageContent) ao próximo request.
     const beforeModel = async (input: { messages?: unknown[]; systemPrompt?: string }) => {
       if (!this.vision.supported || !this.pendingScreenshotPath) return input;
-      const img = await imageToDataUrl(this.pendingScreenshotPath);
+      const shotPath = this.pendingScreenshotPath;
       this.pendingScreenshotPath = null; // consome o screenshot
+      // ECONOMIA SEGURA (dedup por hash): se EXATAMENTE esta captura já foi enviada
+      // nesta execução (ex.: visual_review/visual_analyze), não reenvia a mesma imagem.
+      const hash = this.hashImage(shotPath);
+      if (hash && this.imageSentHashes.has(hash)) return input;
+      const img = await imageToDataUrl(shotPath);
       if (!img) return input;
+      if (hash) this.imageSentHashes.add(hash);
       const messages = Array.isArray(input?.messages) ? [...(input.messages as unknown[])] : [];
       messages.push({
         role: "user",
@@ -424,6 +439,7 @@ export class ProspectorSiteAgent {
       this.writeSkips = 0;
       this.researchTrace = [];
       this.pendingScreenshotPath = null;
+      this.imageSentHashes.clear();
       this.terminalReason = null;
       this.pendingToolRecords.clear();
       this.lastConsoleErrors = null;
@@ -495,12 +511,27 @@ export class ProspectorSiteAgent {
     timing.modelMs = Math.max(0, timing.totalMs - timing.toolMs);
   }
 
+  // Dedup de imagem (ECONOMIA SEGURA): sha256 do arquivo de captura. null em falha.
+  private hashImage(file: string): string | null {
+    try {
+      return createHash("sha256").update(readFileSync(file)).digest("hex");
+    } catch {
+      return null;
+    }
+  }
+
+  private markImageSent(file: string): void {
+    const h = this.hashImage(file);
+    if (h) this.imageSentHashes.add(h);
+  }
+
   // Reinicia a conversa (nova tarefa sem contexto anterior) — usado ao trocar
   // de projeto/instrução totalmente nova.
   resetSession(): void {
     this.conversationStarted = false;
     this.beforeFiles = {};
     this.pendingScreenshotPath = null;
+    this.imageSentHashes.clear();
   }
 
   /**

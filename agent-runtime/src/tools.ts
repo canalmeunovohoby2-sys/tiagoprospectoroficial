@@ -65,8 +65,18 @@ function nthIndexOf(str: string, needle: string, n: number): number {
 const MAX_FILE = 2_000_000;
 // FASE 7 — limite real de arquivos do workspace (evita criação infinita/acidental).
 const MAX_TOTAL_FILES = 400;
+// Limite de itens devolvidos por list_files (evita payload gigante ao modelo).
+const LIST_FILES_LIMIT = 200;
 // Arquivos ESTRUTURAIS do site que não podem ser excluídos por delete_file.
 const CRITICAL_SITE_FILES = new Set(["index.html", "src/site.css", "src/main.js", "src/site.json", "package.json"]);
+// Extensões de texto legível (podem ser devolvidas como conteúdo).
+const TEXT_EXT = new Set(["html", "htm", "css", "js", "mjs", "cjs", "jsx", "ts", "tsx", "json", "svg", "md", "txt", "xml", "webmanifest", "map", "yml", "yaml", "toml", "csv"]);
+// Extensões binárias/asset: read_file devolve METADADOS (nunca conteúdo bruto/base64).
+const BINARY_EXT_MIME: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", avif: "image/avif", ico: "image/x-icon", bmp: "image/bmp",
+  woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf", eot: "application/vnd.ms-fontobject",
+  pdf: "application/pdf", zip: "application/zip", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg",
+};
 
 function countWorkspaceFiles(root: string): number {
   let count = 0;
@@ -123,19 +133,48 @@ export function buildSiteTools(env: ToolEnv) {
         }
       };
       walk(base);
-      return JSON.stringify(out.sort());
+      const files = out.sort();
+      if (files.length > LIST_FILES_LIMIT) {
+        return JSON.stringify({
+          files: files.slice(0, LIST_FILES_LIMIT),
+          total: files.length,
+          truncated: true,
+          note: `Listando ${LIST_FILES_LIMIT} de ${files.length} arquivos. Use list_files com "path" num subdiretório específico para ver o restante.`,
+        });
+      }
+      return JSON.stringify(files);
     },
   });
 
   const read = createTool({
     name: "read_file",
-    description: "Lê o conteúdo de um arquivo do projeto (path relativo ao workspace).",
+    description: "Lê o conteúdo de um arquivo de TEXTO do projeto (path relativo ao workspace). Para imagens/binários devolve apenas metadados.",
     inputSchema: z.object({ path: z.string().describe("caminho relativo, ex.: index.html") }),
     async execute(input) {
       const abs = safeJoin(root, input.path);
       if (!abs || !existsSync(abs)) return JSON.stringify({ error: "arquivo não encontrado" });
       const content = readFileSync(abs, "utf8");
       if (content.length > MAX_FILE) return JSON.stringify({ error: "arquivo grande demais" });
+      const clean = String(input.path ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+      const ext = (clean.split(".").pop() ?? "").toLowerCase();
+      const mime = BINARY_EXT_MIME[ext];
+      // Binário por extensão OU conteúdo base64/dataURL (anexo) → metadados, nunca
+      // o texto gigante. Arquivos de texto conhecidos nunca passam por aqui.
+      const looksBase64 = !TEXT_EXT.has(ext) && (
+        /^data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,/i.test(content.slice(0, 64)) ||
+        (content.length > 2048 && /^[A-Za-z0-9+/=\s]+$/.test(content.slice(0, 400)))
+      );
+      if (mime || looksBase64) {
+        let bytes = content.length;
+        try { bytes = statSync(abs).size; } catch { /* mantém content.length */ }
+        return JSON.stringify({
+          path: clean,
+          kind: "binary",
+          mimeType: mime ?? "application/octet-stream",
+          bytes,
+          note: `Conteúdo binário/anexo NÃO é retornado como texto (evita payload gigante). Referencie o caminho no código, ex.: <img src="${clean}"> ou url("./${clean}").`,
+        });
+      }
       return content;
     },
   });

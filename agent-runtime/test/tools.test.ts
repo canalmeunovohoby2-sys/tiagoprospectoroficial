@@ -116,4 +116,29 @@ describe("ProspectorSiteAgent — workspace (Cline SDK runtime)", () => {
     const out = await run("write_file", { path: "src/excedente.txt", content: "x" });
     expect(out).toContain("limite de 400 arquivos");
   });
+
+  it("ECONOMIA: read_file em binário devolve METADADOS (não base64)", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { writeFileSync, mkdirSync } = require("node:fs");
+    mkdirSync(join(root, "binassets"), { recursive: true });
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]).toString("base64");
+    writeFileSync(join(root, "binassets/logo.png"), png);
+    const out = await run("read_file", { path: "binassets/logo.png" });
+    const parsed = JSON.parse(out) as { kind?: string; mimeType?: string };
+    expect(parsed.kind).toBe("binary");
+    expect(parsed.mimeType).toBe("image/png");
+    expect(out).not.toContain("iVBOR"); // não vaza o conteúdo base64
+  });
+
+  it("ECONOMIA: list_files limita o payload e informa total", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { writeFileSync, mkdirSync } = require("node:fs");
+    mkdirSync(join(root, "bulk"), { recursive: true });
+    for (let i = 0; i < 260; i++) writeFileSync(join(root, "bulk", `b${i}.txt`), "x");
+    const parsed = JSON.parse(await run("list_files", {})) as { files?: string[]; total?: number; truncated?: boolean };
+    expect(Array.isArray(parsed)).toBe(false);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.files?.length).toBe(200);
+    expect(parsed.total ?? 0).toBeGreaterThan(200);
+  });
 });
