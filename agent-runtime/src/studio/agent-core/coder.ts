@@ -5,6 +5,7 @@
 import type { ModelCaller, ModelMessage, ModelToolCall } from "./model.js";
 import type { CoderTool } from "./agent-tools.js";
 import { parseAgentSignal, stripAgentSignal, type AgentSignal } from "./signals.js";
+import { instructionRequestsChange } from "../../completion-guard.js";
 
 export interface RunCoderInput {
   model: ModelCaller;
@@ -15,6 +16,8 @@ export interface RunCoderInput {
   emit: (event: Record<string, unknown>) => void;
   /** Chamado quando ferramentas de edição alteram arquivos (→ files_ready). */
   onFilesChanged?: (paths: string[]) => void;
+  /** Instrução original (para saber se a tarefa EXIGE alteração de arquivo). */
+  instruction?: string;
   maxToolRounds?: number;
   signal?: AbortSignal;
 }
@@ -55,6 +58,10 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
   const touched = new Set<string>();
   let text = "";
   let signal: AgentSignal | null = null;
+  // A tarefa exige alteração de arquivo? Se sim, não aceitamos "texto otimista"
+  // como conclusão nem terminamos sem ter usado uma ferramenta de edição.
+  const requiresChange = instructionRequestsChange(input.instruction ?? "");
+  let nudges = 0;
 
   for (let round = 0; round < maxRounds; round += 1) {
     if (input.signal?.aborted) {
@@ -87,13 +94,27 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
     produced.push(assistantMessage);
 
     signal = parseAgentSignal(turn.text);
-    if (signal) {
+    const noTools = turn.toolCalls.length === 0;
+    const prematureTerminate = signal?.type === "TERMINATE";
+    const canNudge = requiresChange && touched.size === 0 && nudges < 2 && round < maxRounds - 1;
+    if (signal && !(prematureTerminate && canNudge)) {
       text = stripAgentSignal(turn.text) || text;
       break;
     }
-    if (turn.toolCalls.length === 0) {
-      // Sem ferramentas e sem sinal: considera a resposta final.
-      text = turn.text.trim();
+    if (noTools) {
+      // Sem ferramentas: se a tarefa exige alteração e nada foi escrito, força o
+      // modelo a usar as ferramentas (nudge) em vez de encerrar com texto.
+      if (canNudge) {
+        nudges += 1;
+        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "Nenhuma ferramenta foi chamada — vou aplicar a alteração no código agora.", timestamp: Date.now() });
+        messages = [
+          ...messages,
+          { role: "assistant", content: turn.text },
+          { role: "user", content: "Você ainda NÃO chamou nenhuma ferramenta de edição. Aplique a alteração REAL agora com write_file/edit_file/create_file e só depois responda. Responder apenas com texto NÃO conclui a tarefa." },
+        ];
+        continue;
+      }
+      text = stripAgentSignal(turn.text).trim() || turn.text.trim();
       break;
     }
 

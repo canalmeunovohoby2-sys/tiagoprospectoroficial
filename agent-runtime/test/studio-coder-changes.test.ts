@@ -30,6 +30,7 @@ function run(model: ModelCaller) {
     tools: list,
     ai: {},
     emit: vi.fn(),
+    instruction: "Crie o site completo do cliente e troque o título",
   });
 }
 
@@ -67,5 +68,26 @@ describe("C8 · mudança real exige tool de edição bem-sucedida", () => {
     ]));
     expect(res.touched).toEqual([]);
     expect(res.toolUses[0]?.ok).toBe(false);
+  });
+
+  it("NUDGE — modelo responde texto+TERMINATE sem tools ⇒ força tool de edição e grava", async () => {
+    const res = await run(scriptedModel([
+      { text: 'Pronto, criei o site completo. {"signal":"TERMINATE"}', toolCalls: [] },
+      call("1", "write_file", { path: "src/App.tsx", content: "export default function App(){return <h1>Real</h1>}" }),
+      { text: '{"signal":"TERMINATE"}', toolCalls: [] },
+    ]));
+    expect(res.touched).toContain("src/App.tsx");
+    expect(readFileSync(join(root, "src/App.tsx"), "utf8")).toContain("Real");
+  });
+
+  it("pergunta/análise (não exige alteração) NÃO força nudge", async () => {
+    const { list } = buildCoderTools({ workspaceRoot: root, business: {} });
+    const model = scriptedModel([{ text: "O site tem 3 seções. TERMINATE", toolCalls: [] }]);
+    const res = await runCoderTurn({
+      model, system: "sys", messages: [{ role: "user", content: "o que tem no site?" }],
+      tools: list, ai: {}, emit: vi.fn(), instruction: "O que tem no site?",
+    });
+    expect(res.touched).toEqual([]);
+    expect(res.toolUses).toEqual([]);
   });
 });

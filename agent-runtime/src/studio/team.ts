@@ -63,6 +63,7 @@ Você é o PRIMEIRO agente a receber o pedido e TEM ferramentas para trabalhar n
 
 REGRAS DE TRABALHO:
 - Antes de CADA ferramenta, escreva 1 frase curta explicando o que vai fazer e por quê.
+- Se o pedido EXIGE alterar/criar o site, você OBRIGATORIAMENTE deve chamar ferramentas de edição (write_file/edit_file/create_file) para gravar os arquivos REAIS. Responder apenas com texto NÃO conclui a tarefa.
 - Leia o arquivo antes de editá-lo. Use edit_file para mudanças cirúrgicas; write_file para arquivo novo/grande.
 - Preserve o que não foi pedido: classes, estilos, estrutura, animações e responsividade.
 - Não crie arquivos vazios nem placeholders (.gitkeep). Só código funcional.
@@ -177,6 +178,7 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
       ai: input.ai,
       emit: input.emit,
       onFilesChanged: input.onFilesChanged,
+      instruction: input.instruction,
       signal: input.signal,
     });
     if (coder.text) reply = coder.text;

@@ -12,6 +12,8 @@ import type { StudioFileMap } from "@/lib/studio/types";
 export interface WebContainerPreviewProps {
   files: StudioFileMap;
   projectId?: string;
+  /** Muda quando o projeto é alterado (força reload do iframe após o sync). */
+  refreshKey?: string | number;
   /** Modo inspeção/edição visual (C3). */
   visualMode?: boolean;
   /** Seleção de elemento (origem React via `_debugSource`). */
@@ -25,8 +27,13 @@ const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals
  * NÃO usa `srcDoc`. Em modo visual, injeta o helper que lê `_debugSource` do
  * fiber React e reporta a seleção — apenas nesta projeção, nunca no código-fonte.
  */
-export function WebContainerPreview({ files, projectId, visualMode = false, onElementSelected }: WebContainerPreviewProps) {
+export function WebContainerPreview({ files, projectId, refreshKey, visualMode = false, onElementSelected }: WebContainerPreviewProps) {
   const [showLogs, setShowLogs] = useState(false);
+  // Reload GARANTIDO do iframe depois de mudanças do agente. O HMR do Vite costuma
+  // aplicar sozinho; quando não aplica (ex.: ordem/timing), remontar o iframe
+  // recarrega o dev server e mostra o site REAL gerado — nunca fica no template.
+  const [frameKey, setFrameKey] = useState(0);
+  const firstRefresh = useRef(true);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   // Token novo por projeto → invalida mensagens de previews antigos.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -86,6 +93,15 @@ export function WebContainerPreview({ files, projectId, visualMode = false, onEl
     return () => clearTimeout(t);
   }, [visualMode, url, phase, token]);
 
+  // Reload do iframe após mudanças (debounce para não remontar várias vezes numa
+  // mesma execução). Garante que o site REAL apareça mesmo se o HMR não aplicar.
+  useEffect(() => {
+    if (firstRefresh.current) { firstRefresh.current = false; return; }
+    if (phase !== "ready") return;
+    const t = setTimeout(() => setFrameKey((k) => k + 1), 700);
+    return () => clearTimeout(t);
+  }, [refreshKey, phase]);
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-card px-3 py-1.5">
@@ -136,7 +152,7 @@ export function WebContainerPreview({ files, projectId, visualMode = false, onEl
 
       <div className="min-h-0 flex-1 bg-white">
         {phase === "ready" && url ? (
-          <iframe ref={iframeRef} title="Preview do app React" src={url} sandbox={IFRAME_SANDBOX} className="h-full w-full border-0" />
+          <iframe key={frameKey} ref={iframeRef} title="Preview do app React" src={url} sandbox={IFRAME_SANDBOX} className="h-full w-full border-0" />
         ) : (
           <div className="flex h-full items-center justify-center bg-muted/20 px-6 text-center text-sm text-muted-foreground">
             {phase === "booting" ? (

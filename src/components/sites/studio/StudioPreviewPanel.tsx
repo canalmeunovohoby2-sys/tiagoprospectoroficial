@@ -226,6 +226,7 @@ export function StudioPreviewPanel({
       <WebContainerPreview
         files={files}
         projectId={projectId}
+        refreshKey={refreshKey}
         visualMode={inspectMode}
         onElementSelected={onElementSelected}
       />

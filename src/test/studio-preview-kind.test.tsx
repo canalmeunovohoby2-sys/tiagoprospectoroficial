@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 
 const mocks = vi.hoisted(() => ({
   hookState: {
@@ -47,5 +47,13 @@ describe("C0 · StudioPreviewPanel por project_kind", () => {
     render(<StudioPreviewPanel files={{ "index.html": "<div id='root'></div>" }} projectKind="react" />);
     expect(screen.getByText(/WebContainer indisponível/i)).toBeInTheDocument();
     expect(screen.queryByTitle("Preview do app React")).toBeNull();
+  });
+
+  it("recarrega o iframe do dev server quando refreshKey muda (site gerado aparece)", async () => {
+    const files = { "package.json": "{}", "index.html": "<div id='root'></div>", "src/main.tsx": "x" };
+    const { rerender } = render(<StudioPreviewPanel files={files} projectKind="react" projectId="p1" refreshKey="0" />);
+    const before = screen.getByTitle("Preview do app React");
+    rerender(<StudioPreviewPanel files={files} projectKind="react" projectId="p1" refreshKey="1" />);
+    await waitFor(() => expect(screen.getByTitle("Preview do app React")).not.toBe(before), { timeout: 3000 });
   });
 });
