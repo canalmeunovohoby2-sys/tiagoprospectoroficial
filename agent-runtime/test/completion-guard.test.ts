@@ -482,6 +482,47 @@ describe("Interpretação da conclusão — 'não verificado' ≠ 'falhou' (clas
     expect(v.states.verification_passed).toBe(true);
   });
 
+  it("Caso G — falha de VERIFICAÇÃO (browser_reload) + render por método alternativo → aplicada e conferida, NÃO é falha", () => {
+    const v = classifyCompletion({
+      ...base,
+      editedPaths: ["src/site.css"],
+      verificationTools: ["browser_open", "browser_eval"],
+      renderVerified: true,
+      visualEdit: true,
+      verifyToolFailure: true,
+      verifyToolFailureDetail: "browser_reload: net::ERR_CONNECTION_REFUSED",
+    });
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
+    expect(v.reply ?? "").toMatch(/método ALTERNATIVO/i);
+    expect(v.reply ?? "").not.toMatch(/ferramenta falhou|Não concluí/i);
+    expect(v.states.change_applied).toBe(true);
+  });
+
+  it("Caso H — falha de VERIFICAÇÃO sem render alternativo → aplicada, mas NÃO validada (não é falha da edição)", () => {
+    const v = classifyCompletion({
+      ...base,
+      editedPaths: ["src/site.css"],
+      verificationTools: ["browser_reload"],
+      renderVerified: false,
+      visualEdit: true,
+      verifyToolFailure: true,
+      verifyToolFailureDetail: "browser_reload: timeout",
+    });
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
+    expect(v.reply ?? "").toMatch(/verificação automática falhou/i);
+    expect(v.reply ?? "").toMatch(/NÃO foi marcada como validada/i);
+    expect(v.reply ?? "").not.toMatch(/Não concluí a alteração/i);
+  });
+
+  it("Caso I — falha de ferramenta de EDIÇÃO continua sendo falha REAL", () => {
+    const v = classifyCompletion({ ...base, toolFailure: true, toolFailureDetail: "edit_file: ENOENT", verifyToolFailure: true });
+    expect(v.ok).toBe(false);
+    expect(v.error ?? "").toMatch(/ferramenta falhou/i);
+    expect(v.reply ?? "").toMatch(/edit_file/);
+  });
+
   it("relatório lista arquivos REAIS e a verificação executada (closed-loop), sem duplicar", () => {
     const v = classifyCompletion({ ...base, finishTaskCalled: true, editedPaths: ["index.html", "src/site.css"], verificationTools: ["browser_reload", "browser_inspect", "browser_inspect"], renderVerified: true, visualEdit: true });
     const r = v.reply ?? "";

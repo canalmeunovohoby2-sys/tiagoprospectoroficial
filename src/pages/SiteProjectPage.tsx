@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon, Code2, Send, Video, Download } from "lucide-react";
@@ -7,21 +7,30 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow, SiteSpec } from "@/data/siteProjects";
-import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual } from "@/data/siteProjects";
+import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf } from "@/data/siteProjects";
 import {
   fetchSiteProject, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
-  loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject,
-  createSiteVersion, invokeAgentExecute, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
-  captureWorkspaceScreenshots, generateSiteVideo, fetchRuntimeArtifact,} from "@/lib/siteProjectsApi";
+  loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject, publishReactSite,
+  createSiteVersion, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
+  captureWorkspaceScreenshots, generateSiteVideo, fetchRuntimeArtifact, updateGeneratedCode,} from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
 import { SiteVersionsDialog } from "@/components/sites/editor/SiteVersionsDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { exportProjectZip, exportWorkspaceZip, saveBlob, fetchImageAsDataUrl } from "@/lib/siteDownload";
+import { exportReactProjectZip } from "@/lib/studio/reactExport";
+import { invokeStudioBuild } from "@/lib/studio/buildApi";
 import { buildCommercialPdf, pdfFileName } from "@/lib/sitePdf";
 import { buildConversationContext, buildDesignMemory } from "@/lib/aiEditContext";
 import { materializeProjectFiles, GENERATION_STEPS, EDIT_STEPS, type AgentProgress } from "@/lib/agentProject";
 import { LiveProjectPreview } from "@/components/sites/LiveProjectPreview";
+import { StudioShell } from "@/components/sites/studio/StudioShell";
+import { StudioGitConfigDialog } from "@/components/sites/studio/StudioGitConfigDialog";
+import { StudioHistoryDialog, type StudioGitRestoreMeta } from "@/components/sites/studio/StudioHistoryDialog";
+import { invokeStudioGit } from "@/lib/studio/gitApi";
+import { isStudioUiEnabled } from "@/lib/studio/featureFlag";
+import { useStudioChat } from "@/hooks/studio/useStudioChat";
+import type { StudioStreamEvent, StudioFilesReadyEvent } from "@/lib/studio/streamEvents";
 import { GitHubProjectButton } from "@/components/app/GitHubProjectButton";
 import { buildStrategyInstruction, strategyById } from "@/lib/siteStrategies";
 import { buildWorkTimeline } from "@/lib/agentWorkActivity";
@@ -116,7 +125,17 @@ export default function SiteProjectPage() {
   const [videoBlobUrl, setVideoBlobUrl] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [unpublishing, setUnpublishing] = useState(false);
+  // C5: build de produção React.
+  const [building, setBuilding] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
+  // Fase 6: histórico Git (checkpoints/diff/time travel) e dirty do editor Studio.
+  const [gitHistoryOpen, setGitHistoryOpen] = useState(false);
+  // C4: pedido de abrir arquivo no Monaco vindo do histórico/diff.
+  const [openFileRequest, setOpenFileRequest] = useState<{ file: string; line?: number; nonce: number } | null>(null);
+  function requestOpenFile(file: string, line?: number) {
+    setOpenFileRequest({ file, line, nonce: Date.now() });
+  }
+  const [studioUnsaved, setStudioUnsaved] = useState(false);
   const [pendingSummary, setPendingSummary] = useState<string | undefined>(undefined);
   const [agentStep, setAgentStep] = useState<number | null>(null);
   const [draftFiles, setDraftFiles] = useState<Record<string, string> | null>(null);
@@ -180,10 +199,90 @@ export default function SiteProjectPage() {
     }
   }
 
+  // Fase 6 — time travel via Git: aplica o estado restaurado no projeto
+  // (generated_code + versão) e sincroniza Monaco/Explorer/Preview. Nunca
+  // restaura silenciosamente sobre alterações não salvas.
+  async function handleRestoreGit(files: Record<string, string>, meta: StudioGitRestoreMeta) {
+    if (!project?.id) return;
+    // Buffer do editor (não salvo) não pode ser descartado silenciosamente.
+    if (studioUnsaved) {
+      toast.error("Salve as alterações do editor antes de restaurar.");
+      return;
+    }
+    setSaving(true);
+    try {
+      // C4 §13: se há alterações persistidas mas não commitadas, cria um SNAPSHOT
+      // (versão + commit) antes do time travel — o trabalho nunca é destruído.
+      if (dirty && draftFiles && Object.keys(draftFiles).length > 0) {
+        const snapshot = await persistAutosave(draftSpec, draftFiles, `Snapshot antes de restaurar ${meta.short}`);
+        if (snapshot.ok) void commitGitCheckpoint(draftFiles, `Snapshot antes de restaurar ${meta.short}`);
+      }
+      prevFilesRef.current = files;
+      setDraftFiles(files);
+      const res = await persistAutosave(draftSpec, files, `Restaurado para ${meta.short}: ${meta.message}`);
+      if (!res.ok) throw new Error(res.error || "Erro ao salvar a restauração");
+      setPreviewNonce((n) => n + 1);
+      setDirty(false);
+      setPendingSummary(undefined);
+      toast.success(`Projeto restaurado para ${meta.short}.`);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao restaurar o projeto");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const publicUrl = (): string | null => (project?.slug ? `${window.location.origin}/public/${project.slug}` : null);
+
+  async function handleBuild(): Promise<{ ok: boolean; html?: string; error?: string }> {
+    if (!project?.id) return { ok: false, error: "Projeto não carregado." };
+    if (building) return { ok: false, error: "Build já em andamento." };
+    setBuilding(true);
+    try {
+      const res = await invokeStudioBuild({ projectId: project.id, userId: user?.id, files: draftFiles ?? {} });
+      if (!res.ok) {
+        const error = res.error ?? "Build falhou.";
+        toast.error(error);
+        return { ok: false, error };
+      }
+      toast.success("Build de produção concluído");
+      return { ok: true, html: res.html ?? undefined };
+    } catch (e) {
+      const error = e instanceof Error ? e.message : "Erro no build";
+      toast.error(error);
+      return { ok: false, error };
+    } finally {
+      setBuilding(false);
+    }
+  }
 
   async function handlePublish() {
     if (publishing || unpublishing) return;
+    if (!project?.id) { toast.error("Projeto não carregado."); return; }
+
+    // C5: React publica o BUILD real (não a spec/HTML estático).
+    if (isReactProject) {
+      setPublishing(true);
+      try {
+        // C5 §10: snapshot do estado atual antes de publicar (nada fica "invisível").
+        if (dirty && draftFiles && Object.keys(draftFiles).length > 0) {
+          const snap = await persistAutosave(draftSpec, draftFiles, "Snapshot antes de publicar");
+          if (snap.ok) void commitGitCheckpoint(draftFiles, "Snapshot antes de publicar");
+        }
+        const built = await handleBuild();
+        if (!built.ok || !built.html) { toast.error(built.error ?? "Build falhou — publicação cancelada."); return; }
+        await publishReactSite(project.id, built.html, { name: project.company_name || project.name });
+        toast.success("Site publicado (build de produção)");
+        await load();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : "Erro ao publicar");
+      } finally {
+        setPublishing(false);
+      }
+      return;
+    }
+
     const specData = currentSpec();
     if (!specData || !project?.id) { toast.error("Gere o site antes de publicar."); return; }
     setPublishing(true);
@@ -288,6 +387,14 @@ export default function SiteProjectPage() {
         ? (Object.fromEntries(Object.entries(persistedCode).filter(([, v]) => typeof v === "string")) as Record<string, string>)
         : null;
       const realFiles = draftFiles && Object.keys(draftFiles).length ? draftFiles : persistedFiles;
+      // C5: React exporta o CÓDIGO-FONTE real (ZIP editável), não o dist/scaffolding estático.
+      if (isReactProject) {
+        if (!realFiles || Object.keys(realFiles).length === 0) { toast.error("Nada para exportar neste projeto."); return; }
+        const { blob, name } = await exportReactProjectZip(realFiles, project?.slug || project?.name || "projeto-react");
+        saveBlob(blob, name);
+        toast.success("Projeto React baixado (código-fonte)");
+        return;
+      }
       const hasRealSite = !!realFiles && Object.keys(realFiles).some((p) => p.endsWith("index.html"));
       if (hasRealSite) {
         const { blob, name } = await exportWorkspaceZip(realFiles!);
@@ -568,18 +675,33 @@ export default function SiteProjectPage() {
   async function runAiInstruction(
     instruction: string,
     attachment?: { dataUrl: string; label: string },
-    opts?: { displayText?: string; acceptReport?: boolean },
+    opts?: { displayText?: string; acceptReport?: boolean; files?: Record<string, string>; silent?: boolean },
   ) {
     if (!project) return;
     const displayText = opts?.displayText ?? instruction;
-    setAiMessages((prev) => [...prev, { role: "user", text: displayText, image: attachment?.dataUrl, fileLabel: attachment?.label }]);
+    // Fase 3: o Studio envia o estado ATUAL do editor (rascunhos inclusos). Aqui
+    // ele passa a ser a fonte da execução — sem cópia divergente.
+    if (opts?.files) {
+      prevFilesRef.current = opts.files;
+      setDraftFiles(opts.files);
+    }
+    const runFiles = opts?.files ?? draftFiles;
+    // C2: cancelamento real da execução em andamento.
+    const controller = new AbortController();
+    aiAbortRef.current = controller;
+    // C6: retry NÃO duplica a mensagem do usuário (nem no banco).
+    if (!opts?.silent) {
+      lastRunRef.current = { instruction, attachment, displayText };
+      setAiMessages((prev) => [...prev, { role: "user", text: displayText, image: attachment?.dataUrl, fileLabel: attachment?.label }]);
+      appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }], conversationId ?? undefined).catch(() => {});
+    }
     setAiRunning(true);
     setAiError(null);
     setLiveWork([]);
+    if (studioEnabled || isReactProject) studioChat.begin();
     const stopProgress = runAgentProgress(EDIT_STEPS, 1400);
     const snapshot = draftSpec;
-    appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }], conversationId ?? undefined).catch(() => {});
-    const hasWorkspace = !!draftFiles && Object.keys(draftFiles).length > 0;
+    const hasWorkspace = !!runFiles && Object.keys(runFiles).length > 0;
     const pushReply = (msg: string, activity?: Array<{ phase: string; detail: string }>, changedFiles?: string[]) => {
       // Resposta enxuta no chat: no máximo 3 linhas de timeline.
       const full = `${msg}${buildWorkTimeline(activity, changedFiles, 3)}`;
@@ -596,7 +718,7 @@ export default function SiteProjectPage() {
           const cContact = (cContent.contact ?? {}) as Record<string, unknown>;
           agentRes = await invokeProspectorAgent({
             instruction,
-            files: draftFiles,
+            files: runFiles,
             projectId: project.id,
             userId: user?.id ?? (project.user_id ?? undefined),
             context: {
@@ -615,12 +737,18 @@ export default function SiteProjectPage() {
           }, (phase, detail) => {
             // Atividade REAL ao vivo (arquivo sendo lido/editado etc.).
             setLiveWork((prev) => [...prev.slice(-9), { phase, detail }]);
-          });
+          }, (studioEnabled || isReactProject) ? {
+            // react → StudioTeam (C1), sem Router heurístico; static+studio → Fase 2.
+            orchestrate: studioEnabled && !isReactProject,
+            projectKind: isReactProject ? "react" : "static",
+            onStudioEvent: handleStudioEvent,
+            signal: controller.signal,
+          } : { signal: controller.signal });
         } catch (e) {
           agentErr = e;
         }
 
-        if (!agentErr && agentRes && agentRes.files && Object.keys(agentRes.files).length > 0 && (agentRes.changed || JSON.stringify(agentRes.files) !== JSON.stringify(draftFiles))) {
+        if (!agentErr && agentRes && agentRes.files && Object.keys(agentRes.files).length > 0 && (agentRes.changed || JSON.stringify(agentRes.files) !== JSON.stringify(runFiles))) {
           // Trava de entrega do runtime: auditoria de interação não passou
           // (clique deixa tela preta) → NÃO salvar/entregar como concluído.
           const agentAny = agentRes as { interaction_blocked?: boolean; errors?: string[] };
@@ -634,7 +762,7 @@ export default function SiteProjectPage() {
           }
           // EVIDÊNCIA real de mudança (arquivos retornados diferem). Aplica no
           // preview ANTES de persistir — assim a edição nunca "some".
-          setAiHistory((prev) => [{ spec: snapshot, files: draftFiles }, ...prev].slice(0, 10));
+          setAiHistory((prev) => [{ spec: snapshot, files: runFiles }, ...prev].slice(0, 10));
           const derivedSpec = agentRes.spec ? normalizeSpec(agentRes.spec as SiteSpec | Record<string, unknown> | null) : draftSpec;
           setDraftSpec(derivedSpec);
           prevFilesRef.current = agentRes.files;
@@ -647,7 +775,7 @@ export default function SiteProjectPage() {
           else if (autosave.ok) savedNote = "";
           else savedNote = `\n\n⚠ Não foi possível salvar automaticamente: ${autosave.error || "erro desconhecido"}. Clique em Salvar para persistir.`;
           const valErrors = agentRes.status === "error" && agentRes.errors?.length ? `\n(Validação reportou: ${agentRes.errors.slice(0, 2).join("; ")})` : "";
-          const changedKeys = Object.keys(agentRes.files).filter((p) => draftFiles?.[p] !== agentRes.files?.[p]);
+          const changedKeys = Object.keys(agentRes.files).filter((p) => runFiles?.[p] !== agentRes.files?.[p]);
           pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}${valErrors}`, agentRes.activity, changedKeys);
           stopProgress();
           setAgentStep(null);
@@ -727,11 +855,11 @@ export default function SiteProjectPage() {
         return;
       }
 
-      setAiHistory((prev) => [{ spec: snapshot, files: draftFiles }, ...prev].slice(0, 10));
+      setAiHistory((prev) => [{ spec: snapshot, files: runFiles }, ...prev].slice(0, 10));
       const summary = describeChanges(snapshot, protectedSpec);
       // Preserva arquivos reais já existentes (código do Cline) quando houver;
       // senão materializa a partir da spec editada.
-      const existingReal = draftFiles && Object.keys(draftFiles).length > 0 ? draftFiles : null;
+      const existingReal = runFiles && Object.keys(runFiles).length > 0 ? runFiles : null;
       const draftNow = existingReal ? { ...existingReal, ...materializeProjectFiles(protectedSpec) } : materializeProjectFiles(protectedSpec);
       const autosave = await persistAutosave(protectedSpec, draftNow, summary);
       setDraftSpec(protectedSpec);
@@ -747,12 +875,22 @@ export default function SiteProjectPage() {
       ].filter(Boolean).join(" ");
       pushReply(msg);
     } catch (e) {
-      const msg = friendlyAiError(e);
-      setAiError(msg);
-      setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
+      const aborted = e instanceof DOMException && e.name === "AbortError" || (e instanceof Error && e.name === "AbortError");
+      if (aborted) {
+        // Cancelamento real: NÃO envia falsa conclusão e preserva o que já veio.
+        setAiError("Execução cancelada.");
+        if (studioEnabled || isReactProject) studioChat.finish({ cancelled: true });
+      } else {
+        const msg = friendlyAiError(e);
+        setAiError(msg);
+        if (studioEnabled || isReactProject) studioChat.finish({ error: msg });
+        setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
+      }
     } finally {
+      aiAbortRef.current = null;
       stopProgress();
       setAgentStep(null);
+      if (studioEnabled || isReactProject) studioChat.finish();
       setAiRunning(false);
     }
   }
@@ -804,6 +942,52 @@ export default function SiteProjectPage() {
     setAiMessages((m) => [...m, { role: "assistant", text: "↶ Voltei para o estado anterior (conteúdo e código restaurados e salvos no editor)." }]);
   }
 
+  // Fase 6/C4: checkpoint Git real (best-effort; NUNCA bloqueia o autosave).
+  async function commitGitCheckpoint(filesToSave: Record<string, string>, summary?: string): Promise<void> {
+    if (!project?.id || !(studioEnabled || isReactProject)) return;
+    try {
+      const res = await invokeStudioGit<{ ok: boolean; committed: boolean; short?: string; message?: string }>({
+        action: "commit",
+        projectId: project.id,
+        userId: user?.id,
+        files: filesToSave,
+        summary,
+      });
+      // C2: representa o commit na conversa quando disponível (sem C4 novo pipeline).
+      if (res?.ok && res.committed) {
+        studioChat.appendCommit({ message: res.message ?? summary ?? "Snapshot do projeto", hash: res.short });
+      }
+    } catch {
+      /* git indisponível não impede salvar */
+    }
+  }
+
+  // C0 — autosave de projeto React: persiste SOMENTE o código (sem spec),
+  // mantendo versionamento interno e checkpoint Git (mesmo fluxo do static).
+  async function persistReactAutosave(
+    filesToSave: Record<string, string>,
+    summary?: string,
+  ): Promise<{ ok: boolean; created: boolean; error?: string }> {
+    if (!project?.id) return { ok: false, created: false, error: "Projeto não carregado." };
+    const hasFiles = !!filesToSave && Object.keys(filesToSave).length > 0;
+    try {
+      if (hasFiles) await updateGeneratedCode(project.id, filesToSave);
+      setProject((p) => (p && hasFiles ? { ...p, generated_code: filesToSave as never } : p));
+      if (!user?.id) return { ok: true, created: false };
+      const created = await createSiteVersion(project.id, user.id, {} as SiteSpec, summary ?? "Alteração no app React", hasFiles ? filesToSave : undefined).catch(() => false);
+      if (created) {
+        setDirty(false);
+        setPendingSummary(undefined);
+        void commitGitCheckpoint(filesToSave, summary);
+      }
+      return { ok: true, created };
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      console.error("[autosave:react] falhou", error);
+      return { ok: false, created: false, error };
+    }
+  }
+
   // AUTOSAVE (5.24): persiste o estado REAL (spec + arquivos) e cria versão
   // somente quando houve mudança real. NUNCA lança: retorna { ok, created, error }.
   async function persistAutosave(
@@ -812,6 +996,7 @@ export default function SiteProjectPage() {
     summary?: string,
   ): Promise<{ ok: boolean; created: boolean; error?: string }> {
     if (!project?.id) return { ok: false, created: false, error: "Projeto não carregado." };
+    if (isReactProject) return persistReactAutosave(filesToSave, summary);
     const hasFiles = filesToSave && Object.keys(filesToSave).length > 0;
     try {
       await updateProjectSpec(project.id, specToSave, hasFiles ? filesToSave : undefined);
@@ -822,6 +1007,8 @@ export default function SiteProjectPage() {
       if (created) {
         setDirty(false);
         setPendingSummary(undefined);
+        // Fase 6: registra um checkpoint Git por mudança real (assíncrono).
+        void commitGitCheckpoint(filesToSave, summary);
       }
       return { ok: true, created };
     } catch (e) {
@@ -854,6 +1041,19 @@ export default function SiteProjectPage() {
   }
 
   const prevFilesRef = useRef<Record<string, string> | null>(null);
+  // C2: controller da execução atual (cancelamento real).
+  const aiAbortRef = useRef<AbortController | null>(null);
+  // C6: última execução (para retry sem duplicar mensagens).
+  const lastRunRef = useRef<{ instruction: string; attachment?: { dataUrl: string; label: string }; displayText: string } | null>(null);
+  function cancelAi() {
+    aiAbortRef.current?.abort();
+  }
+  function handleRetry() {
+    const last = lastRunRef.current;
+    if (!last || aiRunning) return;
+    setAiError(null);
+    void runAiInstruction(last.instruction, last.attachment, { displayText: last.displayText, silent: true });
+  }
 
   // Live preview (code-first): o preview do modo edição mostra o código real do
   // projeto. Ao entrar em edição, baseia-se em generated_code (arquivos reais,
@@ -881,6 +1081,65 @@ export default function SiteProjectPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
+
+  // ===== Site Studio (DaveLovable-like) — Fase 1 (shell/UI) =====
+  // A flag mantém o layout legado disponível como fallback enquanto as fases
+  // 2–4 (agente/preview/editor) não estão 100% prontas.
+  const studioEnabled = useMemo(() => isStudioUiEnabled(), []);
+
+  // C0: tipo do projeto. `react` = nova experiência (WebContainer); `static` = legado.
+  const projectKind = useMemo(() => projectKindOf(project), [project]);
+  const isReactProject = projectKind === "react";
+
+  // Projeto React entra em modo edição automaticamente (não depende de spec).
+  useEffect(() => {
+    if (isReactProject && !editMode) setEditMode(true);
+  }, [isReactProject, editMode]);
+
+  // Stream do Studio (Fase 2): Router/Planner/Coder + thoughts + tools agrupados.
+  const studioChat = useStudioChat();
+
+  function handleStudioEvent(event: StudioStreamEvent) {
+    studioChat.handleEvent(event);
+    if (event.type === "files_ready") {
+      const files = (event as StudioFilesReadyEvent).files;
+      if (files && Object.keys(files).length > 0) {
+        // O agente alterou o workspace: o editor/Preview refletem na hora.
+        prevFilesRef.current = files;
+        setDraftFiles(files);
+      }
+    } else if (event.type === "reload_preview") {
+      setPreviewNonce((n) => n + 1);
+    }
+  }
+
+  function handleStudioFilesChange(nextFiles: Record<string, string>) {
+    prevFilesRef.current = nextFiles;
+    setDraftFiles(nextFiles);
+    setPreviewNonce((n) => n + 1);
+    setDirty(true);
+  }
+
+  async function handleStudioSave(nextFiles: Record<string, string>) {
+    setSaving(true);
+    try {
+      const res = await persistAutosave(draftSpec, nextFiles, pendingSummary);
+      if (!res.ok) {
+        toast.error(res.error || "Erro ao salvar alterações");
+        return;
+      }
+      prevFilesRef.current = nextFiles;
+      setDraftFiles(nextFiles);
+      setPreviewNonce((n) => n + 1);
+      toast.success(res.created ? "✓ Alterações salvas" : "Alterações salvas");
+      setDirty(false);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar alterações");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -910,11 +1169,29 @@ export default function SiteProjectPage() {
   const ctas = spec.calls_to_action ?? [];
   const colorEntries = Object.entries(colors).filter(([, v]) => typeof v === "string" && v.startsWith("#"));
   const hasSpec = !!project.spec && Object.keys(project.spec as object).length > 0;
+  // C0: projeto React entra direto no Studio (sem spec) e ocupa a tela cheia.
+  const hasContent = hasSpec || isReactProject;
+  const inStudioFlow = (editMode || isReactProject) && (studioEnabled || isReactProject);
 
   return (
-    <div className={editMode ? "p-4 lg:p-6" : "p-6 lg:p-8 max-w-7xl mx-auto space-y-6"}>
+    <div className={inStudioFlow ? "flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden" : editMode ? "p-4 lg:p-6" : "p-6 lg:p-8 max-w-7xl mx-auto space-y-6"}>
       {versionsOpen && project && (
         <SiteVersionsDialog projectId={project.id} onClose={() => setVersionsOpen(false)} onRestore={handleRestoreFromVersion} />
+      )}
+      {(studioEnabled || isReactProject) && project && (
+        <StudioHistoryDialog
+          open={gitHistoryOpen}
+          projectId={project.id}
+          userId={user?.id}
+          files={draftFiles ?? {}}
+          dirty={dirty}
+          blockedReason={studioUnsaved ? "Salve as alterações do editor antes de restaurar." : undefined}
+          busy={saving}
+          onClose={() => setGitHistoryOpen(false)}
+          onRestore={(files, meta) => handleRestoreGit(files, meta)}
+          onOpenInternalVersions={() => { setGitHistoryOpen(false); setVersionsOpen(true); }}
+          onOpenFile={(file, line) => { setGitHistoryOpen(false); requestOpenFile(file, line); }}
+        />
       )}
       {project && projectLead && (
         <ProposalWhatsAppDialog
@@ -942,12 +1219,13 @@ export default function SiteProjectPage() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="outline" className="text-xs">{statusLabel(project.status)}</Badge>
-            {hasSpec && (
+            {hasSpec && !studioEnabled && (
               <Button variant="outline" size="sm" onClick={() => setVersionsOpen(true)} title="Histórico de versões">
                 <HistoryIcon className="h-3.5 w-3.5 mr-1" /> Histórico
               </Button>
             )}
             {editMode ? (
+              studioEnabled ? null : (
               <>
                 <span className={`inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border ${dirty ? "border-amber-400/50 text-amber-500 bg-amber-500/10" : "border-border/60 text-muted-foreground"}`}>
                   <CircleDot className={`h-3 w-3 ${dirty ? "animate-pulse" : ""}`} />
@@ -957,6 +1235,7 @@ export default function SiteProjectPage() {
                   {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Save className="h-3.5 w-3.5 mr-1" />} Salvar
                 </Button>
               </>
+              )
             ) : (
               <>
                 {hasSpec && (
@@ -974,7 +1253,7 @@ export default function SiteProjectPage() {
         </div>
       </div>
 
-      {hasSpec && project.published_status === "published" && project.slug && (
+      {hasSpec && !studioEnabled && project.published_status === "published" && project.slug && (
         <Card className="p-3.5 flex flex-wrap items-center justify-between gap-3 border-emerald-500/30 bg-emerald-500/5">
           <div className="min-w-0">
             <p className="text-sm font-semibold flex items-center gap-2"><Globe className="h-4 w-4 text-emerald-600" /> Site publicado</p>
@@ -999,7 +1278,7 @@ export default function SiteProjectPage() {
           </div>
         </Card>
       )}
-      {hasSpec && project.published_status !== "published" && (
+      {hasSpec && !studioEnabled && project.published_status !== "published" && (
         <Card className="p-3.5 flex flex-wrap items-center justify-between gap-3 border-primary/20 bg-primary/5">
           <div>
             <p className="text-sm font-semibold">Publicação</p>
@@ -1015,7 +1294,7 @@ export default function SiteProjectPage() {
         </Card>
       )}
 
-      {hasSpec && (
+      {hasSpec && !studioEnabled && (
         <Card className="p-3.5 flex flex-wrap items-center justify-between gap-3 border-primary/20 bg-primary/5">
           <div>
             <p className="text-sm font-semibold">Exportar projeto</p>
@@ -1035,8 +1314,8 @@ export default function SiteProjectPage() {
         </Card>
       )}
 
-      {hasSpec && (
-        <Card className="p-3.5 border-primary/20 bg-primary/5">
+      {hasSpec && (!studioEnabled || generatingVideo || !!videoBlobUrl || !!videoError) && (
+        <Card className={studioEnabled ? "fixed bottom-10 right-4 z-40 w-[400px] border-primary/20 bg-background shadow-xl" : "p-3.5 border-primary/20 bg-primary/5"}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold">Vídeo de apresentação</p>
@@ -1097,7 +1376,7 @@ export default function SiteProjectPage() {
         </Card>
       )}
 
-      {!hasSpec ? (
+      {!hasContent ? (
         <Card className="p-12 text-center border-dashed border-border/60 bg-gradient-to-br from-card to-card/40">
           <div className="mx-auto h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-4">
             <Sparkles className="h-6 w-6 text-primary" />
@@ -1107,7 +1386,66 @@ export default function SiteProjectPage() {
             Clique em <strong>Gerar site com IA</strong> para analisar o negócio e criar a especificação estruturada (design, conteúdo, seções e SEO) deste projeto.
           </p>
         </Card>
-      ) : editMode ? (
+      ) : (editMode || isReactProject) ? (
+        (studioEnabled || isReactProject) ? (
+          <div className="min-h-0 flex-1">
+            <StudioShell
+            projectName={project.name}
+            projectSubtitle={project.company_name || project.name}
+            statusLabel={statusLabel(project.status)}
+            files={draftFiles ?? {}}
+            projectId={project.id}
+            projectKind={projectKind}
+            onFilesChange={handleStudioFilesChange}
+            onSaveFiles={handleStudioSave}
+            dirty={dirty}
+            saving={saving}
+            previewRefreshKey={previewNonce}
+            previewFallback={<SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />}
+            chat={{
+              messages: aiMessages,
+              running: aiRunning,
+              error: aiError,
+              canUndo: aiHistory.length > 0,
+              dirty,
+              runningLabel: aiRunning && agentStep !== null && EDIT_STEPS[agentStep] ? EDIT_STEPS[agentStep].label : undefined,
+              liveActivity: aiRunning ? liveWork : undefined,
+              stream: studioChat,
+              onApply: runAiInstruction,
+              onRevert: undoAi,
+              onQuickStrategy: runQuickStrategy,
+              onNewConversation: startNewConversation,
+              onCancel: cancelAi,
+              onRetry: handleRetry,
+            }}
+            commercial={{
+              onProposalPdf: handlePdf,
+              onDownloadZip: handleZip,
+              onGenerateVideo: handleGenerateVideo,
+              onWhatsApp: () => setProposalOpen(true),
+              onPublish: handlePublish,
+              onUnpublish: handleUnpublish,
+              publishing,
+              unpublishing,
+              busyAction,
+              generatingVideo,
+              canPublish: isReactProject || hasSpec,
+              canUnpublish: project.published_status === "published",
+              canWhatsApp: !!projectLead?.whatsapp,
+              canVideo: !!draftFiles && Object.keys(draftFiles).some((p) => p.endsWith("index.html")),
+              onBuild: () => { void handleBuild(); },
+              building,
+              canBuild: isReactProject,
+              githubSlot: <StudioGitConfigDialog projectId={project.id} userId={user?.id} />,
+            }}
+            onOpenHistory={() => ((studioEnabled || isReactProject) ? setGitHistoryOpen(true) : setVersionsOpen(true))}
+            openFileRequest={openFileRequest}
+            onApplyWithFiles={(instruction, attachment, files) => { void runAiInstruction(instruction, attachment, { files }); }}
+            onUnsavedChange={setStudioUnsaved}
+            engineLabel={draftFiles && Object.keys(draftFiles).length > 0 ? "Cline Agent · código real" : "modo compatível"}
+            />
+          </div>
+        ) : (
         <div className="grid gap-5 lg:h-[calc(100vh-150px)] lg:grid-cols-[420px_minmax(0,1fr)] lg:overflow-hidden">
           <div className="min-h-0 lg:h-full">
             <SiteChat
@@ -1146,6 +1484,7 @@ export default function SiteProjectPage() {
             </div>
           </div>
         </div>
+        )
       ) : (
         <>
           <div className="grid gap-4 lg:grid-cols-3">

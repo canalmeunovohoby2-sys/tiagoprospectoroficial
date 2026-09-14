@@ -32,12 +32,21 @@ export default function PublicSitePage() {
 
   // Código publicado (code-first): se existir generated_code publicado, o site
   // público renderiza o CÓDIGO REAL num iframe sandbox — não a spec reconstruída.
+  // C5: projetos React publicam um BUILD colapsado (marcador abaixo) e renderizam
+  // o HTML já pronto diretamente (sem o pipeline de preview estático).
+  const REACT_BUILD_MARKER = "<!-- prospector-react-build -->";
+  const reactBuiltHtml = useMemo(() => {
+    const html = data?.code?.["index.html"];
+    return typeof html === "string" && html.includes(REACT_BUILD_MARKER) ? html : null;
+  }, [data?.code]);
+
   const preview = useMemo(() => {
+    if (reactBuiltHtml) return null;
     if (data?.code && Object.keys(data.code).length > 0) {
       return prepareProjectPreview(data.code);
     }
     return null;
-  }, [data?.code]);
+  }, [data?.code, reactBuiltHtml]);
 
   // SEO básico dinâmico.
   useEffect(() => {
@@ -68,6 +77,17 @@ export default function PublicSitePage() {
           <p className="text-sm text-muted-foreground mt-2">Este site não existe ou ainda não foi publicado.</p>
         </div>
       </div>
+    );
+  }
+
+  if (reactBuiltHtml) {
+    return (
+      <iframe
+        title={data.name}
+        srcDoc={reactBuiltHtml}
+        sandbox="allow-scripts allow-modals allow-forms allow-popups allow-popups-to-escape-sandbox"
+        className="block h-screen w-full border-0 bg-white"
+      />
     );
   }
 

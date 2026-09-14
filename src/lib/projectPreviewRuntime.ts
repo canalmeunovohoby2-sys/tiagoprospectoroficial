@@ -13,6 +13,7 @@ import {
   normalizePath, listFiles, readFile,
   isBalancedJsSafe, type WorkspaceMap,
 } from "./preview-helpers";
+import { annotateHtmlSource } from "./studio/sourceMap";
 
 export interface PreparedPreview {
   ok: boolean;
@@ -23,6 +24,15 @@ export interface PreparedPreview {
   fileCount: number;
 }
 
+export interface PreparePreviewOptions {
+  /**
+   * Anota as tags do index.html com `data-pfsrc="arquivo:linha"` (Fase 4 —
+   * elemento→código). A anotação vai SOMENTE para a cópia de preview; nunca é
+   * gravada em `generated_code`/publicação/exportação. Default: false.
+   */
+  annotateSource?: boolean;
+}
+
 const SECRET_RE = /(?:NVIDIA|GEMINI|DEEPSEEK|OPENAI|SUPABASE|ANON|SERVICE|API)_?(?:KEY|SECRET|TOKEN)\s*[:=]|\bsk-[A-Za-z0-9_-]{12,}\b|\beyJ[A-Za-z0-9_-]{20,}\./i;
 
 function fileKey(p: string): string {
@@ -31,7 +41,7 @@ function fileKey(p: string): string {
 }
 
 // Prepara o documento do workspace para preview (blob URL / srcDoc).
-export function prepareProjectPreview(files: WorkspaceMap | Record<string, string>): PreparedPreview {
+export function prepareProjectPreview(files: WorkspaceMap | Record<string, string>, options?: PreparePreviewOptions): PreparedPreview {
   const ws: WorkspaceMap = {};
   for (const [k, v] of Object.entries(files ?? {})) {
     const n = normalizePath(k);
@@ -55,6 +65,12 @@ export function prepareProjectPreview(files: WorkspaceMap | Record<string, strin
   const warnings: string[] = [];
   if (!html) {
     return { ok: false, errors: [`Falha ao ler ${htmlPath}.`], warnings: [], fileCount: names.length };
+  }
+
+  // Fase 4 (ADR-2): anota a CÓPIA DE PREVIEW com data-pfsrc ANTES do inlining,
+  // preservando as linhas originais do arquivo para o source map.
+  if (options?.annotateSource) {
+    html = annotateHtmlSource(html, htmlPath);
   }
 
   if (!/<!doctype\s+html/i.test(html)) errors.push("index.html sem <!doctype html>.");
@@ -124,7 +140,7 @@ export function prepareProjectPreview(files: WorkspaceMap | Record<string, strin
       if(el&&el.scrollIntoView){el.scrollIntoView({behavior:'smooth',block:'start'});}
       else if(!id){try{window.scrollTo({top:0,behavior:'smooth'});}catch(e){window.scrollTo(0,0);}}
     },true);
-  }catch(e){}})();<\/script>`;
+  }catch(e){}})();</script>`;
   const bodyOpen = html.search(/<body[^>]*>/i);
   if (bodyOpen >= 0) {
     const close = html.indexOf(">", bodyOpen);

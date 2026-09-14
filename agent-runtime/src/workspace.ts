@@ -10,21 +10,45 @@ export type FileMap = Record<string, string>;
 
 const MAX_FILE_BYTES = 2_000_000;
 
+/**
+ * Caminhos SENSÍVEIS que nunca entram/saem do workspace: variáveis de ambiente
+ * e credenciais em qualquer nível. Compartilhado com as tools (tools.ts).
+ */
+export function isSensitivePath(rel: string): boolean {
+  const parts = String(rel ?? "").replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts.some((s) => {
+    const name = s.toLowerCase();
+    if (name === ".env" || name.startsWith(".env.")) return true;
+    if (name === ".npmrc" || name === ".netrc" || name === ".git-credentials" || name === ".htpasswd") return true;
+    if (name === "id_rsa" || name === "id_ed25519" || name === "id_dsa" || name === "id_ecdsa") return true;
+    return false;
+  });
+}
+
 function safeJoin(root: string, path: string): string | null {
   const clean = String(path ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
   const parts = clean.split("/").filter((s) => s && s !== ".");
   if (parts.some((s) => s === "..")) return null;
   const abs = resolve(root, ...parts);
   if (abs !== root && !abs.startsWith(root + sep)) return null;
-  // FASE 7 — bloqueia .env/credenciais em QUALQUER nível (consistente com tools.ts).
-  if (parts.some((s) => /^\.env($|\.)/i.test(s))) return null;
+  // Bloqueia .env/credenciais em QUALQUER nível (consistente com tools.ts).
+  if (isSensitivePath(parts.join("/"))) return null;
   return abs;
 }
 
-// Cria o workspace em disco a partir de um mapa path->content.
+/** Versão pública de `safeJoin` para outros módulos (git, etc.). */
+export function safeWorkspaceJoin(root: string, path: string): string | null {
+  return safeJoin(root, path);
+}
+
+// Cria/atualiza o workspace em disco a partir de um mapa path->content.
+// PRESERVA `.git` (histórico Git do projeto — Fase 6) e `node_modules`.
 export function materializeWorkspace(root: string, files: FileMap): void {
-  rmSync(root, { recursive: true, force: true });
   mkdirSync(root, { recursive: true });
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.name === ".git" || entry.name === "node_modules") continue;
+    rmSync(join(root, entry.name), { recursive: true, force: true });
+  }
   for (const [path, content] of Object.entries(files ?? {})) {
     const abs = safeJoin(root, path);
     if (!abs || !existsSync(root)) continue;
@@ -45,7 +69,7 @@ export function readWorkspace(root: string): FileMap {
         walk(full);
       } else if (entry.isFile()) {
         const rel = relative(root, full).split(sep).join("/");
-        if (rel.length > 500 || rel.includes(".env")) continue;
+        if (rel.length > 500 || isSensitivePath(rel)) continue;
         const content = readFileSync(full, "utf8");
         if (content.length <= MAX_FILE_BYTES) out[rel] = content;
       }

@@ -246,6 +246,10 @@ export interface CompletionState {
   /** Alguma ferramenta terminou com erro real (tool-result isError). */
   toolFailure: boolean;
   toolFailureDetail?: string | null;
+  /** Uma ferramenta de VERIFICAÇÃO/LEITURA falhou (ex.: browser_reload). NÃO é
+   *  falha da alteração — só impede declarar a verificação como concluída. */
+  verifyToolFailure?: boolean;
+  verifyToolFailureDetail?: string | null;
   /** Arquivos alterados nesta execução (para a mensagem honesta). */
   touched: string[];
   /** Arquivos realmente editados (work evidence) — usado no relatório. */
@@ -290,6 +294,10 @@ export interface ChangeReportInput {
   verified: boolean;
   /** Tipo do pedido (color|framing|swap|text|size|generic) — dá o tom do relatório. */
   kind?: string;
+  /** Uma ferramenta de verificação falhou (ex.: browser_reload). */
+  verifyFailed?: boolean;
+  /** Verificação confirmada por método ALTERNATIVO após a falha (categoria B). */
+  alternativeVerified?: boolean;
 }
 
 /** Classe o TIPO do pedido para o relatório refletir o que realmente foi feito. */
@@ -324,6 +332,8 @@ export function buildChangeReport(i: ChangeReportInput): string {
   if (verifs.length > 0) {
     const how = i.renderVerified ? "render conferido no navegador" : "verificação por ferramentas";
     lines.push(`Verificação: ${how} (${verifs.join(", ")}).`);
+  } else if (i.verifyFailed) {
+    lines.push("Verificação: a verificação automática no navegador FALHOU nesta execução.");
   } else if (i.visualEdit) {
     lines.push("Verificação: não houve verificação visual no navegador nesta execução.");
   } else {
@@ -332,7 +342,11 @@ export function buildChangeReport(i: ChangeReportInput): string {
   lines.push(
     i.verified
       ? "Resultado: alteração aplicada e validada (restante do site preservado)."
-      : "Resultado: alteração aplicada. A verificação final formal não foi concluída, então não vou afirmar que foi validada.",
+      : i.alternativeVerified
+        ? "Resultado: alteração aplicada e conferida por método ALTERNATIVO no navegador (a verificação formal via finish_task não foi concluída)."
+        : i.verifyFailed
+          ? "Resultado: alteração APLICADA, mas a verificação automática falhou — a mudança NÃO foi marcada como validada. Confirme o resultado visual no navegador (desktop e mobile)."
+          : "Resultado: alteração aplicada. A verificação final formal não foi concluída, então não vou afirmar que foi validada.",
   );
   if (i.visualEdit && !i.renderVerified) lines.push("Observação: confirme o resultado visual no navegador (desktop e mobile).");
   return lines.join("\n");
@@ -370,6 +384,10 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
   //    (não pedia alteração), deixa a resposta do modelo.
   if (s.mode !== "generate") {
     if (s.changeApplied) {
+      const verifyFailed = s.verifyToolFailure === true;
+      // Categoria B: a verificação formal falhou, mas houve RENDER real por outro
+      // caminho (método alternativo) — a alteração está conferida.
+      const alternativeVerified = verifyFailed && s.renderVerified === true && !s.finishTaskCalled;
       const msg = buildChangeReport({
         editedPaths: (s.editedPaths && s.editedPaths.length ? s.editedPaths : s.touched).filter(Boolean),
         verificationTools: s.verificationTools ?? [],
@@ -377,6 +395,8 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
         visualEdit: s.visualEdit === true,
         verified: s.finishTaskCalled,
         kind: classifyEditKind(s.instruction ?? ""),
+        verifyFailed,
+        alternativeVerified,
       });
       return { ok: true, reply: msg, error: null, unverified, states };
     }

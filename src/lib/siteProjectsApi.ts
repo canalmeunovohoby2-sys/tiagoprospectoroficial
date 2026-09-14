@@ -1,10 +1,12 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
-import type { LeadSource, SiteProjectRow, SiteSpec } from "@/data/siteProjects";
+import type { LeadSource, SiteProjectKind, SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { pickLeadForSpec } from "@/data/siteProjects";
+import { buildReactTemplateFiles } from "./studio/reactTemplate";
 import { resolveCompanyName, companySlug, extractCompanyFromPrompt, isInvalidCompanySlug } from "./companyName";
 import { getAgentTicket } from "./agentTicket";
 import { parseGenerateResponse } from "./generateStream";
+import { parseStudioLine, type StudioStreamEvent } from "./studio/streamEvents";
 import { friendlyAiError } from "./friendlyAiError";
 
 function rowToProject(row: unknown): SiteProjectRow | null {
@@ -137,7 +139,7 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
 // Cria um Site Project INDEPENDENTE de Lead, a partir do prompt do usuário.
 // lead_id fica NULL (o schema permite `on delete set null`); o prompt original
 // é guardado em briefing.user_prompt para alimentar a geração e as edições.
-export async function createSiteProjectFromPrompt(userId: string, prompt: string): Promise<string> {
+export async function createSiteProjectFromPrompt(userId: string, prompt: string, kind: SiteProjectKind = "static"): Promise<string> {
   const cleaned = (prompt ?? "").trim();
   if (!cleaned) throw new Error("Descreva o site que você quer criar.");
   // Nome comercial plausível extraído do prompt; nunca o checklist/slug.
@@ -146,33 +148,45 @@ export async function createSiteProjectFromPrompt(userId: string, prompt: string
   const name = company || "Novo site";
   const slug = await uniqueSlug(name);
   const briefing = { user_prompt: cleaned } as unknown as Json;
+  const isReact = kind === "react";
+  // C0: projeto React já nasce com o template real (Vite/React/TS/Tailwind) em
+  // `generated_code`, pronto para o WebContainer. `settings.kind` marca o tipo
+  // sem migração e sem converter projetos existentes.
+  const payload: Record<string, unknown> = {
+    user_id: userId,
+    name,
+    slug,
+    company_name: name,
+    status: isReact ? "generated" : "draft",
+    briefing,
+    ...(isReact
+      ? {
+          settings: { kind: "react" } as unknown as Json,
+          generated_code: buildReactTemplateFiles({ name, tagline: cleaned }) as unknown as Json,
+        }
+      : {}),
+  };
   const { data: created, error } = await supabase
     .from("site_projects")
-    .insert({
-      user_id: userId,
-      name,
-      slug,
-      company_name: name,
-      status: "draft",
-      briefing,
-    })
+    .insert(payload)
     .select("id")
     .single();
   if (error) throw new Error(error.message);
   return String(created.id);
 }
 
-// Invoca a Edge Function generate-site e devolve a especificação normalizada.
-export async function generateSiteSpec(lead: LeadSource): Promise<{ spec: SiteSpec; model: string }> {
-  const { data, error } = await supabase.functions.invoke<{ spec: SiteSpec; model: string }>(
-    "generate-site",
-    { body: { lead: pickLeadForSpec(lead) } },
-  );
-  if (error) throw error;
-  if (!data?.spec || typeof data.spec !== "object") {
-    throw new Error("A IA não retornou uma especificação válida.");
-  }
-  return { spec: data.spec, model: data.model ?? "deepseek-chat" };
+// Cria um projeto React (nova experiência/WebContainer) — atalho de C0.
+export async function createReactSiteProject(userId: string, prompt: string): Promise<string> {
+  return createSiteProjectFromPrompt(userId, prompt, "react");
+}
+
+// Persiste SOMENTE o código (projetos React sem spec) mantendo versionamento/Git.
+export async function updateGeneratedCode(projectId: string, files: Record<string, string>): Promise<void> {
+  const { error } = await supabase
+    .from("site_projects")
+    .update({ generated_code: files as unknown as Json })
+    .eq("id", projectId);
+  if (error) throw new Error(error.message);
 }
 
 export async function saveGeneratedSite(
@@ -248,76 +262,10 @@ export interface AgentExecuteResult {
   researchTrace?: ResearchTraceItem[];
 }
 
-// Code-first: invoca o agent-execute que opera sobre os ARQUIVOS reais do projeto.
-// O fallback (edge) opera sobre o MAPA de arquivos (texto) — anexos são
-// convertidos em arquivos reais no workspace (assets/<nome> com o data URL),
-// para que o agente os leia/usar mesmo sem o runtime Node.
-function slugName(label: string, idx: number, mime: string): string {
-  const clean = (label || `anexo-${idx + 1}`).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9._-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
-  const ext = mime.includes("jpeg") || mime.includes("jpg") ? "jpg" : mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : mime.includes("gif") ? "gif" : mime.includes("svg") ? "svg" : mime.includes("pdf") ? "pdf" : mime.includes("json") ? "json" : "txt";
-  return `assets/${(clean.split(".")[0] || `anexo-${idx + 1}`).slice(0, 40)}-${idx + 1}.${ext}`;
-}
+// (C7) `slugName`/`invokeAgentExecute` e a Edge Function `agent-execute` saíram do
+// caminho do front: nenhum consumidor. A execução React usa `/run` (StudioTeam) e
+// o Static usa `invokeProspectorAgent`.
 
-export async function invokeAgentExecute(input: {
-  instruction: string;
-  files: Record<string, string>;
-  context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null };
-  memory?: string[];
-  attachments?: ChatAttachmentInput[];
-  /** Conversa recente (contexto de continuidade) — usada no prompt do agente. */
-  conversation?: string[];
-  userId?: string;
-  /** Override de execução (projeto) — metadados, nunca chaves. */
-  execution?: { provider?: string; model?: string; fallback?: string } | null;
-}): Promise<AgentExecuteResult> {
-  // Anexos → arquivos reais no workspace (mapa), para o agente ler/usar.
-  const files = { ...(input.files ?? {}) };
-  let attachHint = "";
-  const attachments = input.attachments ?? [];
-  if (attachments.length) {
-    const materialized: string[] = [];
-    const rejected: string[] = [];
-    attachments.forEach((att, i) => {
-      const dataUrl = typeof att?.dataUrl === "string" ? att.dataUrl : "";
-      const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(dataUrl);
-      const mime = (att?.mediaType || (m ? m[1] : "")) || "application/octet-stream";
-      if (!m || !/^image\/(png|jpe?g|webp|gif|svg)|^text\/(plain|markdown)|^application\/(json|pdf)/i.test(mime)) {
-        rejected.push(att?.name || `anexo ${i + 1}`);
-        return;
-      }
-      const approx = Math.round((m[3].length * 3) / 4);
-      if (approx === 0 || approx > 2_200_000) { rejected.push(att?.name || `anexo ${i + 1}`); return; }
-      const path = slugName(att?.name ?? "", i, mime);
-      files[path] = dataUrl;
-      materialized.push(`${path} (${mime})`);
-    });
-    attachHint = materialized.length
-      ? `\nANEXOS (arquivos reais no workspace — leia com read_file e use):\n${materialized.map((m) => `- ${m}`).join("\n")}\nPara usar uma imagem do usuário no site: referencie o arquivo real (<img src="assets/<nome>"> ou background url) — o preview do produto embute automaticamente; NÃO embuta o data URL gigante inline.\nPRESERVE A TRANSPARÊNCIA de logos/PNG sem fundo — nunca adicione fundo preto/branco, não converta para JPG e não ponha caixa escura atrás de imagem transparente.\nReutilizar a MESMA foto do usuário em vários pontos é ESPERADO quando o usuário pedir.`
-      : "";
-    if (rejected.length) attachHint += `\nAnexos rejeitados (tipo/tamanho): ${rejected.join(", ")}`;
-  }
-  const instruction = `${input.instruction}${attachHint}`;
-
-  const { data, error } = await supabase.functions.invoke<AgentExecuteResult>("agent-execute", {
-    body: {
-      instruction,
-      files,
-      context: input.context,
-      memory: input.memory ?? [],
-      conversation: (input.conversation ?? []).slice(-8),
-      user_id: input.userId,
-      execution: input.execution ?? null,
-      runtime: "static",
-    },
-  });
-  if (error) throw new Error(friendlyAiError(error));
-  const result = data ?? { status: "error", errors: ["Resposta vazia do agente de código."] };
-  return result.files ? result : { ...result, files };
-}
-
-// Invoca o ProspectorSiteAgent (Cline SDK). Prefere o runtime Node local
-// (VITE_AGENT_RUNTIME_URL); se não estiver disponível, faz fallback para a
-// edge function agent-execute (mesmo contrato, infraestrutura atual).
 export interface ChatAttachmentInput {
   name?: string;
   mediaType?: string;
@@ -394,8 +342,25 @@ export async function generateSiteVideo(input: {
       body: JSON.stringify({ files: input.files, projectId: input.projectId, target: input.target ?? 30 }),
       signal: AbortSignal.timeout(300_000),
     });
-    const data = (await res.json().catch(() => ({}))) as SiteVideoResult;
-    if (!res.ok) return { ok: false, status: "error", error: data?.error ?? `Falha no runtime (HTTP ${res.status}).` };
+    const text = await res.text();
+    if (!res.ok) {
+      let err: string | null = null;
+      try { err = (JSON.parse(text) as SiteVideoResult)?.error ?? null; } catch { err = null; }
+      return { ok: false, status: "error", error: err ?? `Falha no runtime (HTTP ${res.status}).` };
+    }
+    // Resposta é NDJSON (start/ping/phase/result) — pega o último evento `result`.
+    let data: SiteVideoResult | null = null;
+    for (const line of text.split(/\r?\n/)) {
+      const s = line.trim();
+      if (!s.startsWith("{")) continue;
+      try {
+        const evt = JSON.parse(s) as SiteVideoResult & { type?: string };
+        if (evt?.type === "result") data = evt;
+      } catch { /* linha parcial/ruído */ }
+    }
+    if (!data) {
+      try { data = JSON.parse(text) as SiteVideoResult; } catch { return { ok: false, status: "error", error: "Resposta inválida do runtime." }; }
+    }
     return { ...data, ok: data.ok === true && data.status === "ready" };
   } catch (e) {
     return { ok: false, status: "error", error: e instanceof Error ? e.message : "Falha de rede/runtime ao gerar o vídeo." };
@@ -434,7 +399,16 @@ export async function invokeProspectorAgent(input: {
   execution?: { provider?: string; model?: string; fallback?: string } | null;
   /** ID da conversa atual — liga histórico persistido (runtime-ai-config ↔ conversation-save). */
   conversationId?: string;
-}, onLiveActivity?: (phase: string, detail: string) => void): Promise<AgentExecuteResult> {
+}, onLiveActivity?: (phase: string, detail: string) => void, opts?: {
+  /** Ativa o Router→(Planner)→Coder no runtime (Fase 2 do Studio, apenas static). */
+  orchestrate?: boolean;
+  /** `react` → StudioTeam (C1: Coder-first + Planner, sem Router). */
+  projectKind?: "static" | "react";
+  /** Recebe os eventos ricos do Studio (agent_interaction/plan/files_ready/complete). */
+  onStudioEvent?: (event: StudioStreamEvent) => void;
+  /** Cancelamento real da execução (C2). */
+  signal?: AbortSignal;
+}): Promise<AgentExecuteResult> {
   const runtimeSel = await resolveEditorRuntime();
   if (runtimeSel.state === "none") return editorUnavailableResult("not_configured");
   if (runtimeSel.state === "ollama_local_missing") {
@@ -443,6 +417,7 @@ export async function invokeProspectorAgent(input: {
   const runtimeUrl = runtimeSel.url;
   const token = await editorRuntimeAuth(runtimeSel, input.projectId);
   if (!token) return { status: "error", executor: "cline-editor", runtime: "cline", errors: ["Não foi possível autenticar esta execução. Recarregue a página e tente novamente."] };
+  const useStream = !!(onLiveActivity || opts?.onStudioEvent);
   try {
     const res = await fetch(`${runtimeUrl.replace(/\/$/, "")}/run`, {
       method: "POST",
@@ -458,15 +433,17 @@ export async function invokeProspectorAgent(input: {
         user_id: input.userId,
         execution: input.execution ?? null,
         conversationId: input.conversationId,
-        stream: onLiveActivity ? true : false,
+        stream: useStream,
+        orchestrate: opts?.orchestrate === true ? true : undefined,
+        projectKind: opts?.projectKind === "react" ? "react" : undefined,
       }),
-      signal: AbortSignal.timeout(600_000),
+      signal: opts?.signal ?? AbortSignal.timeout(600_000),
     });
     if (!res.ok) {
       return { status: "error", executor: "cline-editor", runtime: "cline", errors: [`Editor completo indisponível (HTTP ${res.status}).`] };
     }
-    // NDJSON ao vivo: cada linha de atividade é repassada para a UI (5.34).
-    if (onLiveActivity && res.body) {
+    // NDJSON ao vivo: cada linha (atividade/eventos do Studio) é repassada à UI.
+    if (useStream && res.body) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -480,11 +457,15 @@ export async function invokeProspectorAgent(input: {
           const raw = buffer.slice(0, nl);
           buffer = buffer.slice(nl + 1);
           if (!raw.trim()) continue;
-          try {
-            const line = JSON.parse(raw) as Record<string, unknown>;
-            if (line.type === "activity") onLiveActivity(String(line.phase ?? ""), String(line.detail ?? ""));
-            else if (line.type === "result") final = line as unknown as AgentExecuteResult;
-          } catch { /* linha inválida ignora */ }
+          const event = parseStudioLine(raw);
+          if (!event) continue;
+          if (event.type === "activity") {
+            onLiveActivity?.(String(event.phase ?? ""), String(event.detail ?? ""));
+          } else if (event.type === "result") {
+            final = event as unknown as AgentExecuteResult;
+          } else {
+            opts?.onStudioEvent?.(event);
+          }
         }
       }
       if (final) return { ...final, executor: "cline-editor" };
@@ -687,6 +668,21 @@ export async function publishSiteProject(projectId: string, spec: SiteSpec, gene
 
 export async function unpublishSiteProject(projectId: string): Promise<void> {
   const { error } = await supabase.from("site_projects").update({ published_status: "unpublished" as const }).eq("id", projectId);
+  if (error) throw new Error(error.message);
+}
+
+// C5 — publica um projeto React a partir do BUILD real (HTML auto-contido).
+// Reutiliza a infraestrutura de publicação (published_status/published_code) e a
+// página pública existente; `published_spec` recebe o mínimo para a RPC pública.
+export async function publishReactSite(projectId: string, builtHtml: string, opts?: { name?: string }): Promise<void> {
+  if (!builtHtml || !builtHtml.trim()) throw new Error("Build vazio — nada para publicar.");
+  const payload = {
+    published_status: "published" as const,
+    published_spec: { business: { name: opts?.name ?? "" } } as unknown as Json,
+    published_code: { "index.html": builtHtml } as unknown as Json,
+    published_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("site_projects").update(payload).eq("id", projectId);
   if (error) throw new Error(error.message);
 }
 

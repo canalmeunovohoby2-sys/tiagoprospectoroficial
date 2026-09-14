@@ -1,0 +1,211 @@
+// StudioTeam (C1) — Coder-first + Planner-only, com Selector e sinais.
+//
+//   Usuário → StudioTeam → Selector → { Coder (tools) | Planner (sem tools) }
+//
+// O Planner nunca toca o workspace. O Coder opera no workspace real via tools
+// (reaproveitadas do runtime) e emite `files_ready` via callback. Estado por
+// projeto persistido fora do workspace.
+
+import type { BusinessContext } from "../tools.js";
+import { buildCoderTools } from "./agent-core/agent-tools.js";
+import { callModelWithTools, type ModelCaller, type ModelMessage } from "./agent-core/model.js";
+import { buildFirstMessage } from "./agent-core/first-message.js";
+import { runCoderTurn } from "./agent-core/coder.js";
+import { runPlanner, type RunPlannerInput, type RunPlannerResult } from "./agent-core/planner.js";
+import { selectNext, type LastSpeaker } from "./agent-core/selector.js";
+import type { AgentSignal } from "./agent-core/signals.js";
+import { loadProjectState, saveProjectState, type StudioStateMessage } from "./agent-core/project-state.js";
+import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
+
+export interface StudioAttachment {
+  name: string;
+  path: string;
+  mediaType: string;
+  dataUrl: string;
+}
+
+export interface StudioTeamInput {
+  instruction: string;
+  projectId: string;
+  workspaceRoot: string;
+  business: BusinessContext;
+  memory?: string[];
+  conversation?: string[];
+  /** Anexos materializados (imagem vira contexto visual real; PDF fica como arquivo). */
+  attachments?: StudioAttachment[];
+  /** Bloco textual de anexos (caminhos + orientação) para o Coder. */
+  attachBlock?: string;
+  ai: { providerId?: string; modelId?: string; apiKey?: string; baseUrl?: string };
+  emit: (event: Record<string, unknown>) => void;
+  readWorkspace: () => Record<string, string>;
+  onFilesChanged?: (paths: string[]) => void;
+  /** Injetável nos testes; default = provider real. */
+  model?: ModelCaller;
+  /** Injetável nos testes; default = Planner real (sem ferramentas). */
+  planner?: (input: RunPlannerInput) => Promise<RunPlannerResult>;
+  signal?: AbortSignal;
+  maxRounds?: number;
+  maxPlans?: number;
+}
+
+export interface StudioTeamResult {
+  ok: boolean;
+  reply: string;
+  signal: AgentSignal | null;
+  iterations: number;
+  touched: string[];
+  plan?: string;
+  error?: string;
+}
+
+const CODER_SYSTEM = `Você é o Coder do TiagoProspector Studio: um engenheiro que edita um projeto React + Vite + TypeScript + Tailwind REAL.
+Você é o PRIMEIRO agente a receber o pedido e TEM ferramentas para trabalhar no projeto.
+
+REGRAS DE TRABALHO:
+- Antes de CADA ferramenta, escreva 1 frase curta explicando o que vai fazer e por quê.
+- Leia o arquivo antes de editá-lo. Use edit_file para mudanças cirúrgicas; write_file para arquivo novo/grande.
+- Preserve o que não foi pedido: classes, estilos, estrutura, animações e responsividade.
+- Não crie arquivos vazios nem placeholders (.gitkeep). Só código funcional.
+- Use run_command (action=run, script=build) para verificar quando fizer sentido; NÃO rode dev server.
+- Nunca invente sucesso: só finalize depois de alterar de verdade.
+
+SINAIS DE CONTROLE (OBRIGATÓRIO — última linha da resposta, um objeto JSON sozinho):
+- Tarefa simples que você concluiu: {"signal":"TERMINATE"}
+- Tarefa complexa/multi-etapa que precisa de plano (NÃO comece a editar): {"signal":"DELEGATE_TO_PLANNER","reason":"<motivo>"}
+- Você concluiu UM passo de um plano recebido: {"signal":"SUBTASK_DONE","summary":"<o que fez>"}
+
+ESCALA:
+- Pedido simples (1 arquivo/poucas linhas) → execute e TERMINATE.
+- Construção inicial / refatoração grande / vários arquivos interdependentes → DELEGATE_TO_PLANNER antes de editar.
+- Quando estiver executando um PLANO do Planner, conclua o "Next task" e responda SUBTASK_DONE.
+
+ANEXOS/MULTIMODAL:
+- Quando houver IMAGENS anexadas, elas estão no seu contexto visual — analise-as de verdade.
+- Arquivos PDF/binários aparecem apenas como CAMINHO; se não puder interpretá-los, diga que não conseguiu — NUNCA invente o conteúdo de uma imagem/PDF que você não recebeu.
+- A memória do projeto é contexto auxiliar: em conflito com o código real, o CÓDIGO prevalece.`;
+
+function historyToMessages(history: StudioStateMessage[]): ModelMessage[] {
+  return history.map((m) => ({ role: m.role === "planner" ? "assistant" : (m.role as ModelMessage["role"]), content: m.content }));
+}
+
+export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamResult> {
+  const model = input.model ?? callModelWithTools;
+  const planner = input.planner ?? runPlanner;
+  const maxRounds = input.maxRounds ?? 12;
+  const maxPlans = input.maxPlans ?? 3;
+
+  const state = loadProjectState(input.workspaceRoot, input.projectId);
+  const isFirst = state.history.length === 0;
+  const files = input.readWorkspace();
+  const fileTree = Object.keys(files);
+  const { list: tools } = buildCoderTools({ workspaceRoot: input.workspaceRoot, business: input.business, projectId: input.projectId, mode: "edit" });
+
+  // C6 — memória do projeto (contexto auxiliar; código prevalece) + anexos.
+  let projectMemory = loadMemory(input.workspaceRoot, input.projectId);
+  const memoryBlock = memoryContextBlock(projectMemory);
+  const attachBlock = input.attachBlock ?? "";
+  const images = (input.attachments ?? [])
+    .filter((a) => /^image\//i.test(a.mediaType) && typeof a.dataUrl === "string" && a.dataUrl.startsWith("data:"))
+    .map((a) => ({ mime: a.mediaType, dataUrl: a.dataUrl }));
+
+  const userContent = isFirst
+    ? `${buildFirstMessage({ instruction: input.instruction, files, business: input.business })}${attachBlock}${memoryBlock}`
+    : [
+        input.memory?.length ? `Memória do projeto:\n${input.memory.slice(0, 10).map((m) => `- ${m}`).join("\n")}` : null,
+        input.conversation?.length ? `Conversa recente:\n${input.conversation.slice(-6).map((c) => `- ${c}`).join("\n")}` : null,
+        attachBlock,
+        memoryBlock,
+        `Pedido do usuário: ${input.instruction}`,
+      ].filter((x): x is string => !!x).join("\n\n");
+
+  let messages: ModelMessage[] = [
+    ...historyToMessages(state.history),
+    { role: "user", content: userContent, images: images.length ? images : undefined },
+  ];
+  const newHistory: StudioStateMessage[] = [{ role: "user", content: input.instruction, at: new Date().toISOString() }];
+
+  let lastSpeaker: LastSpeaker = null;
+  let lastSignal: AgentSignal | null = null;
+  let plansUsed = 0;
+  let plan: string | undefined = state.plan;
+  let reply = "";
+  let touched: string[] = [];
+  let iterations = 0;
+  let error: string | undefined;
+
+  input.emit({ type: "agent_interaction", agent_name: "Selector", message_type: "thought", content: isFirst ? "Primeira mensagem do projeto — Coder inicia." : "Retomando o projeto — Coder inicia.", timestamp: Date.now() });
+
+  for (let round = 0; round < maxRounds; round += 1) {
+    if (input.signal?.aborted) break;
+    const speaker = selectNext({ lastSpeaker, lastSignal, round, maxRounds, plansUsed, maxPlans });
+    if (speaker === "end") break;
+    iterations += 1;
+
+    if (speaker === "Planner") {
+      plansUsed += 1;
+      input.emit({ type: "agent_interaction", agent_name: "Selector", message_type: "thought", content: "Coder pediu planejamento → Planner.", timestamp: Date.now() });
+      const planned = await planner({
+        instruction: input.instruction,
+        fileTree: Object.keys(input.readWorkspace()),
+        priorPlan: plan,
+        coderFeedback: reply,
+        business: input.business,
+        memory: input.memory,
+        ai: input.ai,
+        emit: input.emit,
+      });
+      if (!planned.ok) {
+        // Sem plano → devolve o turno ao Coder para continuar direto.
+        messages = [...messages, { role: "assistant", content: "(Planner indisponível; continue sem plano.)" }];
+        lastSpeaker = "Planner";
+        lastSignal = null;
+        continue;
+      }
+      plan = planned.plan;
+      messages = [...messages, { role: "assistant", content: planned.plan }];
+      newHistory.push({ role: "planner", content: planned.plan, at: new Date().toISOString() });
+      lastSpeaker = "Planner";
+      lastSignal = null;
+      continue;
+    }
+
+    const coder = await runCoderTurn({
+      model,
+      system: CODER_SYSTEM,
+      messages,
+      tools,
+      ai: input.ai,
+      emit: input.emit,
+      onFilesChanged: input.onFilesChanged,
+      signal: input.signal,
+    });
+    if (coder.text) reply = coder.text;
+    touched = [...new Set([...touched, ...coder.touched])];
+    messages = [...messages, ...coder.produced];
+    const assistantText = coder.text || "(executando…)";
+    newHistory.push({ role: "assistant", content: assistantText, at: new Date().toISOString() });
+    lastSpeaker = "Coder";
+    lastSignal = coder.signal;
+
+    if (coder.error) { error = coder.error; break; }
+    if (!coder.signal) break; // sem sinal e sem ferramentas → considera final
+  }
+
+  saveProjectState(input.workspaceRoot, {
+    version: 1,
+    projectId: input.projectId,
+    history: [...state.history, ...newHistory],
+    plan,
+    iterations: state.iterations + iterations,
+    updatedAt: new Date().toISOString(),
+  });
+
+  // C6: registra preferências/instruções explícitas do usuário (determinístico).
+  for (const update of extractMemoryUpdates(input.instruction)) {
+    projectMemory = recordMemory(projectMemory, update.kind, update.text);
+  }
+  saveMemory(input.workspaceRoot, projectMemory);
+
+  if (!reply) reply = "Concluí a solicitação.";
+  return { ok: !error, reply, signal: lastSignal, iterations, touched, plan, error };
+}

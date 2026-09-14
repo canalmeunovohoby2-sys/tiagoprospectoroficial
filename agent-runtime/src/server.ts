@@ -7,7 +7,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { ProspectorSiteAgent, isSurgicalEditTask } from "./prospector-site-agent.js";
+import { ProspectorSiteAgent, isSurgicalEditTask, type AgentRunOutcome } from "./prospector-site-agent.js";
 import { BrowserSession } from "./browser-session.js";
 import { auditSiteInteractions } from "./interaction-audit.js";
 import { isBugReport } from "./completion-guard.js";
@@ -25,6 +25,13 @@ import { researchBusiness, formatResearch, type ResearchOutcome } from "./resear
 import { trimConversationWindow } from "./conversation-window.js";
 import { createArtifactStore } from "./artifact-store.js";
 import { serveProjectArtifact } from "./artifacts-api.js";
+import { runStudioOrchestration } from "./studio/orchestrator.js";
+import { runStudioTeam } from "./studio/team.js";
+import { applyDeterministicVisualEdit } from "./studio/visual-edit.js";
+import { ensureGitRepo, gitCommit, gitDiff, gitLog, gitRestore, gitShow, gitStatus } from "./studio/git.js";
+import { deriveCommitMessage } from "./studio/commit-message.js";
+import { buildReactProject } from "./studio/build.js";
+import { EDIT_TOOLS } from "./work-evidence.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -170,6 +177,28 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
   for await (const chunk of req) chunks.push(chunk as Buffer);
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
+}
+
+/** Texto de uma AgentMessage (partes `text` ou resultado de ferramenta). */
+function messageText(message: unknown): string {
+  const content = (message as { content?: unknown } | null)?.content;
+  const parts: unknown[] = Array.isArray(content) ? content : [];
+  const out: string[] = [];
+  for (const p of parts) {
+    const part = p as { type?: string; text?: string; content?: unknown };
+    if (part?.type === "text" && typeof part.text === "string") out.push(part.text);
+    else if (part?.type === "tool-result") {
+      if (typeof part.content === "string") out.push(part.content);
+      else if (Array.isArray(part.content)) {
+        for (const x of part.content as Array<{ text?: string }>) if (typeof x?.text === "string") out.push(x.text);
+      }
+    }
+  }
+  return out.join("\n").trim();
+}
+
+function truncateText(text: string, max = 4_000): string {
+  return text.length > max ? `${text.slice(0, max)}… (+${text.length - max} caracteres)` : text;
 }
 
 function pruneSessions(): void {
@@ -954,24 +983,145 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         const root = resolveWorkspaceRoot(projectId);
         const phases: string[] = [];
         const target = Number(body.target ?? 30) || 30;
-        const result = await generateSitePromoVideo({ workspaceRoot: root, projectId, target, onPhase: (ph) => phases.push(ph) });
-        if (!result.ok) {
-          send(res, 200, { status: "error", ok: false, error: result.reason ?? "falha ao gerar o vídeo.", reason: result.reason ?? null, checks: result.checks ?? [], issues: result.issues ?? [], phases });
+        // STREAMING + HEARTBEAT: a gravação+encode levam ~40-70s; sem bytes a
+        // conexão é morta pelo transporte e o navegador reporta "Failed to fetch".
+        // Envia NDJSON com ping (igual a /run e /generate) para manter viva.
+        res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
+        const vWrite = (obj: unknown) => { try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ } };
+        vWrite({ type: "start", kind: "video" });
+        const vHeartbeat = setInterval(() => { vWrite({ type: "ping" }); }, 12_000);
+        const vFinish = (payload: Record<string, unknown>) => { clearInterval(vHeartbeat); vWrite({ type: "result", ...payload }); try { res.end(); } catch { /* noop */ } };
+        try {
+          const result = await generateSitePromoVideo({ workspaceRoot: root, projectId, target, onPhase: (ph) => { phases.push(ph); vWrite({ type: "phase", phase: ph }); } });
+          if (!result.ok) {
+            vFinish({ status: "error", ok: false, error: result.reason ?? "falha ao gerar o vídeo.", reason: result.reason ?? null, checks: result.checks ?? [], issues: result.issues ?? [], phases });
+            return;
+          }
+          vFinish({
+            status: "ready",
+            ok: true,
+            duration: result.duration ?? null,
+            width: result.width ?? null,
+            height: result.height ?? null,
+            fileSize: result.fileSize ?? null,
+            codec: result.codec ?? "h264",
+            videoUrl: `/artifacts/branding/${projectId}/video/current.mp4`,
+            posterUrl: result.posterRelPath ? `/artifacts/branding/${projectId}/${result.posterRelPath}` : null,
+            checks: result.checks ?? [],
+            phases,
+          });
+        } catch (e) {
+          vFinish({ status: "error", ok: false, error: e instanceof Error ? e.message : "erro ao gerar o vídeo.", checks: [], issues: [], phases });
+        }
+        return;
+      }
+
+      if (url.pathname === "/git" && req.method === "POST") {
+        // Git REAL do workspace do projeto (Fase 6). Operações controladas e
+        // scoped: nunca shell livre, nunca fora do root, nunca segredos.
+        const body = await readJson(req);
+        const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
+        const identity = await resolveIdentity(req.headers.authorization, projectId || undefined);
+        if (!identity) { sendDenied(res, "Autenticação necessária para operações Git.", 401); return; }
+        if (identity.pid && identity.pid !== projectId) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
+        // C4: o novo Git UX é exclusivo de projetos React (static usa versões internas).
+        if (String(body.projectKind ?? "") !== "react") {
+          send(res, 400, { ok: false, error: "Git do Studio é exclusivo de project_kind=react." });
           return;
         }
-        send(res, 200, {
-          status: "ready",
-          ok: true,
-          duration: result.duration ?? null,
-          width: result.width ?? null,
-          height: result.height ?? null,
-          fileSize: result.fileSize ?? null,
-          codec: result.codec ?? "h264",
-          videoUrl: `/artifacts/branding/${projectId}/video/current.mp4`,
-          posterUrl: result.posterRelPath ? `/artifacts/branding/${projectId}/${result.posterRelPath}` : null,
-          checks: result.checks ?? [],
-          phases,
+        const action = String(body.action ?? "").trim();
+        const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
+        // Materializa o estado atual (preservando `.git`) antes de operar.
+        const root = ensureWorkspaceDir(projectId || "default", files);
+        try {
+          let payload: unknown;
+          if (action === "status" || action === "ensure") {
+            const ensured = await ensureGitRepo(root);
+            payload = ensured.ok ? { ...(await gitStatus(root)), created: ensured.created } : { ok: false, repo: true, clean: false, entries: [], error: ensured.error };
+          } else if (action === "log") {
+            const ensured = await ensureGitRepo(root);
+            payload = ensured.ok ? await gitLog(root, Number(body.limit) || 50) : { ok: false, repo: true, commits: [], error: ensured.error };
+          } else if (action === "diff") {
+            await ensureGitRepo(root);
+            payload = await gitDiff(root, { from: body.from as string | undefined, to: body.to as string | undefined, path: body.path as string | undefined });
+          } else if (action === "show") {
+            await ensureGitRepo(root);
+            payload = await gitShow(root, { hash: String(body.hash ?? ""), path: String(body.path ?? "") });
+          } else if (action === "commit") {
+            const provided = String(body.message ?? "").trim();
+            const wsFiles = Object.keys(readWorkspace(root));
+            const message = deriveCommitMessage({
+              files: wsFiles,
+              summary: provided || (typeof body.summary === "string" ? body.summary : undefined),
+              instruction: typeof body.instruction === "string" ? body.instruction : undefined,
+            });
+            payload = await gitCommit(root, message);
+          } else if (action === "restore") {
+            payload = await gitRestore(root, { hash: String(body.hash ?? ""), path: body.path as string | undefined, message: body.message as string | undefined });
+          } else {
+            payload = { ok: false, error: `ação git desconhecida: ${action || "(vazia)"}` };
+          }
+          send(res, 200, payload);
+        } catch (e) {
+          send(res, 500, { ok: false, error: e instanceof Error ? e.message : "erro no git" });
+        }
+        return;
+      }
+
+      if (url.pathname === "/build" && req.method === "POST") {
+        // Build de PRODUÇÃO real do projeto React (C5) — no workspace do runtime,
+        // com o script permitido pelo próprio package.json (nunca comando do cliente).
+        const body = await readJson(req);
+        const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
+        const identity = await resolveIdentity(req.headers.authorization, projectId || undefined);
+        if (!identity) { sendDenied(res, "Autenticação necessária para build.", 401); return; }
+        if (identity.pid && identity.pid !== projectId) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
+        if (String(body.projectKind ?? "") !== "react") {
+          send(res, 400, { ok: false, error: "build é exclusivo de project_kind=react." });
+          return;
+        }
+        const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
+        const root = ensureWorkspaceDir(projectId || "default", files);
+        try {
+          const result = await buildReactProject(root);
+          send(res, 200, {
+            ok: result.ok,
+            html: result.html ?? null,
+            error: result.error ?? null,
+            log: (result.log ?? "").slice(0, 20_000),
+          });
+        } catch (e) {
+          send(res, 500, { ok: false, error: e instanceof Error ? e.message : "erro no build" });
+        }
+        return;
+      }
+
+      if (url.pathname === "/visual-edit" && req.method === "POST") {
+        // Visual edit (C3) para projetos React: tenta a alteração DETERMINÍSTICA
+        // e segura; se não for inequívoca, devolve handoff para o Coder (C1).
+        const body = await readJson(req);
+        const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
+        const identity = await resolveIdentity(req.headers.authorization, projectId || undefined);
+        if (!identity) { sendDenied(res, "Autenticação necessária para edição visual.", 401); return; }
+        if (identity.pid && identity.pid !== projectId) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
+        if (String(body.projectKind ?? "") !== "react") {
+          send(res, 400, { ok: false, applied: false, error: "visual-edit é exclusivo de project_kind=react." });
+          return;
+        }
+        const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
+        const root = ensureWorkspaceDir(projectId || "default", files);
+        const outcome = applyDeterministicVisualEdit(root, {
+          file: typeof body.file === "string" ? body.file : undefined,
+          line: typeof body.line === "number" ? body.line : undefined,
+          selector: typeof body.selector === "string" ? body.selector : undefined,
+          tagName: typeof body.tagName === "string" ? body.tagName : undefined,
+          classes: Array.isArray(body.classes) ? (body.classes as string[]) : undefined,
+          text: typeof body.text === "string" ? body.text : undefined,
+          newText: typeof body.newText === "string" ? body.newText : undefined,
+          changes: Array.isArray(body.changes) ? (body.changes as Array<{ property: string; value: string }>) : undefined,
+          scope: typeof body.scope === "string" ? body.scope : undefined,
         });
+        send(res, 200, outcome);
         return;
       }
 
@@ -985,6 +1135,9 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           if (!instruction) { send(res, 400, { error: "instruction é obrigatória" }); return; }
           if (identity.pid && identity.pid !== projectId) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
           const stream = body.stream === true; // NDJSON ao vivo (5.34)
+          // Orquestração Router→(Planner)→Coder do Studio (Fase 2). O agente
+          // legado continua exatamente igual quando `orchestrate` não é enviado.
+          const orchestrate = body.orchestrate === true;
           const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
           const rExec = executionConfig(body);
           if (rExec.provider && !["deepseek", "openai", "nvidia", "openrouter", "gemini", "ollama"].includes(rExec.provider)) {
@@ -1034,6 +1187,73 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           });
           return;
         }
+        // ===== C1: projeto React → StudioTeam (Coder-first + Planner-only).
+        // NÃO usa o Router heurístico nem o ProspectorSiteAgent. O fluxo static
+        // segue exatamente igual logo abaixo. =====
+        if (String(body.projectKind ?? "") === "react") {
+          const root = ensureWorkspaceDir(projectId, files);
+          const writeLine = (obj: unknown) => { if (!stream) return; try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ } };
+          const emit = (obj: Record<string, unknown>) => writeLine(obj);
+          const emitFiles = () => { try { writeLine({ type: "files_ready", files: readWorkspace(root) }); } catch { /* noop */ } };
+          if (stream) {
+            res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
+            writeLine({ type: "start", runtime: "studio-team" });
+          }
+          try {
+            // C6: materializa anexos (imagem vira contexto visual real; PDF/arquivo
+            // fica como referência). Nunca embute data URL gigante no chat.
+            const attachResult = materializeAttachments(root, (body.attachments ?? []) as ChatAttachment[]);
+            const attachBlock = attachResult.attachments.length || attachResult.errors.length
+              ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nImagens estão no seu contexto visual; PDFs/binários são referência de arquivo (se não puder interpretar, diga isso — nunca invente).\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
+              : "";
+            const team = await runStudioTeam({
+              instruction,
+              projectId,
+              workspaceRoot: root,
+              business,
+              memory: mergedMemory,
+              conversation: recentConversation,
+              attachments: attachResult.attachments,
+              attachBlock,
+              ai: { providerId: exec.providerId, modelId: exec.modelId, apiKey: exec.apiKey, baseUrl: exec.baseUrl },
+              emit,
+              readWorkspace: () => readWorkspace(root),
+              onFilesChanged: () => { emitFiles(); writeLine({ type: "reload_preview", reason: "files_changed", timestamp: Date.now() }); },
+            });
+            const finalFiles = readWorkspace(root);
+            const payload = {
+              status: team.ok ? "ok" : "error",
+              reply: team.reply,
+              error: team.error,
+              errors: team.error ? [team.error] : undefined,
+              changed: team.touched.length > 0,
+              touched: team.touched,
+              files: finalFiles,
+              plan: team.plan ?? null,
+              iterations: team.iterations,
+              model: exec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
+              provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
+              config_source: exec.source,
+              runtime: "studio-team",
+              orchestrated: true,
+            };
+            if (stream) {
+              writeLine({ type: "files_ready", files: finalFiles });
+              writeLine({ type: "complete", ...payload, timestamp: Date.now() });
+              writeLine({ type: "result", ...payload });
+              res.end();
+            } else {
+              send(res, 200, payload);
+            }
+          } catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            const payload = { status: "error", error: message, errors: [message], changed: false, touched: [], files: readWorkspace(root), runtime: "studio-team" };
+            if (stream) { writeLine({ type: "error", message }); writeLine({ type: "result", ...payload }); res.end(); }
+            else send(res, 200, payload);
+          }
+          return;
+        }
+
         const providerChanged = !!(existing && existing.agent && existing.execKey !== exec.key);
         if (existing && existing.agent && !providerChanged) {
           agent = existing.agent;
@@ -1048,22 +1268,45 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           sessions.set(editKey(identity.uid, projectId, conversationId || undefined), { agent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
         }
 
+        // CANCELAMENTO: se o cliente desconectar no meio, aborta a execução em
+        // andamento em vez de continuar consumindo o provider sem ninguém ouvir.
+        let cancelled = false;
+        res.on("close", () => {
+          if (!res.writableEnded) {
+            cancelled = true;
+            agent.abort("client_disconnect");
+          }
+        });
+
         const events: string[] = [];
         const activity: Array<{ phase: string; detail: string }> = [];
         const writeLine = (obj: unknown) => {
           if (!stream) return;
           try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ }
         };
+        const emit: (obj: Record<string, unknown>) => void = (obj) => writeLine(obj);
+        // `files_ready` com os arquivos reais: no máximo 1x/1.2s durante a run;
+        // o evento final `complete` sempre carrega o estado definitivo.
+        let lastFilesReadyAt = 0;
+        const emitFilesReady = (force = false) => {
+          const t = Date.now();
+          if (!force && t - lastFilesReadyAt < 1_200) return;
+          lastFilesReadyAt = t;
+          try {
+            writeLine({ type: "files_ready", files: readWorkspace(resolveWorkspaceRoot(projectId)) });
+          } catch { /* noop */ }
+        };
         agent.subscribe((event) => {
           try {
             events.push((event as { type: string }).type);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const e = event as any;
+            const toolCall = e.toolCall ?? {};
+            const tool = String(e.toolName ?? toolCall.toolName ?? "");
+            const input = toolCall.input ?? {};
+            const path = typeof input?.path === "string" ? input.path : typeof input?.file === "string" ? input.file : "";
+            const toolCallId = String(toolCall.toolCallId ?? e.toolCallId ?? "");
             if (e.type === "tool-started") {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const input = e.toolCall?.input ?? {};
-              const path = typeof input?.path === "string" ? input.path : "";
-              const tool = e.toolCall?.toolName ?? "";
               if (tool === "read_file" || tool === "list_files" || tool === "get_site_context") {
                 activity.push({ phase: "analyzing", detail: path ? `Lendo ${path}` : "Analisando o projeto…" });
                 writeLine({ type: "activity", phase: "analyzing", detail: activity[activity.length - 1].detail });
@@ -1074,7 +1317,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 activity.push({ phase: "researching", detail: "Pesquisando na web…" });
                 writeLine({ type: "activity", phase: "researching", detail: activity[activity.length - 1].detail });
               } else if (tool === "visual_review") {
-                activity.push({ phase: "verifying", detail: "Análise visual (Gemini)" });
+                activity.push({ phase: "verifying", detail: "Análise visual" });
                 writeLine({ type: "activity", phase: "verifying", detail: activity[activity.length - 1].detail });
               } else if (tool === "browser_open" || tool === "browser_reload" || tool === "browser_inspect") {
                 activity.push({ phase: "verifying", detail: "Verificando o site no navegador" });
@@ -1083,9 +1326,28 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 activity.push({ phase: "done", detail: "Concluindo tarefa…" });
                 writeLine({ type: "activity", phase: "done", detail: activity[activity.length - 1].detail });
               }
+              // STUDIO (Fase 2): tool_call agrupável no ChatPanel (só no modo orquestrado).
+              if (orchestrate && tool) {
+                writeLine({ type: "agent_interaction", agent_name: "Coder", message_type: "tool_call", tool_name: tool, tool_arguments: input, tool_call_id: toolCallId, timestamp: Date.now() });
+              }
+            } else if (e.type === "tool-finished") {
+              // STUDIO (Fase 2): tool_response pareado por tool_call_id/índice.
+              if (orchestrate && tool) {
+                writeLine({ type: "agent_interaction", agent_name: "Coder", message_type: "tool_response", tool_name: tool, tool_call_id: toolCallId, content: truncateText(messageText(e.message)), timestamp: Date.now() });
+              }
+              if (orchestrate && EDIT_TOOLS.has(tool)) {
+                emitFilesReady();
+                writeLine({ type: "reload_preview", reason: tool, path, timestamp: Date.now() });
+              }
             } else if (e.type === "turn-started") {
               activity.push({ phase: "thinking", detail: "Analisando a alteração…" });
               writeLine({ type: "activity", phase: "thinking", detail: activity[activity.length - 1].detail });
+              if (orchestrate) writeLine({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "Analisando a alteração…", iteration: e.iteration, timestamp: Date.now() });
+            } else if (e.type === "assistant-message") {
+              const text = messageText(e.message);
+              if (orchestrate && text) writeLine({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: truncateText(text), iteration: e.iteration, timestamp: Date.now() });
+            } else if (e.type === "turn-finished") {
+              if (orchestrate) emitFilesReady(true);
             }
           } catch { /* noop */ }
         });
@@ -1113,7 +1375,38 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           writeLine({ type: "start", runtime: "cline", resumed_session: resume });
         }
 
-        const outcome = await agent.runTask(`${memoryBlock}${changesBlock}${conversationBlock}${attachBlock}${instruction}`, { continueSession: resume });
+        const contextPrefix = `${memoryBlock}${changesBlock}${conversationBlock}${attachBlock}`;
+        let outcome: AgentRunOutcome;
+        if (orchestrate) {
+          // Studio (Fase 2): Router → (Planner) → Coder. O Coder é o MESMO
+          // ProspectorSiteAgent (guardas preservados); o Planner é modelo sem tools.
+          const root = resolveWorkspaceRoot(projectId);
+          const orchestration = await runStudioOrchestration({
+            instruction,
+            mode: "edit",
+            contextPrefix,
+            filePaths: Object.keys(readWorkspace(root)),
+            business,
+            memory: mergedMemory,
+            recentChanges: persistedContext.changes.map((c) => c.summary).filter(Boolean),
+            ai: { providerId: exec.providerId, modelId: exec.modelId, apiKey: exec.apiKey, baseUrl: exec.baseUrl },
+            continueSession: resume,
+            runCoder: (prompt, opts) => agent.runTask(prompt, opts),
+            emit,
+            isCancelled: () => cancelled,
+          });
+          outcome = orchestration.outcome ?? {
+            ok: false,
+            reply: orchestration.cancelled ? "Execução cancelada antes de concluir." : "A execução não produziu resultado.",
+            files: readWorkspace(root),
+            touched: [],
+            iterations: 0,
+            events: [],
+            error: orchestration.cancelled ? "cancelado" : "sem resultado",
+          };
+        } else {
+          outcome = await agent.runTask(`${contextPrefix}${instruction}`, { continueSession: resume });
+        }
 
         // Persiste transcript da conversa (best-effort, não bloqueia resposta)
         if (conversationId && outcome.conversationMessages) {
@@ -1152,13 +1445,18 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         const changed = touched.length > 0 || interaction.cycles > 0;
 
         const payload = {
-          status: interactionBlocked ? "error" : (outcome.ok ? "ok" : "error"),
-          reply: interactionBlocked
-            ? `⚠ Não concluído: ${interaction.issues[0] ?? "alguns cliques deixam a tela preta"}. A auditoria automática de interação não passou mesmo após a correção. Continue pedindo o ajuste que eu tento de novo (o site NÃO foi entregue como corrigido).`
-            : outcome.reply,
-          error: interactionBlocked
-            ? "A auditoria de interação detectou tela preta/overlay ao clicar e a correção automática não resolveu. Entrega bloqueada até nova validação."
-            : outcome.error,
+          status: cancelled ? "error" : interactionBlocked ? "error" : (outcome.ok ? "ok" : "error"),
+          cancelled: cancelled || undefined,
+          reply: cancelled
+            ? "Execução cancelada antes de concluir."
+            : interactionBlocked
+              ? `⚠ Não concluído: ${interaction.issues[0] ?? "alguns cliques deixam a tela preta"}. A auditoria automática de interação não passou mesmo após a correção. Continue pedindo o ajuste que eu tento de novo (o site NÃO foi entregue como corrigido).`
+              : outcome.reply,
+          error: cancelled
+            ? "Execução cancelada pelo cliente."
+            : interactionBlocked
+              ? "A auditoria de interação detectou tela preta/overlay ao clicar e a correção automática não resolveu. Entrega bloqueada até nova validação."
+              : outcome.error,
           errors: interactionBlocked ? interaction.issues.slice(0, 5) : undefined,
           interaction_blocked: interactionBlocked || undefined,
           changed,
@@ -1170,6 +1468,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           config_warning: exec.warning ?? null,
           provider_changed: providerChanged,
           runtime: "cline",
+          orchestrated: orchestrate || undefined,
           attachments: attachResult.attachments,
           attach_errors: attachResult.errors,
           interaction,
@@ -1179,6 +1478,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           activity,
         };
         if (stream) {
+          // Evento terminal do Studio (Fase 2): fronteira explícita de conclusão,
+          // para o chat nunca associar a resposta a uma execução anterior. Só é
+          // emitido no modo orquestrado (legado continua recebendo apenas `result`).
+          if (orchestrate) writeLine({ type: "complete", ...payload, timestamp: Date.now() });
           writeLine({ type: "result", ...payload });
           res.end();
         } else {

@@ -13,7 +13,7 @@ import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsCh
 import { analyzeVisualEvidence } from "./visual-analysis.js";
 import { hasImageReferenceChange, requestsImageSwap, requestsFramingFix, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
-import { computeWorkEvidence, verificationToolsAfterLastEdit, type WorkEventLike } from "./work-evidence.js";
+import { computeWorkEvidence, verificationToolsAfterLastEdit, EDIT_TOOLS, INSPECT_TOOLS, VERIFY_TOOLS, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -62,6 +62,23 @@ Fluxo obrigatório para o bug reportado:
 3) Aplique a CORREÇÃO MÍNIMA que elimina a causa (prefira edit_file pontual).
 4) Reabra/recarregue (browser_reload) e REPRODUZA o mesmo passo de novo (browser_eval) para confirmar que o problema sumiu e nada mais quebrou (console limpo).
 5) Só finalize (finish_task) depois dessa confirmação real. Se o problema persistir, continue investigando — não pergunte ao usuário por código.`;
+
+const RECOVERY_HINT = `
+
+[RECUPERAÇÃO DE VERIFICAÇÃO — falha de ferramenta de verificação ≠ falha da alteração]
+Se uma ferramenta de VERIFICAÇÃO/INSPEÇÃO falhar (ex.: browser_reload retornar erro), NÃO conclua que a edição falhou e NÃO repita a mesma chamada. Confirme por método ALTERNATIVO: browser_open na URL local, browser_eval (computed styles/DOM), browser_screenshot ou visual_review. Depois de confirmar por outro caminho, finalize normalmente.`;
+
+const TEST_CONTENT_HINT = `
+
+[CONTEÚDO DE TESTE/MOCKUP — AUTORIZADO]
+O usuário pediu explicitamente conteúdo de TESTE/MOCKUP. Você ESTÁ autorizado a criar depoimentos, nomes, empresas e números FICTÍCIOS para preencher e demonstrar o layout. MARQUE esses itens como de teste (ex.: "Depoimento de teste", "(exemplo)") para não os apresentar como clientes reais, e não use dados de pessoas/empresas reais. Preserve o restante do site.`;
+
+/** O usuário autorizou conteúdo fictício (teste/mockup/protótipo/demonstração)? */
+export function isTestContentRequest(instruction: string): boolean {
+  const t = String(instruction ?? "");
+  if (!t) return false;
+  return /(teste|testar|testando|mockup|mocap|mock|prot[óo]tipo|fict[íi]ci|placeholder|dados?\s+de\s+exemplo|exemplo|rascunho|homologa|demonstra[çc][ãa]o|para\s+demonstrar|quero\s+ver\s+como\s+fica)/i.test(t);
+}
 
 export interface AgentRunTiming {
   totalMs: number;
@@ -207,6 +224,10 @@ export class ProspectorSiteAgent {
   /** Falha real de ferramenta nesta execução (tool-result com isError). */
   private toolFailure = false;
   private toolFailureDetail: string | null = null;
+  /** Falha de ferramenta de VERIFICAÇÃO/LEITURA (ex.: browser_reload). NÃO é
+   *  falha da alteração — pode ser recuperada por método alternativo. */
+  private verifyToolFailure = false;
+  private verifyToolFailureDetail: string | null = null;
   /** Pesquisas web REALMENTE executadas nesta missão (prova de não-simulação). */
   private researchTrace: ResearchTraceItem[] = [];
 
@@ -398,6 +419,15 @@ export class ProspectorSiteAgent {
     return this.agent.subscribe(listener);
   }
 
+  /** Aborta a execução em andamento (cancelamento explícito do cliente). */
+  abort(reason = "cancelled"): void {
+    try {
+      (this.agent as { abort?: (r?: unknown) => void }).abort?.(reason);
+    } catch {
+      /* noop */
+    }
+  }
+
   // Eventos operacionais legíveis (sem raciocínio interno) derivados de tool calls.
   // Mapeia a atividade real do agente para o front (fase + arquivo).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -466,6 +496,8 @@ export class ProspectorSiteAgent {
     // Falha de ferramenta é por EXECUÇÃO (não acumula entre runs).
     this.toolFailure = false;
     this.toolFailureDetail = null;
+    this.verifyToolFailure = false;
+    this.verifyToolFailureDetail = null;
     // RECUPERAÇÃO do Cline: se a sessão ficou presa numa run anterior (ex.: o
     // cliente desistiu após timeout e o engine continua "already running"),
     // abortamos a tarefa em voo ANTES de rodar — sem isso a próxima execução
@@ -498,10 +530,19 @@ export class ProspectorSiteAgent {
           const detection = toolResultReportsError(content);
           rec.ok = !detection.isError;
           if (detection.isError) {
-            this.toolFailure = true;
-            if (!this.toolFailureDetail) {
-              const toolName = ev.toolName ?? ev.toolCall?.toolName ?? rec.toolName ?? "ferramenta";
-              this.toolFailureDetail = `${toolName}${detection.message ? `: ${detection.message}` : ""}`;
+            const toolName = ev.toolName ?? ev.toolCall?.toolName ?? rec.toolName ?? "ferramenta";
+            const detail = `${toolName}${detection.message ? `: ${detection.message}` : ""}`;
+            // Ferramenta de VERIFICAÇÃO/INSPEÇÃO (ex.: browser_reload) que falha
+            // NÃO significa que a alteração falhou — pode ser confirmada por outro
+            // caminho (browser_open/browser_eval/screenshot). Só ferramentas de
+            // ALTERAÇÃO (write/edit/delete/rename/move) contam como falha real.
+            const readOnly = !EDIT_TOOLS.has(toolName) && (VERIFY_TOOLS.has(toolName) || INSPECT_TOOLS.has(toolName));
+            if (readOnly) {
+              this.verifyToolFailure = true;
+              if (!this.verifyToolFailureDetail) this.verifyToolFailureDetail = detail;
+            } else {
+              this.toolFailure = true;
+              if (!this.toolFailureDetail) this.toolFailureDetail = detail;
             }
           }
         }
@@ -544,6 +585,8 @@ export class ProspectorSiteAgent {
     } else {
       prompt = instruction;
     }
+    if (this.options.mode === "edit") prompt += `\n${RECOVERY_HINT}`;
+    if (isTestContentRequest(instruction)) prompt += `\n${TEST_CONTENT_HINT}`;
     try {
       // Estado "antes" real (para touched correto em continuações).
       const stateBefore = shouldContinue || this.conversationStarted ? readWorkspace(this.options.workspaceRoot) : this.beforeFiles;
@@ -572,6 +615,8 @@ export class ProspectorSiteAgent {
         finishTaskCalled: this.finishCalled,
         toolFailure: this.toolFailure,
         toolFailureDetail: this.toolFailureDetail,
+        verifyToolFailure: this.verifyToolFailure,
+        verifyToolFailureDetail: this.verifyToolFailureDetail,
         touched,
         editedPaths: workEvidence.editedPaths,
         verificationTools,

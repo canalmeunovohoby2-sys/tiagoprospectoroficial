@@ -1,22 +1,15 @@
 // Agent Project (5.12) — expõe o ciclo do "Autonomous Web Design Agent" para a UI
-// de forma enxuta e sem duplicar o fluxo existente:
+// de forma enxuta, sem duplicar o fluxo existente:
 // - ESTADOS DE PROGRESSO: fases reais (analisando/planejando/trabalhando/refinando/validando).
 // - MATERIALIZAÇÃO: transforma a spec em arquivos reais do projeto (workspace) p/ ZIP.
-// - FERRAMENTAS: runner puro (workspace) reutilizado pela UI em "modo técnico".
 //
-// A geração/edição por IA continua sendo feita pelas edge functions (generate-site /
-// edit-site, que já executam múltiplas passadas com QA). Esta camada apenas conecta
-// o ciclo autônomo à experiência, sem alterar o que já funciona.
+// C7: os helpers de "modo técnico" que importavam runners das Edge Functions
+// (`supabase/functions/_shared/agent-*`) foram REMOVIDOS — não tinham nenhum
+// consumidor e puxavam código de edge para o bundle do navegador. A geração/edição
+// por IA continua nas edge functions (generate-site / edit-site) para o Static.
 
 import { buildProjectFiles } from "./siteExportCore";
 import type { SiteSpec } from "@/data/siteProjects";
-import {
-  runWorkspaceTool, type AgentToolName, type AgentToolResult,
-} from "../../supabase/functions/_shared/agent-orchestrator";
-import {
-  normalizePath, writeFile as wsWrite, editFile as wsEdit,
-  type WorkspaceMap,
-} from "../../supabase/functions/_shared/agent-workspace";
 
 export type AgentPhaseLabel =
   | "idle" | "analyzing" | "planning" | "implementing" | "building"
@@ -65,32 +58,4 @@ export function materializeProjectFiles(spec: SiteSpec, externalAssets: string[]
   } catch {
     return {};
   }
-}
-
-export function workspaceOf(files: Record<string, string> | undefined): WorkspaceMap {
-  const out: WorkspaceMap = {};
-  for (const [p, c] of Object.entries(files ?? {})) {
-    const n = normalizePath(p);
-    if (n && typeof c === "string") out[n] = c;
-  }
-  return out;
-}
-
-// Ferramentas para "modo técnico"/debug na UI (delegam ao runner puro).
-export function agentTool(tool: AgentToolName, args: Record<string, unknown>, files: Record<string, string>): AgentToolResult {
-  return runWorkspaceTool(tool, args, workspaceOf(files));
-}
-
-export function agentWriteFile(files: Record<string, string>, path: string, content: string): { ok: boolean; files: Record<string, string>; message: string } {
-  const r = wsWrite(workspaceOf(files), path, content);
-  if (r.ok) return { ok: true, files: { ...r.files }, message: r.message ?? "ok" };
-  return { ok: false, files, message: r.error ?? "erro" };
-}
-
-export function agentEditFile(
-  files: Record<string, string>, path: string, find: string, replace: string,
-): { ok: boolean; files: Record<string, string>; message: string } {
-  const r = wsEdit(workspaceOf(files), path, { find, replace });
-  if (r.ok) return { ok: true, files: { ...r.files }, message: r.message ?? "ok" };
-  return { ok: false, files, message: r.error ?? "erro" };
 }

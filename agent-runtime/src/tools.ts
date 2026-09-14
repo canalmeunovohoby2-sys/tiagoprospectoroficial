@@ -15,6 +15,7 @@ import { createArtifactStore } from "./artifact-store.js";
 import { generateAndPersistBrandPdf, writeBrandPdfManifest, loadBrandMockups, loadBrandPdf, PDF_RESULT_REL, PDF_HISTORY_REL } from "./brand-pdf.js";
 import { generateAndPersistBrandPackage, writeBrandPackageManifest, PACKAGE_RESULT_REL, PACKAGE_HISTORY_REL } from "./brand-package.js";
 import { generateAndPersistSiteVideo, writeSiteVideoManifest, VIDEO_RESULT_REL, VIDEO_HISTORY_REL } from "./site-video.js";
+import { isSensitivePath } from "./workspace.js";
 
 export interface BusinessContext {
   name?: string | null;
@@ -101,8 +102,8 @@ function safeJoin(root: string, path: string): string | null {
   if (parts.some((s) => s === "..")) return null;
   const abs = resolve(root, ...parts);
   if (abs !== root && !abs.startsWith(root + sep)) return null;
-  // FASE 7 — bloqueia .env/credenciais em QUALQUER nível (não apenas na raiz).
-  if (parts.some((s) => /^\.env($|\.)/i.test(s))) return null;
+  // Bloqueia .env/credenciais em QUALQUER nível (mesma regra do workspace.ts).
+  if (isSensitivePath(parts.join("/"))) return null;
   return abs;
 }
 
@@ -114,6 +115,53 @@ function relOf(root: string, abs: string): string {
 // ferramentas de arquivo (devem ser sempre relativos ao workspace).
 function isAbsoluteInput(p: unknown): boolean {
   return /^(?:[A-Za-z]:[\\/]|[\\/])/.test(String(p ?? "").trim());
+}
+
+/** Coleta os arquivos REAIS do workspace (relativos, posix). Nunca sai do root. */
+function collectWorkspaceFiles(root: string, base?: string): string[] {
+  const start = base ? safeJoin(root, base) : root;
+  if (!start || !existsSync(start)) return [];
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    let entries: import("node:fs").Dirent[];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.name === "node_modules" || e.name === ".git") continue;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.isFile()) {
+        const rel = relative(root, full).split(sep).join("/");
+        if (rel.length <= 500 && !isSensitivePath(rel)) out.push(rel);
+      }
+    }
+  };
+  walk(start);
+  return out.sort();
+}
+
+/** Converte um glob simples (`*`, `**`, `?`) em RegExp ancorada no path posix. */
+function globToRegExp(pattern: string): RegExp {
+  const p = String(pattern ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+  let re = "";
+  for (let i = 0; i < p.length; i += 1) {
+    const ch = p[i];
+    if (ch === "*") {
+      if (p[i + 1] === "*") {
+        re += ".*";
+        i += 1;
+        if (p[i + 1] === "/") i += 1;
+      } else {
+        re += "[^/]*";
+      }
+    } else if (ch === "?") {
+      re += "[^/]";
+    } else if ("\\^$.|+()[]{}".includes(ch)) {
+      re += `\\${ch}`;
+    } else {
+      re += ch;
+    }
+  }
+  return new RegExp(`^${re}$`, "i");
 }
 
 export function buildSiteTools(env: ToolEnv) {
@@ -616,6 +664,128 @@ export function buildSiteTools(env: ToolEnv) {
     },
   });
 
+  // ── create_file / list_dir / glob_search / grep_search / file_search ──────
+  // FASE 3: contratos de filesystem da arquitetura-alvo. `create_file` é
+  // create-only (write_file sobrescreve); os demais são SOMENTE LEITURA e
+  // scoped ao workspace via safeJoin. Nada aqui sai do root do projeto.
+  const create = createTool({
+    name: "create_file",
+    description: "Cria um NOVO arquivo de texto no projeto (recusa se já existir — use write_file para sobrescrever). Cria os diretórios-pai automaticamente.",
+    inputSchema: z.object({
+      path: z.string().describe("caminho relativo, ex.: src/nova-secao.css"),
+      content: z.string().optional().describe("conteúdo inicial (default: vazio)"),
+    }),
+    async execute(input) {
+      if (isAbsoluteInput(input.path)) return JSON.stringify({ error: "caminho absoluto não permitido (use caminho relativo ao projeto)" });
+      const abs = safeJoin(root, input.path);
+      if (!abs) return JSON.stringify({ error: "caminho inválido (fora do workspace)" });
+      if (existsSync(abs)) return JSON.stringify({ error: `create_file: "${relOf(root, abs)}" já existe. Use write_file/edit_file para alterá-lo.` });
+      const content = typeof input.content === "string" ? input.content : "";
+      if (content.length > MAX_FILE) return JSON.stringify({ error: "conteúdo grande demais" });
+      if (countWorkspaceFiles(root) >= MAX_TOTAL_FILES) return JSON.stringify({ error: `limite de ${MAX_TOTAL_FILES} arquivos do workspace atingido.` });
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, content, "utf8");
+      return JSON.stringify({ ok: true, path: relOf(root, abs), created: true });
+    },
+  });
+
+  const listDir = createTool({
+    name: "list_dir",
+    description: "Lista o conteúdo IMEDIATO de um diretório do projeto (arquivos e subpastas), sem recursão. Use list_files para a árvore completa.",
+    inputSchema: z.object({ path: z.string().optional().describe("diretório relativo (default: raiz)") }),
+    async execute(input) {
+      const base = input.path ? safeJoin(root, input.path) : root;
+      if (!base || !existsSync(base)) return JSON.stringify({ error: "diretório não existe" });
+      let entries: import("node:fs").Dirent[];
+      try { entries = readdirSync(base, { withFileTypes: true }); } catch (e) { return JSON.stringify({ error: `falha ao listar: ${e instanceof Error ? e.message : String(e)}` }); }
+      const items = entries
+        .filter((e) => e.name !== "node_modules" && e.name !== ".git")
+        .map((e) => ({ name: e.name, type: e.isDirectory() ? "dir" : "file", path: relOf(root, join(base, e.name)) }))
+        .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === "dir" ? -1 : 1));
+      return JSON.stringify({ dir: relOf(root, base) || ".", entries: items });
+    },
+  });
+
+  const glob = createTool({
+    name: "glob_search",
+    description: "Busca arquivos por padrão glob simples (`*`, `**`, `?`) dentro do projeto. Ex.: `**/*.css`, `src/*.js`. Somente leitura.",
+    inputSchema: z.object({ pattern: z.string().describe("padrão glob, ex.: **/*.html"), path: z.string().optional().describe("subdiretório base (default: raiz)") }),
+    async execute(input) {
+      const base = input.path ? safeJoin(root, input.path) : root;
+      if (!base || !existsSync(base)) return JSON.stringify({ error: "diretório não existe" });
+      const all = collectWorkspaceFiles(root, input.path);
+      const re = globToRegExp(input.pattern);
+      const hasSlash = String(input.pattern ?? "").replace(/\\/g, "/").includes("/");
+      const matched = all.filter((p) => re.test(p) || (!hasSlash && re.test(p.split("/").pop() ?? "")));
+      return JSON.stringify({ pattern: input.pattern, count: matched.length, files: matched.slice(0, 100), truncated: matched.length > 100 });
+    },
+  });
+
+  const grep = createTool({
+    name: "grep_search",
+    description: "Busca texto/regex em arquivos de texto do projeto. Devolve arquivo + linha + trecho. Somente leitura.",
+    inputSchema: z.object({
+      pattern: z.string().describe("expressão regular (ex.: 'class=\"hero\"' ou 'color:\\s*#')"),
+      path: z.string().optional().describe("subdiretório base (default: raiz)"),
+      glob: z.string().optional().describe("filtra arquivos por glob, ex.: **/*.css"),
+      maxResults: z.number().int().positive().optional().describe("máximo de ocorrências (default 80, máx 300)"),
+    }),
+    async execute(input) {
+      let re: RegExp;
+      try { re = new RegExp(input.pattern, "i"); } catch { return JSON.stringify({ error: "grep_search: expressão regular inválida." }); }
+      const base = input.path ? safeJoin(root, input.path) : root;
+      if (!base || !existsSync(base)) return JSON.stringify({ error: "diretório não existe" });
+      const globRe = input.glob ? globToRegExp(input.glob) : null;
+      const limit = Math.min(Math.max(input.maxResults ?? 80, 1), 300);
+      const files = collectWorkspaceFiles(root, input.path);
+      const results: Array<{ path: string; line: number; text: string }> = [];
+      for (const rel of files) {
+        if (globRe && !globRe.test(rel)) continue;
+        const ext = (rel.split(".").pop() ?? "").toLowerCase();
+        if (!TEXT_EXT.has(ext)) continue;
+        const abs = safeJoin(root, rel);
+        if (!abs || !existsSync(abs)) continue;
+        let content = "";
+        try {
+          if (statSync(abs).size > MAX_FILE) continue;
+          content = readFileSync(abs, "utf8");
+        } catch { continue; }
+        const lines = content.split(/\r?\n/);
+        for (let i = 0; i < lines.length && results.length < limit; i += 1) {
+          if (re.test(lines[i])) results.push({ path: rel, line: i + 1, text: lines[i].slice(0, 300) });
+        }
+        if (results.length >= limit) break;
+      }
+      return JSON.stringify({ pattern: input.pattern, count: results.length, results, truncated: results.length >= limit });
+    },
+  });
+
+  const fileSearch = createTool({
+    name: "file_search",
+    description: "Encontra arquivos pelo NOME/caminho (busca textual, ranqueada). Útil quando você sabe parte do nome mas não a pasta. Somente leitura.",
+    inputSchema: z.object({ query: z.string().describe("parte do nome/caminho, ex.: 'hero' ou 'site.css'"), maxResults: z.number().int().positive().optional() }),
+    async execute(input) {
+      const q = String(input.query ?? "").trim().toLowerCase();
+      if (!q) return JSON.stringify({ error: "file_search: informe uma busca." });
+      const limit = Math.min(Math.max(input.maxResults ?? 50, 1), 200);
+      const score = (p: string): number => {
+        const base = (p.split("/").pop() ?? "").toLowerCase();
+        if (base === q) return 0;
+        if (base.startsWith(q)) return 1;
+        if (base.includes(q)) return 2;
+        if (p.toLowerCase().includes(q)) return 3;
+        return -1;
+      };
+      const ranked = collectWorkspaceFiles(root)
+        .map((p) => ({ p, s: score(p) }))
+        .filter((x) => x.s >= 0)
+        .sort((a, b) => (a.s === b.s ? a.p.localeCompare(b.p) : a.s - b.s))
+        .slice(0, limit)
+        .map((x) => x.p);
+      return JSON.stringify({ query: input.query, count: ranked.length, files: ranked });
+    },
+  });
+
   // EXECUTOR CONTROLADO (sem shell livre): só `npm install|ci|run <script-do-package.json>`.
   // cwd = workspace; ambiente SEM segredos; timeout; limite de saída; exit!=0 = falha.
   const runCmd = createTool({
@@ -700,7 +870,7 @@ export function buildSiteTools(env: ToolEnv) {
     },
   });
 
-  const tools = [list, read, write, edit, remove, rename, move, runCmd, context, imagePlan, branding, mockup, brand_pdf, brand_package, site_video];
+  const tools = [list, listDir, read, write, edit, create, remove, rename, move, glob, grep, fileSearch, runCmd, context, imagePlan, branding, mockup, brand_pdf, brand_package, site_video];
   // Geração de site: remove a toolset de identidade/deliverables para o agente
   // focar no site (e não criar uma identidade visual automaticamente).
   if (env.mode === "generate") {

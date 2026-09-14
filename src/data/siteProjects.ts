@@ -1,5 +1,21 @@
 export type SiteProjectStatus = "draft" | "generated" | "error";
 
+/**
+ * Tipo de projeto (C0): `static` = site HTML legado (preview srcDoc);
+ * `react` = projeto React/Vite/Tailwind com preview WebContainer.
+ * Persistido em `settings.kind` para NÃO exigir migração e NÃO converter
+ * projetos existentes (default `static`).
+ */
+export type SiteProjectKind = "static" | "react";
+
+export function projectKindOf(project: Pick<SiteProjectRow, "settings"> | null | undefined): SiteProjectKind {
+  const raw = project?.settings && typeof project.settings === "object"
+    ? (project.settings as Record<string, unknown>).kind
+    : undefined;
+  return raw === "react" ? "react" : "static";
+}
+
+
 export interface SiteProjectRow {
   id: string;
   user_id: string;
