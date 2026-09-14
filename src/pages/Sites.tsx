@@ -1,19 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  Plus, Loader2, Trash2, ArrowRight, Sparkles, Wand2, Palette, MessageSquareText,
+  Plus, Loader2, Sparkles, Wand2, Palette, MessageSquareText,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow } from "@/data/siteProjects";
-import { statusLabel } from "@/data/siteProjects";
-import { listSiteProjects, deleteSiteProject, createSiteProjectFromPrompt } from "@/lib/siteProjectsApi";
+import { listSiteProjects, deleteSiteProject, createSiteProjectFromPrompt, saveProjectThumbnail } from "@/lib/siteProjectsApi";
 import { createBrandingProject as createBrand } from "@/lib/brandingApi";
 import { PromptCreator } from "@/components/app/PromptCreator";
+import { StudioProjectCard } from "@/components/sites/StudioProjectCard";
+import { captureSiteThumbnail, hashProjectFiles, thumbnailSettings, thumbnailState } from "@/lib/siteThumbnails";
 
 const CREATE_EXAMPLE = 'Crie um site profissional para uma clínica de fisioterapia chamada Movimento Saúde, com aparência moderna, premium e responsiva.';
 
@@ -35,6 +35,68 @@ export default function Sites() {
   const [creating, setCreating] = useState(false);
   // Modo do Studio: gerar site (fluxo existente) OU criar prompt premium.
   const [mode, setMode] = useState<"generate" | "prompt">("generate");
+
+  // ── Galeria: thumbnails REAIS do site (primeira dobra) ─────────────────────
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [thumbBusy, setThumbBusy] = useState<Record<string, boolean>>({});
+  const projectsRef = useRef<SiteProjectRow[]>([]);
+  const queueRef = useRef<string[]>([]);
+  const queuedRef = useRef<Set<string>>(new Set());
+  const runningRef = useRef(false);
+  projectsRef.current = projects;
+
+  /** Arquivos reais do projeto (quando há um site de verdade). */
+  const codeOf = (p: SiteProjectRow): Record<string, string> | null => {
+    const code = p.generated_code && typeof p.generated_code === "object" ? (p.generated_code as Record<string, unknown>) : null;
+    if (!code) return null;
+    const files = Object.fromEntries(Object.entries(code).filter(([, v]) => typeof v === "string")) as Record<string, string>;
+    return Object.keys(files).some((k) => k.endsWith("index.html")) ? files : null;
+  };
+
+  const thumbInfo = useMemo(() => {
+    const map: Record<string, { files: Record<string, string> | null; state: ReturnType<typeof thumbnailState> }> = {};
+    for (const p of projects) {
+      const files = codeOf(p);
+      map[p.id] = { files, state: thumbnailState(p, files) };
+    }
+    return map;
+  }, [projects]);
+
+  // Fila SEQUENCIAL: uma captura por vez (nada de abrir vários navegadores juntos).
+  async function runThumbQueue() {
+    if (runningRef.current) return;
+    runningRef.current = true;
+    try {
+      while (queueRef.current.length > 0) {
+        const id = queueRef.current.shift()!;
+        queuedRef.current.delete(id);
+        const p = projectsRef.current.find((x) => x.id === id);
+        const files = p ? codeOf(p) : null;
+        if (!p || !files) continue;
+        const st = thumbnailSettings(p);
+        if (st.thumbnail && st.thumbnailSig && st.thumbnailSig === st.codeSig) continue; // já atualizado
+        const sig = hashProjectFiles(files);
+        setThumbBusy((b) => ({ ...b, [id]: true }));
+        const thumb = await captureSiteThumbnail(files);
+        setThumbBusy((b) => { const n = { ...b }; delete n[id]; return n; });
+        if (thumb) {
+          setThumbs((t) => ({ ...t, [id]: thumb }));
+          void saveProjectThumbnail(id, thumb, sig).catch(() => { /* best-effort */ });
+        }
+      }
+    } finally {
+      runningRef.current = false;
+    }
+  }
+
+  function enqueueThumb(id: string, force = false) {
+    if (queuedRef.current.has(id) && !force) return;
+    queuedRef.current.add(id);
+    queueRef.current.push(id);
+    void runThumbQueue();
+  }
+
+  const thumbOf = (p: SiteProjectRow) => thumbs[p.id] ?? thumbnailSettings(p).thumbnail ?? null;
 
   async function load() {
     if (!user) return;
@@ -168,36 +230,23 @@ export default function Sites() {
           </div>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {projects.map((p) => (
-            <Card key={p.id} className="p-5 space-y-3 hover:border-primary/40 transition-colors cursor-pointer" onClick={() => navigate(`/sites/${p.id}`)}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <h3 className="font-display font-semibold truncate">{p.name}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                    {p.company_name || "—"}
-                  </p>
-                </div>
-                <Badge variant="outline" className="shrink-0 text-[10px]">
-                  {statusLabel(p.status)}
-                </Badge>
-              </div>
-              {(p.segment || p.city) && (
-                <p className="text-xs text-muted-foreground">
-                  {[p.segment, p.city && p.state ? `${p.city}/${p.state}` : p.city].filter(Boolean).join(" · ")}
-                </p>
-              )}
-              {p.lead_id && <p className="text-[10px] text-muted-foreground/70">Lead vinculado · {p.lead_id.slice(0, 8)}</p>}
-              <div className="flex items-center gap-2 pt-1">
-                <Button size="sm" variant="outline" className="h-8 flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/sites/${p.id}`); }}>
-                  Abrir <ArrowRight className="h-3.5 w-3.5 ml-1" />
-                </Button>
-                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" title="Excluir projeto" onClick={(e) => { e.stopPropagation(); handleDelete(p); }}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            </Card>
-          ))}
+        <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {projects.map((p) => {
+            const info = thumbInfo[p.id];
+            return (
+              <StudioProjectCard
+                key={p.id}
+                project={p}
+                thumbnail={thumbOf(p)}
+                busy={!!thumbBusy[p.id]}
+                unavailable={!info?.files || info?.state === "unavailable"}
+                onOpen={() => navigate(`/sites/${p.id}`)}
+                onDelete={() => handleDelete(p)}
+                onGenerate={() => enqueueThumb(p.id, true)}
+                onVisible={() => { if (info?.files && info.state !== "unavailable") enqueueThumb(p.id); }}
+              />
+            );
+          })}
         </div>
       ))}
 

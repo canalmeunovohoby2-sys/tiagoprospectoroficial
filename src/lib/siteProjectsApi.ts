@@ -208,12 +208,44 @@ export async function markReactKickoffDone(projectId: string): Promise<void> {
 }
 
 // Persiste SOMENTE o código (projetos React sem spec) mantendo versionamento/Git.
+// Também registra a ASSINATURA do código (settings.codeSig), que os cards do
+// Studio usam para saber se o thumbnail ficou desatualizado.
 export async function updateGeneratedCode(projectId: string, files: Record<string, string>): Promise<void> {
   const { error } = await supabase
     .from("site_projects")
     .update({ generated_code: files as unknown as Json })
     .eq("id", projectId);
   if (error) throw new Error(error.message);
+  await markProjectCodeSig(projectId, hashGeneratedCode(files));
+}
+
+/** Assinatura leve do código (ordem-independente) para invalidar thumbnails. */
+export function hashGeneratedCode(files: Record<string, string> | null | undefined): string {
+  if (!files) return "";
+  const entries = Object.entries(files).filter(([, v]) => typeof v === "string").map(([p, v]) => `${p}:${v.length}`).sort();
+  let h = 2166136261;
+  for (const e of entries) for (let i = 0; i < e.length; i++) { h ^= e.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return `${entries.length}-${h.toString(36)}`;
+}
+
+async function mergeProjectSettings(projectId: string, patch: Record<string, unknown>): Promise<void> {
+  const { data } = await supabase.from("site_projects").select("settings").eq("id", projectId).maybeSingle();
+  const current = data?.settings && typeof data.settings === "object" && !Array.isArray(data.settings)
+    ? (data.settings as Record<string, unknown>)
+    : {};
+  const { error } = await supabase.from("site_projects").update({ settings: { ...current, ...patch } as unknown as Json }).eq("id", projectId);
+  if (error) throw new Error(error.message);
+}
+
+/** Registra a assinatura do código atual (chamado ao persistir arquivos). */
+export async function markProjectCodeSig(projectId: string, codeSig: string): Promise<void> {
+  if (!codeSig) return;
+  try { await mergeProjectSettings(projectId, { codeSig }); } catch { /* best-effort */ }
+}
+
+/** Salva o thumbnail REAL do site + a assinatura que ele representa. */
+export async function saveProjectThumbnail(projectId: string, thumbnail: string, sig: string): Promise<void> {
+  await mergeProjectSettings(projectId, { thumbnail, thumbnailSig: sig });
 }
 
 export async function saveGeneratedSite(
