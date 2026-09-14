@@ -28,7 +28,7 @@ describe("Fluxo único de criação — React Studio", () => {
     const start = api.indexOf("export async function openOrCreateSiteProject");
     const end = api.indexOf("export async function createSiteProjectFromPrompt");
     const fn = api.slice(start, end);
-    expect(fn).toContain('settings: { kind: "react" }');
+    expect(fn).toMatch(/settings:\s*\{\s*kind:\s*"react"/);
     expect(fn).toContain("buildReactTemplateFiles");
     expect(fn).toContain('status: "generated"');
     // Não aciona o gerador legado (Cline/ProspectorSiteAgent).

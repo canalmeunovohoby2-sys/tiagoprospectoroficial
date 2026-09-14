@@ -106,6 +106,16 @@ describe("C0 · webcontainer (serviço)", () => {
     expect(fake.bootSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("isola por projectId: trocar de projeto recria o container (nunca reusa o anterior)", async () => {
+    const fake = makeFake();
+    const service = createWebContainerService({ boot: fake.bootSpy }, { skipInstall: true, serverTimeoutMs: 2000 });
+    await service.load({ "index.html": "<div>A</div>" }, undefined, "proj-A");
+    expect(service.getProjectId()).toBe("proj-A");
+    await service.load({ "index.html": "<div>B</div>" }, undefined, "proj-B");
+    expect(service.getProjectId()).toBe("proj-B");
+    expect(fake.bootSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("rejeita quando o dev server não fica pronto (timeout)", async () => {
     const fake = makeFake({ neverReady: true });
     const service = createWebContainerService({ boot: fake.bootSpy }, { skipInstall: true, serverTimeoutMs: 50 });

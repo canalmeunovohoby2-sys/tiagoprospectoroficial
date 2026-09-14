@@ -55,11 +55,13 @@ export type ServiceLog = (message: string) => void;
 export interface WebContainerService {
   ensureBooted(onLog?: ServiceLog): Promise<WCInstance>;
   /** Boot + mount + install (1x) + dev server. Idempotente e à prova de corrida. */
-  load(files: Record<string, string>, onLog?: ServiceLog): Promise<string>;
+  load(files: Record<string, string>, onLog?: ServiceLog, projectId?: string): Promise<string>;
   /** Sincroniza um snapshot por diff (add/update/remove) — HMR cuida do resto. */
   syncFiles(files: Record<string, string>, onLog?: ServiceLog): Promise<{ updated: number; removed: number }>;
   isReady(): boolean;
   getUrl(): string | null;
+  /** projectId do projeto atualmente montado (isolamento entre projetos). */
+  getProjectId(): string | null;
   getInstance(): WCInstance | null;
   teardown(): Promise<void>;
 }
@@ -108,6 +110,7 @@ export function createWebContainerService(
   let instance: WCInstance | null = null;
   let bootPromise: Promise<WCInstance> | null = null;
   let loadPromise: Promise<string> | null = null;
+  let mountedProjectId: string | null = null;
   let devUrl: string | null = null;
   let depsInstalled = false;
   let devProcess: WCProcess | null = null;
@@ -173,8 +176,14 @@ export function createWebContainerService(
     return ready;
   }
 
-  async function load(files: Record<string, string>, onLog?: ServiceLog): Promise<string> {
+  async function load(files: Record<string, string>, onLog?: ServiceLog, projectId?: string): Promise<string> {
+    const pid = String(projectId ?? mountedProjectId ?? "default");
+    // ISOLAMENTO: um projeto diferente NUNCA reutiliza a instância anterior.
+    if (loadPromise && mountedProjectId !== pid) {
+      await teardown();
+    }
     if (loadPromise) return loadPromise;
+    mountedProjectId = pid;
     loadPromise = (async () => {
       try {
         const container = await ensureBooted(onLog);
@@ -223,6 +232,7 @@ export function createWebContainerService(
     devUrl = null;
     depsInstalled = false;
     cache.clear();
+    mountedProjectId = null;
     const current = instance;
     instance = null;
     bootPromise = null;
@@ -236,6 +246,7 @@ export function createWebContainerService(
     syncFiles,
     isReady: () => !!devUrl,
     getUrl: () => devUrl,
+    getProjectId: () => mountedProjectId,
     getInstance: () => instance,
     teardown,
   };

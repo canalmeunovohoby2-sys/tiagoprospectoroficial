@@ -131,7 +131,7 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
       city: briefingMap.city ? String(briefingMap.city) : null,
       state: briefingMap.state ? String(briefingMap.state) : null,
       status: "generated",
-      settings: { kind: "react" } as unknown as Json,
+      settings: { kind: "react", kickoff: "pending" } as unknown as Json,
       generated_code: template as unknown as Json,
       briefing,
     })
@@ -169,7 +169,7 @@ export async function createSiteProjectFromPrompt(userId: string, prompt: string
     briefing,
     ...(isReact
       ? {
-          settings: { kind: "react" } as unknown as Json,
+          settings: { kind: "react", kickoff: "pending" } as unknown as Json,
           generated_code: buildReactTemplateFiles({ name, tagline: cleaned }) as unknown as Json,
         }
       : {}),
@@ -186,6 +186,17 @@ export async function createSiteProjectFromPrompt(userId: string, prompt: string
 // Cria um projeto React (nova experiência/WebContainer) — atalho de C0.
 export async function createReactSiteProject(userId: string, prompt: string): Promise<string> {
   return createSiteProjectFromPrompt(userId, prompt, "react");
+}
+
+// Marca que a PRIMEIRA geração (kickoff do StudioTeam) já foi disparada para o
+// projeto — evita reexecução automática em reload/navegação. Nunca roda o
+// gerador legado.
+export async function markReactKickoffDone(projectId: string): Promise<void> {
+  const { error } = await supabase
+    .from("site_projects")
+    .update({ settings: { kind: "react", kickoff: "done" } as unknown as Json })
+    .eq("id", projectId);
+  if (error) throw new Error(error.message);
 }
 
 // Persiste SOMENTE o código (projetos React sem spec) mantendo versionamento/Git.

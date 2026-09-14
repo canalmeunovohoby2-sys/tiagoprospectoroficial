@@ -7,12 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow, SiteSpec } from "@/data/siteProjects";
-import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf } from "@/data/siteProjects";
+import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf, projectKickoffPending } from "@/data/siteProjects";
 import {
   fetchSiteProject, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject, publishReactSite,
   createSiteVersion, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
-  captureWorkspaceScreenshots, generateSiteVideo, fetchRuntimeArtifact, updateGeneratedCode,} from "@/lib/siteProjectsApi";
+  captureWorkspaceScreenshots, generateSiteVideo, fetchRuntimeArtifact, updateGeneratedCode, markReactKickoffDone,} from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
 import { SiteVersionsDialog } from "@/components/sites/editor/SiteVersionsDialog";
@@ -162,6 +162,40 @@ export default function SiteProjectPage() {
     })();
     return () => { cancelled = true; };
   }, [project?.lead_id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+// Primeira geração de um projeto React: instrução com os dados REAIS do cliente
+// (o template inicial NÃO é o site final). Roda pelo mesmo /run → StudioTeam.
+function buildReactKickoffInstruction(project: {
+  name: string; company_name?: string | null; segment?: string | null;
+  city?: string | null; state?: string | null; briefing?: unknown;
+}): string {
+  const b = (project.briefing && typeof project.briefing === "object" ? project.briefing : {}) as Record<string, unknown>;
+  const str = (...keys: string[]): string | null => {
+    for (const k of keys) { const v = b[k]; if (typeof v === "string" && v.trim()) return v.trim(); }
+    return null;
+  };
+  const contact = str("phone", "telefone", "whatsapp");
+  const address = str("address", "endereco", "endereço");
+  const about = str("about", "sobre", "description");
+  const userPrompt = typeof b.user_prompt === "string" ? b.user_prompt.trim() : "";
+  const services = Array.isArray(b.services) ? (b.services as unknown[]).filter((x) => typeof x === "string").slice(0, 12).join(", ") : "";
+  const facts = [
+    `Empresa: ${project.company_name || project.name}`,
+    project.segment ? `Segmento: ${project.segment}` : null,
+    project.city ? `Cidade: ${project.city}${project.state ? `/${project.state}` : ""}` : null,
+    contact ? `Contato: ${contact}` : null,
+    address ? `Endereço: ${address}` : null,
+    about ? `Sobre: ${about}` : null,
+    services ? `Serviços: ${services}` : null,
+  ].filter(Boolean).join("\n");
+  return [
+    "Gere AGORA o site profissional COMPLETO deste cliente, substituindo o template inicial. Use SOMENTE os dados reais abaixo — NÃO invente telefone, endereço, serviços ou fatos comerciais.",
+    userPrompt ? `Pedido original: ${userPrompt}` : "",
+    facts,
+    "Entregue seções reais e responsivas (cabeçalho/navegação, hero, serviços, sobre, depoimentos, contato e rodapé) em React + Tailwind, com componentes funcionais.",
+    "Use write_file/edit_file para alterar os arquivos reais do projeto e só finalize quando o site do cliente estiver aplicado.",
+  ].filter(Boolean).join("\n\n");
+}
 
   // Avança por fases reais do ciclo do agente enquanto a IA trabalha.
   function runAgentProgress(steps: AgentProgress[], intervalMs = 1600) {
@@ -1110,6 +1144,29 @@ export default function SiteProjectPage() {
 
   // Stream do Studio (Fase 2): Router/Planner/Coder + thoughts + tools agrupados.
   const studioChat = useStudioChat();
+
+  // KICKOFF: novo projeto React (bootstrap) dispara a PRIMEIRA geração real pelo
+  // /run → StudioTeam, com os dados do cliente. Nunca cai em spec/HTML legado.
+  // Uma vez por projectId (guard por ref + flag persistida `kickoff`).
+  const kickoffStartedRef = useRef<string | null>(null);
+  const kickoffPending = projectKickoffPending(project);
+  useEffect(() => {
+    if (!project || !isReactProject || !kickoffPending) return;
+    if (!draftFiles || Object.keys(draftFiles).length === 0) return;
+    if (generating || aiRunning) return;
+    if (kickoffStartedRef.current === project.id) return;
+    kickoffStartedRef.current = project.id;
+    const instruction = buildReactKickoffInstruction(project);
+    void runAiInstruction(instruction).then(async () => {
+      try {
+        await markReactKickoffDone(project.id);
+        setProject((p) => (p ? { ...p, settings: { ...(p.settings ?? {}), kind: "react", kickoff: "done" } } : p));
+      } catch {
+        /* mantém pendente para o usuário tentar de novo manualmente */
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id, kickoffPending, isReactProject, draftFiles, generating, aiRunning]);
 
   function handleStudioEvent(event: StudioStreamEvent) {
     studioChat.handleEvent(event);

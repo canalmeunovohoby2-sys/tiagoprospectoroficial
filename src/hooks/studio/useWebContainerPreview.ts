@@ -33,7 +33,8 @@ export function useWebContainerPreview(input: {
 
   const supported = useMemo(() => (enabled ? isCrossOriginIsolated() : true), [enabled]);
   const [phase, setPhase] = useState<WebContainerPhase>(enabled && !supported ? "unsupported" : "booting");
-  const [url, setUrl] = useState<string | null>(service.getUrl());
+  // Não herda a URL de um projeto anterior (isolamento entre projetos).
+  const [url, setUrl] = useState<string | null>(() => (service.getProjectId() === (projectId ?? null) ? service.getUrl() : null));
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -62,7 +63,7 @@ export function useWebContainerPreview(input: {
         lastSyncedRef.current = null;
         await service.teardown();
       }
-      return service.load(filesRef.current, pushLog);
+      return service.load(filesRef.current, pushLog, projectId);
     })()
       .then((devUrl) => {
         if (cancelled) return;

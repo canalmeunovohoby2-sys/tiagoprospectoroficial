@@ -15,6 +15,17 @@ export function projectKindOf(project: Pick<SiteProjectRow, "settings"> | null |
   return raw === "react" ? "react" : "static";
 }
 
+/**
+ * Projeto React recém-criado (bootstrap) ainda NÃO passou pela primeira geração
+ * real do StudioTeam. O template inicial não é o site final.
+ */
+export function projectKickoffPending(project: Pick<SiteProjectRow, "settings"> | null | undefined): boolean {
+  const s = project?.settings && typeof project.settings === "object"
+    ? (project.settings as Record<string, unknown>)
+    : null;
+  return !!s && s.kind === "react" && s.kickoff === "pending";
+}
+
 
 export interface SiteProjectRow {
   id: string;
