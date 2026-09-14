@@ -18,7 +18,7 @@ import { loadProjectState, saveProjectState, type StudioStateMessage } from "./a
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
 import { mediaContextBlock } from "./agent-core/site-media.js";
 import { buildDesignDirection, hasArtDirection, ART_DIRECTION_MARKER } from "./agent-core/design-direction.js";
-import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, colorNotAppliedNudge } from "./agent-core/edit-scope.js";
+import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, colorNotAppliedNudge, uninspectedEdits, UNINSPECTED_NUDGE } from "./agent-core/edit-scope.js";
 
 export interface StudioAttachment {
   name: string;
@@ -214,6 +214,10 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   let bootstrapNudges = 0;
   let sweepNudges = 0;
   let colorNudges = 0;
+  let inspectNudges = 0;
+  // Arquivos que JÁ existiam antes desta execução (edição de projeto existente).
+  // Alterar um arquivo existente sem lê-lo é a causa nº1 de alteração parcial.
+  const existingBefore = isFirst ? new Set<string>() : new Set(Object.keys(input.readWorkspace()));
   // EDIÇÃO GLOBAL de cor: guarda a PALETA ANTERIOR para provar (no fim) se a
   // identidade antiga continuou no código (evidência, não achismo).
   const globalVisualEdit = !isFirst && isGlobalVisualEdit(input.instruction ?? "");
@@ -302,6 +306,22 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
       continue;
     }
 
+    // INSPEÇÃO OBRIGATÓRIA (edição): o Coder alterou arquivo EXISTENTE sem tê-lo
+    // lido nesta execução? Cobramos a leitura do código REAL antes de concluir —
+    // evita "executar rápido" sem inspecionar e entregar alteração pela metade.
+    if (!isFirst && finishing && !coder.error && inspectNudges < 1 && round < maxRounds - 1) {
+      const readPaths = coder.toolUses.filter((u) => u.name === "read_file" && u.ok && u.path).map((u) => u.path as string);
+      const missing = uninspectedEdits(existingBefore, [...touched], readPaths);
+      if (missing.length > 0) {
+        inspectNudges += 1;
+        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "Vou inspecionar os arquivos reais (read_file/grep) antes de concluir a alteração.", timestamp: Date.now() });
+        messages = [...messages, { role: "user", content: UNINSPECTED_NUDGE(missing) }];
+        lastSpeaker = "Coder";
+        lastSignal = null;
+        continue;
+      }
+    }
+
     // EDIÇÃO GLOBAL: se o pedido é uma mudança de identidade visual e o Coder NÃO
     // varreu o projeto (nem buscou, nem tocou vários arquivos/tokens), cobramos a
     // aplicação completa — evita deixar metade do site com a identidade antiga.
@@ -318,14 +338,19 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
       continue;
     }
 
-    // COR PEDIDA NÃO APLICADA: o usuário nomeou uma cor e o código AINDA usa a
-    // paleta anterior → cobramos com a evidência exata (bounded, 1 vez).
-    if (globalEdit && paletteTarget && finishing && !coder.error && colorNudges < 1 && round < maxRounds - 1) {
+    // COR/IDENTIDADE NÃO APLICADA: o código AINDA usa a paleta anterior → cobramos
+    // com a evidência exata (bounded, 1 vez). Vale com cor nomeada ("para vermelho")
+    // e sem nome ("deixe mais escuro") — nos dois casos a identidade precisa mudar.
+    const wantsColorChange = globalEdit && mentionsColorChange(input.instruction ?? "");
+    if (wantsColorChange && finishing && !coder.error && colorNudges < 1 && round < maxRounds - 1) {
       const after = colorTokens(input.readWorkspace());
-      if (!targetApplied(after, paletteTarget) && paletteStillOld(paletteBefore, after)) {
+      const notApplied = paletteTarget
+        ? (!targetApplied(after, paletteTarget) && paletteStillOld(paletteBefore, after))
+        : paletteUnchanged(paletteBefore, after);
+      if (notApplied) {
         colorNudges += 1;
         const kept = [...paletteBefore].filter((t) => after.has(t));
-        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "A cor pedida ainda não está aplicada em todo o site — vou corrigir as sobras da identidade antiga.", timestamp: Date.now() });
+        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "A identidade visual pedida ainda não está aplicada no site inteiro — vou corrigir as sobras da paleta antiga.", timestamp: Date.now() });
         messages = [...messages, { role: "user", content: colorNotAppliedNudge(kept) }];
         lastSpeaker = "Coder";
         lastSignal = null;

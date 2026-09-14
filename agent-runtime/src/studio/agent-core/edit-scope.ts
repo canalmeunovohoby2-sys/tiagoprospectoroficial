@@ -90,12 +90,49 @@ export function paletteStillOld(before: Set<string>, after: Set<string>): boolea
   return kept / before.size >= 0.6;
 }
 
+/** O pedido fala de cor/tema/identidade (mesmo sem nomear uma cor exata)? */
+export function mentionsColorChange(instruction: string): boolean {
+  return /(\bcor(es)?\b|paleta|tema|identidade visual|design system|\bescuro\b|\bdark\b|\bclaro\b|\blight\b|gradiente|neon|dourad|met[aá]lic)/i.test(String(instruction ?? ""));
+}
+
+/** A paleta NÃO mudou: nada saiu, nada novo entrou (a identidade segue idêntica). */
+export function paletteUnchanged(before: Set<string>, after: Set<string>): boolean {
+  if (before.size === 0) return false;
+  let kept = 0;
+  for (const t of before) if (after.has(t)) kept += 1;
+  if (kept / before.size < 0.9) return false;
+  for (const t of after) if (!before.has(t)) return false;
+  return true;
+}
+
 /** Nudge com EVIDÊNCIA de que a identidade antiga permaneceu no código. */
-export function colorNotAppliedNudge(kept: string[]): string {
-  return [
+export function colorNotAppliedNudge(kept: string[]): string {  return [
     "Você NÃO aplicou a mudança de cor pedida em todo o site — a identidade ANTERIOR ainda está no código.",
     kept.length ? `Cores antigas que continuam presentes: ${kept.slice(0, 12).join(", ")}.` : "",
     "Faça agora: aplique a NOVA cor no design system/tokens e substitua TODAS as ocorrências antigas (classes Tailwind, hex, gradientes, bg-/text-/border-/ring-, hover:/focus:, botões, links, cards, header, hero, footer, overlays).",
     "Use grep_search para não deixar nenhuma sobra e só conclua quando o site inteiro usar a nova identidade.",
   ].filter(Boolean).join("\n");
+}
+
+// ── Inspeção obrigatória antes de editar (edição NÃO é "tiro no escuro") ──
+
+/**
+ * Arquivos EXISTENTES que o Coder alterou SEM ter lido nesta execução.
+ * Editar um arquivo existente sem inspecioná-lo é o principal motivo de
+ * alteração parcial/errada. Arquivos NOVOS não entram (não havia o que ler).
+ */
+export function uninspectedEdits(existing: Set<string>, touched: string[], readPaths: string[]): string[] {
+  const read = new Set(readPaths);
+  return touched.filter((p) => existing.has(p) && !read.has(p));
+}
+
+/** Nudge (PT-BR) exigindo INSPECIONAR antes de concluir a edição. */
+export function UNINSPECTED_NUDGE(files: string[]): string {
+  return [
+    "Você alterou arquivos EXISTENTES sem tê-los inspecionado nesta execução:",
+    ...files.map((f) => `- ${f}`),
+    "Antes de concluir: use read_file nesses arquivos e grep_search para localizar TODAS as ocorrências relacionadas ao pedido;",
+    "confirme no código REAL o que já mudou e o que ficou para trás e complete a alteração ponta a ponta (sem sobras).",
+    "Só finalize quando o resultado refletir exatamente o que o usuário pediu.",
+  ].join("\n");
 }

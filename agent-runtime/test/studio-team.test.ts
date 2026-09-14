@@ -47,6 +47,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
   let skillsRoot = "";
   let editRoot = "";
   let colorRoot = "";
+  let inspectRoot = "";
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "prospector-team-"));
     rootA = mkdtempSync(join(tmpdir(), "prospector-team-a-"));
@@ -58,6 +59,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     skillsRoot = mkdtempSync(join(tmpdir(), "prospector-skills-"));
     editRoot = mkdtempSync(join(tmpdir(), "prospector-edit-"));
     colorRoot = mkdtempSync(join(tmpdir(), "prospector-color-"));
+    inspectRoot = mkdtempSync(join(tmpdir(), "prospector-inspect-"));
     materializeWorkspace(root, TEMPLATE);
     materializeWorkspace(rootA, TEMPLATE);
     materializeWorkspace(rootB, TEMPLATE);
@@ -68,9 +70,10 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     materializeWorkspace(skillsRoot, BOOTSTRAP);
     materializeWorkspace(editRoot, BOOTSTRAP);
     materializeWorkspace(colorRoot, BOOTSTRAP);
+    materializeWorkspace(inspectRoot, BOOTSTRAP);
   });
   afterAll(() => {
-    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2, skillsRoot, editRoot, colorRoot]) {
+    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2, skillsRoot, editRoot, colorRoot, inspectRoot]) {
       rmSync(r, { recursive: true, force: true });
       try { rmSync(stateFilePath(r), { force: true }); } catch { /* noop */ }
     }
@@ -338,5 +341,52 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     });
     expect(captured.some((c) => c.includes("Sua alteração parece LOCAL"))).toBe(true);
     expect(captured.some((c) => c.includes("NÃO aplicou a mudança de cor"))).toBe(true);
+  });
+
+  it("INSPEÇÃO: editar arquivo EXISTENTE sem lê-lo recebe nudge; lendo antes, não", async () => {
+    const app = "// ART-DIRECTION: x\nexport default function App(){return <main>ok</main>}";
+    const gen: ModelCaller = async () => ({ ok: true, turn: { text: "ok", toolCalls: [writeCall("src/App.tsx", app)] } });
+    await runStudioTeam({
+      instruction: "crie o site", projectId: "inspect-1", workspaceRoot: inspectRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(inspectRoot), model: gen,
+    });
+
+    // 1) Edita SEM ler o arquivo existente → cobra inspeção.
+    const semLer: string[] = [];
+    let c1 = 0;
+    const blind: ModelCaller = async (input) => {
+      c1 += 1;
+      for (const m of input.messages) if (typeof m.content === "string") semLer.push(m.content);
+      if (c1 === 1) return { ok: true, turn: { text: "mudei", toolCalls: [writeCall("src/App.tsx", "export default function App(){return <main>mudou</main>}")] } };
+      return { ok: true, turn: { text: 'Pronto.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "mude o texto do título", projectId: "inspect-1", workspaceRoot: inspectRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(inspectRoot), model: blind,
+    });
+    expect(semLer.some((c) => c.includes("sem tê-los inspecionado"))).toBe(true);
+
+    // 2) LÊ antes de editar → NÃO cobra inspeção.
+    const comLeitura: string[] = [];
+    let c2 = 0;
+    const careful: ModelCaller = async (input) => {
+      c2 += 1;
+      for (const m of input.messages) if (typeof m.content === "string") comLeitura.push(m.content);
+      if (c2 === 1) {
+        return { ok: true, turn: { text: "vou ler", toolCalls: [
+          { id: "r1", name: "read_file", arguments: { path: "src/App.tsx" }, rawArguments: "{}" },
+        ] } };
+      }
+      if (c2 === 2) return { ok: true, turn: { text: "editei", toolCalls: [writeCall("src/App.tsx", "export default function App(){return <main>ok2</main>}")] } };
+      return { ok: true, turn: { text: 'Concluído.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "mude o texto do título", projectId: "inspect-2", workspaceRoot: inspectRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(inspectRoot), model: careful,
+    });
+    expect(comLeitura.some((c) => c.includes("sem tê-los inspecionado"))).toBe(false);
   });
 });

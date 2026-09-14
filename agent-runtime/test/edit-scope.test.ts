@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE,
   namedColorTarget, colorTokens, targetApplied, paletteStillOld, colorNotAppliedNudge,
+  mentionsColorChange, paletteUnchanged, uninspectedEdits, UNINSPECTED_NUDGE,
 } from "../src/studio/agent-core/edit-scope";
 
 describe("edit-scope · pedido de mudança visual GLOBAL", () => {
@@ -82,5 +83,36 @@ describe("edit-scope · COR pedida não aplicada (evidência da paleta antiga)",
     expect(n).toMatch(/NÃO aplicou/i);
     expect(n).toContain("blue");
     expect(n).toMatch(/grep_search/);
+  });
+
+  it("detecta mudança de cor/identidade mesmo sem nomear cor", () => {
+    expect(mentionsColorChange("deixe o site mais escuro")).toBe(true);
+    expect(mentionsColorChange("quero um tema mais claro")).toBe(true);
+    expect(mentionsColorChange("troque a paleta")).toBe(true);
+    expect(mentionsColorChange("mude a ordem das seções")).toBe(false);
+  });
+
+  it("paleta idêntica (nada saiu, nada novo entrou) → identidade não mudou", () => {
+    const before = colorTokens({ "src/App.tsx": 'className="bg-blue-600 text-blue-100"' });
+    const after = colorTokens({ "src/App.tsx": 'className="bg-blue-600 text-blue-100"' });
+    expect(paletteUnchanged(before, after)).toBe(true);
+    const changed = colorTokens({ "src/App.tsx": 'className="bg-blue-600 text-blue-100 bg-red-700"' });
+    expect(paletteUnchanged(before, changed)).toBe(false); // entrou cor nova
+  });
+});
+
+describe("edit-scope · inspeção obrigatória em edição", () => {
+  it("aponta arquivos EXISTENTES alterados sem leitura (e ignora arquivos novos)", () => {
+    const existing = new Set(["src/App.tsx", "src/index.css"]);
+    expect(uninspectedEdits(existing, ["src/App.tsx", "src/Header.tsx"], ["src/index.css"])).toEqual(["src/App.tsx"]);
+    expect(uninspectedEdits(existing, ["src/App.tsx"], ["src/App.tsx"])).toEqual([]);
+  });
+
+  it("o nudge exige read_file + grep_search e não concluir com sobras", () => {
+    const n = UNINSPECTED_NUDGE(["src/App.tsx"]);
+    expect(n).toContain("src/App.tsx");
+    expect(n).toMatch(/read_file/);
+    expect(n).toMatch(/grep_search/);
+    expect(n).toMatch(/Só finalize/i);
   });
 });

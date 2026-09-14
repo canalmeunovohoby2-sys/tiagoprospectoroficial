@@ -26,6 +26,8 @@ export interface CoderToolUse {
   id: string;
   name: string;
   ok: boolean;
+  /** Arquivo alvo (path/from) quando a ferramenta opera em um arquivo. */
+  path?: string;
 }
 
 export interface RunCoderResult {
@@ -148,7 +150,7 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
           output = JSON.stringify({ error: e instanceof Error ? e.message : String(e) });
         }
       }
-      toolUses.push({ id: call.id, name: call.name, ok });
+      toolUses.push({ id: call.id, name: call.name, ok, path: pathOf(call.arguments ?? {}) ?? undefined });
       if (ok && EDIT_TOOLS.has(call.name)) {
         const p = pathOf(call.arguments ?? {});
         if (p) touched.add(p);
