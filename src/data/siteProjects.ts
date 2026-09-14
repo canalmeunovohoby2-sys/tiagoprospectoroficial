@@ -20,10 +20,24 @@ export function projectKindOf(project: Pick<SiteProjectRow, "settings"> | null |
  * real do StudioTeam. O template inicial não é o site final.
  */
 export function projectKickoffPending(project: Pick<SiteProjectRow, "settings"> | null | undefined): boolean {
+  return projectKickoffState(project) === "pending";
+}
+
+/**
+ * Estado da PRIMEIRA geração automática (kickoff) do projeto React:
+ *   "pending" = aguardando a 1ª geração; "done" = já gerou; "failed" = tentou e
+ *   falhou; "none" = legado/sem estado (não deve redisparar sozinho).
+ * Usado para garantir idempotência: NUNCA retrabalhar o site a cada refresh.
+ */
+export function projectKickoffState(project: Pick<SiteProjectRow, "settings"> | null | undefined): "pending" | "done" | "failed" | "none" {
   const s = project?.settings && typeof project.settings === "object"
     ? (project.settings as Record<string, unknown>)
     : null;
-  return !!s && s.kind === "react" && s.kickoff === "pending";
+  if (!s || s.kind !== "react") return "none";
+  if (s.kickoff === "pending") return "pending";
+  if (s.kickoff === "done") return "done";
+  if (s.kickoff === "failed") return "failed";
+  return "none";
 }
 
 

@@ -188,15 +188,23 @@ export async function createReactSiteProject(userId: string, prompt: string): Pr
   return createSiteProjectFromPrompt(userId, prompt, "react");
 }
 
-// Marca que a PRIMEIRA geração (kickoff do StudioTeam) já foi disparada para o
-// projeto — evita reexecução automática em reload/navegação. Nunca roda o
-// gerador legado.
-export async function markReactKickoffDone(projectId: string): Promise<void> {
+// Marca o estado da PRIMEIRA geração (kickoff do StudioTeam). Persistido para o
+// projeto NUNCA ser retrabalhado automaticamente a cada reload/navegação.
+// Faz MERGE no settings existente (não apaga outras chaves).
+export async function markReactKickoff(projectId: string, state: "done" | "failed" | "pending"): Promise<void> {
+  const { data } = await supabase.from("site_projects").select("settings").eq("id", projectId).maybeSingle();
+  const current = data?.settings && typeof data.settings === "object" && !Array.isArray(data.settings)
+    ? (data.settings as Record<string, unknown>)
+    : {};
   const { error } = await supabase
     .from("site_projects")
-    .update({ settings: { kind: "react", kickoff: "done" } as unknown as Json })
+    .update({ settings: { ...current, kind: "react", kickoff: state } as unknown as Json })
     .eq("id", projectId);
   if (error) throw new Error(error.message);
+}
+
+export async function markReactKickoffDone(projectId: string): Promise<void> {
+  return markReactKickoff(projectId, "done");
 }
 
 // Persiste SOMENTE o código (projetos React sem spec) mantendo versionamento/Git.

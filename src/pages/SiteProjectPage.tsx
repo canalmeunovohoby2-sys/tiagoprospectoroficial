@@ -7,14 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow, SiteSpec } from "@/data/siteProjects";
-import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf, projectKickoffPending } from "@/data/siteProjects";
+import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf, projectKickoffState } from "@/data/siteProjects";
 import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
 import {
   fetchSiteProject, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject, publishReactSite,
   createSiteVersion, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
-  captureWorkspaceScreenshots, generateSiteVideo, fetchRuntimeArtifact, updateGeneratedCode, markReactKickoffDone,} from "@/lib/siteProjectsApi";
+  captureWorkspaceScreenshots, generateSiteVideo, fetchRuntimeArtifact, updateGeneratedCode, markReactKickoff,} from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
+import { safeLocalStorage } from "@/lib/safeStorage";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
 import { SiteVersionsDialog } from "@/components/sites/editor/SiteVersionsDialog";
 import { supabase } from "@/integrations/supabase/client";
@@ -1201,13 +1202,20 @@ function buildReactKickoffInstruction(project: {
 
   // KICKOFF: novo projeto React (bootstrap) dispara a PRIMEIRA geração real pelo
   // /run → StudioTeam, com os dados do cliente. Nunca cai em spec/HTML legado.
-  // Dispara também quando o projeto AINDA está no rascunho (bootstrap) — assim um
-  // projeto que ficou preso no template (falha anterior) se recupera ao reabrir.
-  // Uma tentativa por projectId por sessão (guard por ref; sem loop infinito).
+  //
+  // IDEMPOTÊNCIA (nunca retrabalhar a cada refresh):
+  // - dispara só quando o estado PERSISTIDO é "pending" (ou legado sem estado e
+  //   ainda no rascunho, uma única vez);
+  // - uma tentativa por projeto neste navegador (guarda local, sobrevive a F5) e
+  //   uma por sessão (ref);
+  // - ao terminar, PERSISTE "done"/"failed" no banco — não volta a rodar sozinho.
   const kickoffStartedRef = useRef<string | null>(null);
-  const kickoffPending = projectKickoffPending(project);
+  const kickoffState = projectKickoffState(project);
   const bootstrapPending = isReactProject && isBootstrapFiles(draftFiles);
-  const needsKickoff = kickoffPending || bootstrapPending;
+  const kickoffLocalKey = project ? `prospector.kickoff.${project.id}` : "";
+  const kickoffAttemptedLocally = !!kickoffLocalKey && safeLocalStorage.getItem(kickoffLocalKey) === "1";
+  const legacyStuck = kickoffState === "none" && bootstrapPending;
+  const needsKickoff = isReactProject && !kickoffAttemptedLocally && (kickoffState === "pending" || legacyStuck);
   useEffect(() => {
     if (!project || !isReactProject || !needsKickoff) return;
     if (!draftFiles || Object.keys(draftFiles).length === 0) return;
@@ -1215,25 +1223,34 @@ function buildReactKickoffInstruction(project: {
     if (generating || aiRunning) return;
     if (kickoffStartedRef.current === project.id) return;
     kickoffStartedRef.current = project.id;
+    // Marca a tentativa ANTES de rodar: mesmo um crash/F5 no meio não redispara.
+    try { safeLocalStorage.setItem(kickoffLocalKey, "1"); } catch { /* noop */ }
+    // O site JÁ foi gerado (não é rascunho): só corrige um estado persistido
+    // obsoleto e NUNCA retrabalha o site ao atualizar a página.
+    if (!isBootstrapFiles(draftFiles)) {
+      void markReactKickoff(project.id, "done")
+        .then(() => setProject((p) => (p ? { ...p, settings: { ...(p.settings ?? {}), kind: "react", kickoff: "done" } } : p)))
+        .catch(() => { /* guarda local já impede repetição */ });
+      return;
+    }
     const instruction = buildReactKickoffInstruction(project, projectLeadRef.current);
     void runAiInstruction(instruction, undefined, { media: true }).then(async () => {
-      // Só marca como concluído quando o rascunho foi REALMENTE substituído.
+      // Sucesso = o agente aplicou arquivos e o rascunho foi substituído.
       const produced = prevFilesRef.current;
-      if (produced && Object.keys(produced).length > 0 && !isBootstrapFiles(produced)) {
-        try {
-          await markReactKickoffDone(project.id);
-          setProject((p) => (p ? { ...p, settings: { ...(p.settings ?? {}), kind: "react", kickoff: "done" } } : p));
-        } catch {
-          /* mantém pendente para o usuário tentar de novo manualmente */
-        }
-      } else {
-        // NÃO marca como concluído: permanece pendente e tenta de novo ao reabrir.
-        // O usuário também pode pedir no chat.
-        toast.error("A geração inicial não aplicou o site (ainda está no rascunho). Abra o projeto novamente ou peça o site no chat.");
+      const applied = !!produced && Object.keys(produced).length > 0 && !isBootstrapFiles(produced);
+      const state: "done" | "failed" = applied ? "done" : "failed";
+      try {
+        await markReactKickoff(project.id, state);
+        setProject((p) => (p ? { ...p, settings: { ...(p.settings ?? {}), kind: "react", kickoff: state } } : p));
+      } catch {
+        /* guarda local já impede repetição automática */
+      }
+      if (!applied) {
+        toast.error("A geração inicial não aplicou o site (ainda está no rascunho). Peça o site no chat para tentar novamente.");
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id, needsKickoff, kickoffPending, bootstrapPending, isReactProject, draftFiles, leadLoaded, generating, aiRunning]);
+  }, [project?.id, needsKickoff, kickoffState, bootstrapPending, isReactProject, draftFiles, leadLoaded, generating, aiRunning]);
 
   function handleStudioEvent(event: StudioStreamEvent) {
     studioChat.handleEvent(event);
