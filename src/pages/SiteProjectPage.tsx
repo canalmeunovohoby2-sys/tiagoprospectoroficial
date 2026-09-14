@@ -397,8 +397,23 @@ function buildReactKickoffInstruction(project: {
 
   async function handlePdf() {
     if (busyAction) return;
+    // A proposta usa os dados REAIS do projeto/lead. Projetos React não têm
+    // `spec` — antes isso bloqueava o PDF; agora montamos os dados da proposta
+    // a partir do negócio (mesma apresentação/mockups de sempre).
     const specData = currentSpec();
-    if (!specData) { toast.error("Gere o site antes de exportar a proposta."); return; }
+    const lead = projectLeadRef.current;
+    const pdfSpec = (specData ?? {
+      business: {
+        name: project?.company_name || project?.name || lead?.name || "Cliente",
+        segment: project?.segment ?? lead?.segment ?? undefined,
+        city: project?.city ?? lead?.city ?? undefined,
+        state: project?.state ?? lead?.state ?? undefined,
+        phone: lead?.phone ?? undefined,
+        whatsapp: lead?.whatsapp ?? undefined,
+        address: lead?.address ?? undefined,
+      },
+      design_system: { colors: {} },
+    }) as unknown as SiteSpec;
     setBusyAction("pdf");
     try {
       toast.info("Capturando versão desktop e mobile do site…");
@@ -408,7 +423,7 @@ function buildReactKickoffInstruction(project: {
           ? Object.fromEntries(Object.entries(project.generated_code as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
           : null;
       if (!codeFiles || !Object.keys(codeFiles).some((k) => k.endsWith("index.html"))) {
-        throw new Error("Nenhum arquivo de site disponível para capturar.");
+        throw new Error("Nenhum arquivo de site disponível para capturar. Gere o site primeiro.");
       }
       const serverShots = await captureWorkspaceScreenshots(codeFiles);
       // FIDELIDADE OBRIGATÓRIA: só usamos capturas do navegador real (Chromium
@@ -421,7 +436,7 @@ function buildReactKickoffInstruction(project: {
       toast.info("Montando apresentação…");
       const realPalette = extractSitePalette(codeFiles);
       const screenshots = [shots.desktop, shots.mobile];
-      const { buffer, fileName } = await buildCommercialPdf(specData as never, null, screenshots, realPalette, project?.company_name || project?.name);
+      const { buffer, fileName } = await buildCommercialPdf(pdfSpec as never, null, screenshots, realPalette, project?.company_name || project?.name);
       saveBlob(new Blob([buffer], { type: "application/pdf" }), fileName);
       toast.success("Proposta em PDF gerada com capturas reais do site");
     } catch (e) {

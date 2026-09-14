@@ -25,8 +25,9 @@ describe("C8 · React nunca usa o fluxo legado (spec/HTML)", () => {
 
   it("o /run React expõe mudança real (changed) e a ausência explícita (no_file_changes)", () => {
     const server = read("agent-runtime/src/server.ts");
-    expect(server).toContain("changed: team.touched.length > 0");
-    expect(server).toContain("no_file_changes: team.touched.length === 0");
+    // `touched` = arquivos do agente + normalizações determinísticas (ex.: mapa).
+    expect(server).toContain("changed: touched.length > 0");
+    expect(server).toContain("no_file_changes: touched.length === 0");
     expect(server).toContain("withWorkspaceLock");
   });
 });

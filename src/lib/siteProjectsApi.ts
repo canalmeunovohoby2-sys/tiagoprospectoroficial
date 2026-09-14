@@ -312,7 +312,8 @@ export async function captureWorkspaceScreenshots(files: Record<string, string>)
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ files }),
-      signal: AbortSignal.timeout(60_000),
+      // O runtime COMPILA o projeto React (npm run build) antes de capturar.
+      signal: AbortSignal.timeout(180_000),
     });
     const data = (await res.json()) as { ok?: boolean; desktop?: string; mobile?: string; error?: string };
     if (!res.ok) {

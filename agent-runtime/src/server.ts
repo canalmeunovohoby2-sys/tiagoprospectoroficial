@@ -5,7 +5,9 @@
 // SESSÃO PERSISTENTE POR PROJETO: um Agent (Cline) fica vivo por projectId em
 // memória; cada nova mensagem chama agent.continue() para manter o contexto.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ProspectorSiteAgent, isSurgicalEditTask, type AgentRunOutcome } from "./prospector-site-agent.js";
 import { BrowserSession } from "./browser-session.js";
@@ -489,6 +491,25 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
   });
 }
 
+/**
+ * Prepara um diretório para servir o SITE REAL à captura/vídeo.
+ *
+ * Projetos React (Vite/TSX) NÃO rodam servidos como código-fonte — o Chromium não
+ * executa `.tsx`, o que produzia capturas/vídeos VAZIOS. Aqui compilamos
+ * (`npm run build`) e servimos o HTML final (self-contained). Sites estáticos
+ * seguem servindo o próprio workspace (comportamento antigo preservado).
+ */
+export async function prepareSiteServeDir(root: string): Promise<{ dir: string; temp?: string }> {
+  const isReact = existsSync(join(root, "package.json"))
+    && (existsSync(join(root, "src")) || existsSync(join(root, "vite.config.ts")) || existsSync(join(root, "vite.config.js")));
+  if (!isReact) return { dir: root };
+  const built = await buildReactProject(root);
+  if (!built.ok || !built.html) throw new Error(built.error || "Falha ao compilar o site para captura.");
+  const dir = mkdtempSync(join(tmpdir(), "prospector-serve-"));
+  writeFileSync(join(dir, "index.html"), built.html, "utf8");
+  return { dir, temp: dir };
+}
+
 export function startServer(port = PORT, host = HOST) {
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://${host}:${port}`);
@@ -540,23 +561,28 @@ export function startServer(port = PORT, host = HOST) {
         if (!hasIndex) { send(res, 400, { ok: false, error: "Nenhum arquivo index.html para capturar." }); return; }
         const pid = `capture-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         const root = ensureWorkspaceDir(pid, files);
-        const session = new BrowserSession(root);
         const toDataUrl = (p: string) => `data:image/png;base64,${readFileSync(p).toString("base64")}`;
         const err = (e: unknown) => send(res, 500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+        let built: { dir: string; temp?: string } | null = null;
+        let session: BrowserSession | null = null;
         try {
+          // Compila o projeto (React) e serve o SITE REAL — nunca o código-fonte.
+          built = await prepareSiteServeDir(root);
+          session = new BrowserSession(built.dir);
           const base = await session.startServer();
           await session.open(base, { width: 1366, height: 850 });
-          await new Promise((r) => setTimeout(r, 300));
+          await new Promise((r) => setTimeout(r, 1500)); // deixa o app montar/animar
           const desktop = await session.screenshot("desktop", { fullPage: false });
           await session.setViewport(390, 844);
           await session.reload();
-          await new Promise((r) => setTimeout(r, 600));
+          await new Promise((r) => setTimeout(r, 1200));
           const mobile = await session.screenshot("mobile", { fullPage: false });
           send(res, 200, { ok: true, desktop: toDataUrl(desktop), mobile: toDataUrl(mobile) });
         } catch (e) {
           err(e);
         } finally {
-          await session.close().catch(() => {});
+          await session?.close().catch(() => {});
+          if (built?.temp) { try { rmSync(built.temp, { recursive: true, force: true }); } catch { /* noop */ } }
           cleanupWorkspace(pid);
         }
         return;
@@ -992,8 +1018,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         vWrite({ type: "start", kind: "video" });
         const vHeartbeat = setInterval(() => { vWrite({ type: "ping" }); }, 12_000);
         const vFinish = (payload: Record<string, unknown>) => { clearInterval(vHeartbeat); vWrite({ type: "result", ...payload }); try { res.end(); } catch { /* noop */ } };
+        let vBuilt: { dir: string; temp?: string } | null = null;
         try {
-          const result = await generateSitePromoVideo({ workspaceRoot: root, projectId, target, onPhase: (ph) => { phases.push(ph); vWrite({ type: "phase", phase: ph }); } });
+          // Compila o projeto (React) e grava o SITE REAL — nunca o código-fonte.
+          vBuilt = await prepareSiteServeDir(root);
+          const result = await generateSitePromoVideo({ workspaceRoot: vBuilt.dir, projectId, target, onPhase: (ph) => { phases.push(ph); vWrite({ type: "phase", phase: ph }); } });
           if (!result.ok) {
             vFinish({ status: "error", ok: false, error: result.reason ?? "falha ao gerar o vídeo.", reason: result.reason ?? null, checks: result.checks ?? [], issues: result.issues ?? [], phases });
             return;
@@ -1013,6 +1042,8 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           });
         } catch (e) {
           vFinish({ status: "error", ok: false, error: e instanceof Error ? e.message : "erro ao gerar o vídeo.", checks: [], issues: [], phases });
+        } finally {
+          if (vBuilt?.temp) { try { rmSync(vBuilt.temp, { recursive: true, force: true }); } catch { /* noop */ } }
         }
         return;
       }
