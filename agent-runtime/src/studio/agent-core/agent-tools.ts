@@ -5,6 +5,7 @@
 // expomos um schema JSON estável para o modelo e delegamos a execução.
 
 import { buildSiteTools, type ToolEnv } from "../../tools.js";
+import { designSkillsKnowledge, DESIGN_SKILL_TOPICS } from "./design-skills.js";
 import type { AgentToolSchema } from "./model.js";
 
 export interface CoderTool {
@@ -38,7 +39,9 @@ const SCHEMAS: Record<string, { description: string; parameters: Record<string, 
   run_command: { description: "Executa comando controlado do projeto: action=install|ci|run (npm run <script>).", parameters: { type: "object", properties: { action: { type: "string", enum: ["install", "ci", "run"] }, script: STR_OPT, timeoutMs: { type: "integer" } }, required: ["action"] } },
 };
 
-export const CODER_TOOL_NAMES = Object.keys(SCHEMAS);
+// Ferramentas de workspace + "design_skills" (conhecimento instalado, não é
+// operação de workspace; implementada abaixo).
+export const CODER_TOOL_NAMES: string[] = [...Object.keys(SCHEMAS), "design_skills"];
 
 export function buildCoderTools(env: ToolEnv): { list: CoderTool[]; byName: Map<string, CoderTool> } {
   const built = buildSiteTools(env) as unknown as UnderlyingTool[];
@@ -56,5 +59,26 @@ export function buildCoderTools(env: ToolEnv): { list: CoderTool[]; byName: Map<
     byName.set(name, tool);
     list.push(tool);
   }
+
+  // Ferramenta de CONHECIMENTO INSTALADO (não é operação de workspace): o guia de
+  // design premium fica disponível para consulta sob demanda. Não entra no prompt
+  // e só consome tokens se (e quando) o agente decidir consultar.
+  const designTool: CoderTool = {
+    schema: {
+      name: "design_skills",
+      description: "Consulta o guia INSTALADO de design premium (direção de arte, paleta/tipografia, CRO/UX, copy, componentes, motion, mobile, performance, mídia, mapas). Use ao criar ou reformular o visual, quando precisar da técnica. Sem `topic` devolve o guia completo; com `topic`, só a seção.",
+      parameters: {
+        type: "object",
+        properties: {
+          topic: { type: "string", enum: DESIGN_SKILL_TOPICS, description: "Tópico específico (opcional)." },
+        },
+        required: [],
+      },
+    },
+    execute: async (args) => designSkillsKnowledge(typeof args.topic === "string" ? args.topic : null),
+  };
+  byName.set("design_skills", designTool);
+  list.push(designTool);
+
   return { list, byName };
 }

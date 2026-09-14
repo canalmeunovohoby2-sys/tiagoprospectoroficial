@@ -80,6 +80,7 @@ CRIAÇÃO (PRIMEIRA GERAÇÃO DE UM PROJETO NOVO) — IDENTIDADE PRÓPRIA:
 - Diferencie de verdade (não só troque nome/cor): composição do hero, ritmo das seções, tipografia, formas, tratamentos de imagem e CTAs.
 
 METODOLOGIA (pense como diretor de arte, não como quem "monta uma página"):
+- Você tem a ferramenta "design_skills": consulte-a ao criar/reformular o visual quando precisar da técnica (ela é o seu guia instalado — não precisa decorar tudo).
 - ANÁLISE primeiro: segmento, público, posicionamento, ticket percebido, objetivo comercial, principal dúvida do cliente. Depois decida o design.
 - Você recebe um BRIEFING DE DIREÇÃO DE ARTE no contexto (arquétipo, hero, grid, ritmo, tratamento de imagem, movimento, tipografia, CTA). Siga-o e refine com decisões próprias; ele existe para você NÃO repetir o mesmo "site de blocos".
 - PROIBIDO como padrão: navbar → hero centralizado → 3 cards → texto+imagem → 4 cards → galeria → depoimentos → CTA. Essa ordem só vale se fizer sentido para ESTE negócio.
@@ -236,6 +237,8 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
 
     const coder = await runCoderTurn({
       model,
+      // As skills de design são CONHECIMENTO INSTALADO: o agente consulta a
+      // ferramenta `design_skills` quando precisa (sem custo de prompt).
       system: CODER_SYSTEM,
       messages,
       tools,

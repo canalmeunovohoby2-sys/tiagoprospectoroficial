@@ -44,6 +44,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
   let bootRoot2 = "";
   let dirRoot = "";
   let dirRoot2 = "";
+  let skillsRoot = "";
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "prospector-team-"));
     rootA = mkdtempSync(join(tmpdir(), "prospector-team-a-"));
@@ -52,6 +53,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     bootRoot2 = mkdtempSync(join(tmpdir(), "prospector-bootstrap2-"));
     dirRoot = mkdtempSync(join(tmpdir(), "prospector-dir-"));
     dirRoot2 = mkdtempSync(join(tmpdir(), "prospector-dir2-"));
+    skillsRoot = mkdtempSync(join(tmpdir(), "prospector-skills-"));
     materializeWorkspace(root, TEMPLATE);
     materializeWorkspace(rootA, TEMPLATE);
     materializeWorkspace(rootB, TEMPLATE);
@@ -59,9 +61,10 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     materializeWorkspace(bootRoot2, BOOTSTRAP);
     materializeWorkspace(dirRoot, BOOTSTRAP);
     materializeWorkspace(dirRoot2, BOOTSTRAP);
+    materializeWorkspace(skillsRoot, BOOTSTRAP);
   });
   afterAll(() => {
-    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2]) {
+    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2, skillsRoot]) {
       rmSync(r, { recursive: true, force: true });
       try { rmSync(stateFilePath(r), { force: true }); } catch { /* noop */ }
     }
@@ -229,5 +232,29 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     // Reabre para cobrar a direção (mais chamadas que o caso "com marcador").
     expect(calls).toBeGreaterThanOrEqual(3);
     expect(calls).toBeLessThanOrEqual(9);
+  });
+
+  it("ECONOMIA DE API: as skills NÃO vão no prompt do Coder (são ferramenta consultável)", async () => {
+    const systems: string[] = [];
+    const model: ModelCaller = async (input) => {
+      systems.push(input.system);
+      if (systems.length === 1) {
+        return { ok: true, turn: { text: "vou criar", toolCalls: [writeCall("src/App.tsx", "// ART-DIRECTION: x\nexport default function App(){return <main>ok</main>}")] } };
+      }
+      return { ok: true, turn: { text: 'Concluído.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "crie o site", projectId: "econ", workspaceRoot: skillsRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(skillsRoot), model,
+    });
+    expect(systems.length).toBeGreaterThan(0);
+    for (const s of systems) {
+      // Nunca o CONTEÚDO das skills no prompt…
+      expect(s).not.toContain("LUXURY DARK MODE");
+      expect(s).not.toContain("SKILLS DE UI/UX");
+      // …apenas a menção à ferramenta instalada (barata e estável).
+      expect(s).toContain("design_skills");
+    }
   });
 });
