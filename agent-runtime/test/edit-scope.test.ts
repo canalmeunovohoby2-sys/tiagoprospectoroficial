@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE } from "../src/studio/agent-core/edit-scope";
+import {
+  isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE,
+  namedColorTarget, colorTokens, targetApplied, paletteStillOld, colorNotAppliedNudge,
+} from "../src/studio/agent-core/edit-scope";
 
 describe("edit-scope · pedido de mudança visual GLOBAL", () => {
   it("reconhece pedidos de identidade/tema/cor", () => {
@@ -43,5 +46,41 @@ describe("edit-scope · o Coder VARREU o projeto?", () => {
     expect(EDIT_SWEEP_NUDGE).toMatch(/tokens|variáveis|design system/i);
     expect(EDIT_SWEEP_NUDGE).toMatch(/site inteiro/i);
     expect(EDIT_SWEEP_NUDGE).toMatch(/não conclu|só conclua/i);
+  });
+});
+
+describe("edit-scope · COR pedida não aplicada (evidência da paleta antiga)", () => {
+  it("reconhece a cor nomeada no pedido (e ignora pedidos sem cor)", () => {
+    expect(namedColorTarget("troque a cor do site para vermelho")?.classes).toContain("red");
+    expect(namedColorTarget("quero tudo azul escuro")?.classes).toContain("blue");
+    expect(namedColorTarget("deixe mais sofisticado")).toBeNull();
+  });
+
+  it("extrai tokens de cor do código (hex + famílias Tailwind)", () => {
+    const t = colorTokens({ "src/App.tsx": '<div className="bg-blue-600 text-slate-900" style={{color:"#ef4444"}} />' });
+    expect(t.has("blue")).toBe(true);
+    expect(t.has("slate-9")).toBe(true);
+    expect(t.has("#ef4444")).toBe(true);
+  });
+
+  it("detecta quando o alvo NÃO foi aplicado e a paleta antiga permaneceu", () => {
+    const before = colorTokens({ "src/App.tsx": 'className="bg-blue-600 text-blue-100 border-blue-500 hover:bg-blue-700"' });
+    const after = colorTokens({ "src/App.tsx": 'className="bg-blue-600 text-blue-100 border-blue-500 hover:bg-blue-700" style={{color:"#0f172a"}}' });
+    const red = namedColorTarget("troque para vermelho");
+    expect(red).toBeTruthy();
+    expect(targetApplied(after, red!)).toBe(false);
+    expect(paletteStillOld(before, after)).toBe(true);
+  });
+
+  it("quando o alvo FOI aplicado, não cobra", () => {
+    const after = colorTokens({ "src/App.tsx": 'className="bg-red-600 text-red-100"' });
+    expect(targetApplied(after, namedColorTarget("troque para vermelho")!)).toBe(true);
+  });
+
+  it("o nudge cita as cores antigas e exige varredura", () => {
+    const n = colorNotAppliedNudge(["blue", "#2563eb"]);
+    expect(n).toMatch(/NÃO aplicou/i);
+    expect(n).toContain("blue");
+    expect(n).toMatch(/grep_search/);
   });
 });

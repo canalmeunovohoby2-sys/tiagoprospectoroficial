@@ -46,6 +46,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
   let dirRoot2 = "";
   let skillsRoot = "";
   let editRoot = "";
+  let colorRoot = "";
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "prospector-team-"));
     rootA = mkdtempSync(join(tmpdir(), "prospector-team-a-"));
@@ -56,6 +57,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     dirRoot2 = mkdtempSync(join(tmpdir(), "prospector-dir2-"));
     skillsRoot = mkdtempSync(join(tmpdir(), "prospector-skills-"));
     editRoot = mkdtempSync(join(tmpdir(), "prospector-edit-"));
+    colorRoot = mkdtempSync(join(tmpdir(), "prospector-color-"));
     materializeWorkspace(root, TEMPLATE);
     materializeWorkspace(rootA, TEMPLATE);
     materializeWorkspace(rootB, TEMPLATE);
@@ -65,9 +67,10 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     materializeWorkspace(dirRoot2, BOOTSTRAP);
     materializeWorkspace(skillsRoot, BOOTSTRAP);
     materializeWorkspace(editRoot, BOOTSTRAP);
+    materializeWorkspace(colorRoot, BOOTSTRAP);
   });
   afterAll(() => {
-    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2, skillsRoot, editRoot]) {
+    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2, skillsRoot, editRoot, colorRoot]) {
       rmSync(r, { recursive: true, force: true });
       try { rmSync(stateFilePath(r), { force: true }); } catch { /* noop */ }
     }
@@ -308,5 +311,32 @@ describe("C1 · StudioTeam (vertical slice)", () => {
       readWorkspace: () => readWorkspace(editRoot), model: swept,
     });
     expect(captured2.some((c) => c.includes("Sua alteração parece LOCAL"))).toBe(false);
+  });
+
+  it("COR pedida: identidade antiga mantida no código → cobra com evidência da paleta", async () => {
+    const blueApp = '// ART-DIRECTION: x\nexport default function App(){return <main className="bg-blue-600 text-blue-100">ok</main>}';
+    const gen: ModelCaller = async () => ({ ok: true, turn: { text: "ok", toolCalls: [writeCall("src/App.tsx", blueApp)] } });
+    await runStudioTeam({
+      instruction: "crie o site", projectId: "color-1", workspaceRoot: colorRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(editRoot), model: gen,
+    });
+
+    const captured: string[] = [];
+    let calls = 0;
+    // Modelo TEIMOSO: mantém o azul, não aplica o vermelho.
+    const stubborn: ModelCaller = async (input) => {
+      calls += 1;
+      for (const m of input.messages) if (typeof m.content === "string") captured.push(m.content);
+      if (calls === 1) return { ok: true, turn: { text: "mudei", toolCalls: [writeCall("src/App.tsx", 'export default function App(){return <main className="bg-blue-600 text-blue-100">ok</main>}')] } };
+      return { ok: true, turn: { text: 'Pronto.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "troque a cor do site para vermelho", projectId: "color-1", workspaceRoot: colorRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(colorRoot), model: stubborn,
+    });
+    expect(captured.some((c) => c.includes("Sua alteração parece LOCAL"))).toBe(true);
+    expect(captured.some((c) => c.includes("NÃO aplicou a mudança de cor"))).toBe(true);
   });
 });

@@ -8,7 +8,7 @@ import { MarkdownMessage } from "./MarkdownMessage";
 import { VoiceRecordingBar } from "./VoiceRecordingBar";
 import { useVoiceRecorder } from "@/hooks/studio/useVoiceRecorder";
 import { PHASE_LABEL, type ChatAttachmentRef, type StudioPhase, type UnifiedChatItem } from "@/lib/studio/chatModel";
-import { latestWorkLine } from "@/lib/agentWorkActivity";
+import { latestLiveLabel } from "@/lib/agentWorkActivity";
 
 export interface UnifiedChatPanelProps {
   items: UnifiedChatItem[];
@@ -246,22 +246,25 @@ export function UnifiedChatPanel({
         <div ref={endRef} />
       </div>
 
-      {running && (
-        // Indicador AO VIVO no rodapé: o que o agente está fazendo AGORA (emoji + ação).
-        <div className="flex shrink-0 items-center gap-1.5 border-t border-border/40 bg-muted/20 px-3 py-1.5 text-[11px] text-muted-foreground" role="status" aria-live="polite">
-          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" />
-          <span className="truncate">
-            {(() => {
-              const live = latestWorkLine(liveActivity);
-              const TOOL_WORDS = /\b(read_file|list_files|write_file|edit_file|create_file|delete_file|rename_file|move_file|run_command|design_skills|glob|grep|terminal)\b/gi;
-              const label = (live?.label ?? PHASE_LABEL[phase]).replace(TOOL_WORDS, "").replace(/\s+/g, " ").trim();
-              return `${live ? `${live.icon} ` : ""}${label || PHASE_LABEL[phase]}…`;
-            })()}
-          </span>
-        </div>
-      )}
-
       <div className="shrink-0 border-t border-border/60 p-2.5">
+        {running && (
+          // CARD de atividade (como sempre foi): emoji da ação + o que o agente
+          // está fazendo AGORA, logo acima do campo de digitar.
+          <div className="mb-2 shrink-0 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-primary/90">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+              </span>
+              Executando agora
+            </div>
+            <p className="mt-1 flex items-center gap-1.5 text-xs font-medium leading-snug text-foreground">
+              <span className="min-w-0 break-words">
+                {latestLiveLabel(liveActivity) ?? `${PHASE_LABEL[phase]}…`}
+              </span>
+            </p>
+          </div>
+        )}
         {rec.recording ? (
           <VoiceRecordingBar
             seconds={rec.seconds}

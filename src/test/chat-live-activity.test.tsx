@@ -7,43 +7,42 @@ function renderPanel(over: Partial<React.ComponentProps<typeof UnifiedChatPanel>
     <UnifiedChatPanel items={[]} running={false} phase="idle" onSend={() => {}} {...over} />,
   );
 }
+const card = () => screen.queryByText("Executando agora");
 
 afterEach(() => cleanup());
 
-describe("Chat do Studio · indicador AO VIVO no rodapé (o que o agente está fazendo)", () => {
-  it("enquanto executa mostra emoji da AÇÃO + o que está fazendo (PT-BR)", () => {
-    renderPanel({
-      running: true,
-      phase: "coding",
-      liveActivity: [{ phase: "editing", detail: "Editando `src/App.tsx`" }],
-    });
-    const strip = screen.getByRole("status");
-    expect(strip.textContent ?? "").toMatch(/🛠️/);
-    expect(strip.textContent ?? "").toMatch(/Editando/);
+describe("Chat do Studio · card de atividade (emoji + ação atual) acima do campo", () => {
+  it("mostra o CARD 'Executando agora' com emoji da ação e o que está fazendo", () => {
+    renderPanel({ running: true, phase: "coding", liveActivity: [{ phase: "editing", detail: "`src/App.tsx`" }] });
+    expect(card()).toBeTruthy();
+    expect(screen.getByText(/✏️ Modificando `src\/App\.tsx`/)).toBeTruthy();
   });
 
-  it("mostra também ações de análise e leitura com seus emojis", () => {
-    renderPanel({ running: true, phase: "preparing", liveActivity: [{ phase: "analyzing", detail: "Analisando projeto" }] });
-    expect(screen.getByRole("status").textContent ?? "").toMatch(/🔎/);
+  it("cobre as ações reais (analisar, abrir, pesquisar, testar, finalizar)", () => {
+    const cases: Array<[string, string, RegExp]> = [
+      ["analyzing", "", /🔎 Analisando o projeto/],
+      ["reading", "`index.html`", /📂 Abrindo `index\.html`/],
+      ["researching", "", /🌐 Pesquisando na web/],
+      ["testing", "", /🧪 Testando a alteração/],
+      ["done", "", /✅ Finalizando/],
+    ];
+    for (const [phase, detail, re] of cases) {
+      renderPanel({ running: true, phase: "tool_running", liveActivity: [{ phase, detail }] });
+      expect(screen.getByText(re), `${phase}:${detail}`).toBeTruthy();
+      cleanup();
+    }
+  });
+
+  it("o card desaparece quando o agente termina", () => {
+    renderPanel({ running: true, phase: "coding", liveActivity: [{ phase: "editing", detail: "`x.tsx`" }] });
+    expect(card()).toBeTruthy();
     cleanup();
-    renderPanel({ running: true, phase: "tool_running", liveActivity: [{ phase: "reading", detail: "Lendo `index.html`" }] });
-    expect(screen.getByRole("status").textContent ?? "").toMatch(/📄/);
+    renderPanel({ running: false, phase: "complete" });
+    expect(card()).toBeNull();
   });
 
-  it("sem atividade detalhada usa o rótulo da fase (fallback) e some quando termina", () => {
-    const { rerender } = renderPanel({ running: true, phase: "coding" });
-    expect(screen.getByRole("status").textContent ?? "").toMatch(/Codificando/);
-    rerender(<UnifiedChatPanel items={[]} running={false} phase="complete" onSend={() => {}} />);
-    expect(screen.queryByRole("status")).toBeNull();
-  });
-
-  it("NÃO expõe nomes de ferramentas no indicador", () => {
-    renderPanel({
-      running: true,
-      phase: "tool_running",
-      liveActivity: [{ phase: "editing", detail: "write_file src/App.tsx" }],
-    });
-    const text = screen.getByRole("status").textContent ?? "";
-    expect(text).not.toMatch(/write_file|read_file|list_files|design_skills|run_command/);
+  it("NÃO mostra nomes de ferramentas no card", () => {
+    renderPanel({ running: true, phase: "tool_running", liveActivity: [{ phase: "editing", detail: "write_file src/App.tsx" }] });
+    expect(/"write_file"/.test(document.body.textContent ?? "")).toBe(false);
   });
 });

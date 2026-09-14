@@ -88,3 +88,50 @@ export function latestWorkLine(activity?: RawWorkActivity[] | null): WorkLine | 
   }
   return null;
 }
+
+const LIVE_ICONS: Record<string, string> = {
+  analyzing: "🔎", editing: "🛠️", researching: "🌐", testing: "🧪", fixing: "🔧", done: "✅", reviewing: "🔎",
+};
+
+function liveIcon(phase: string, detail: string): string {
+  if (phase === "verifying") return /visual_review|gemini|análise visual|analise visual/i.test(detail) ? "👁️" : "🌐";
+  return LIVE_ICONS[phase] ?? "⚙️";
+}
+
+function fileRef(detail: string): string | null {
+  const m = /`([^`]+)`/.exec(detail ?? "");
+  return m ? m[1] : null;
+}
+
+/**
+ * Rótulo humano da atividade ATUAL (emoji + ação + arquivo) — MESMO texto usado
+ * no chat legado, agora também no Studio.
+ */
+export function liveActivityLabel(phase: string, detail: string): string {
+  const file = fileRef(detail);
+  const loc = file ? `\`${file}\`` : null;
+  switch (phase) {
+    case "thinking": return "💭 Analisando a alteração…";
+    case "analyzing": return loc ? `📂 Abrindo ${loc}` : "🔎 Analisando o projeto";
+    case "reading": return loc ? `📂 Abrindo ${loc}` : "📂 Lendo arquivos";
+    case "editing": return loc ? `✏️ Modificando ${loc}` : "🛠️ Editando arquivos";
+    case "writing": return loc ? `✏️ Escrevendo ${loc}` : "🛠️ Criando arquivos";
+    case "researching": return "🌐 Pesquisando na web";
+    case "reviewing": return "🔍 Revisando o resultado";
+    case "testing": return "🧪 Testando a alteração";
+    case "verifying":
+      return /visual_review|gemini|análise visual|analise visual/i.test(detail) ? "👁️ Verificando visualmente"
+        : /navegador|browser/i.test(detail) ? "🌐 Verificando no navegador" : "🔍 Verificando o resultado";
+    case "fixing": return loc ? `🔧 Corrigindo ${loc}` : "🔧 Corrigindo problema";
+    case "done": return "✅ Finalizando";
+    default: return detail ? `${liveIcon(phase, detail)} ${detail}` : "⚙️ Trabalhando";
+  }
+}
+
+/** Rótulo da ÚLTIMA atividade ao vivo (para o card "Executando agora"). */
+export function latestLiveLabel(activity?: RawWorkActivity[] | null): string | null {
+  const list = (activity ?? []).filter((a) => a && typeof a.phase === "string" && typeof a.detail === "string");
+  if (!list.length) return null;
+  const last = list[list.length - 1];
+  return liveActivityLabel(last.phase, last.detail);
+}

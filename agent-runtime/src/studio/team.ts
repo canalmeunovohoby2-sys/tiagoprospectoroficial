@@ -18,7 +18,7 @@ import { loadProjectState, saveProjectState, type StudioStateMessage } from "./a
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
 import { mediaContextBlock } from "./agent-core/site-media.js";
 import { buildDesignDirection, hasArtDirection, ART_DIRECTION_MARKER } from "./agent-core/design-direction.js";
-import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE } from "./agent-core/edit-scope.js";
+import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, colorNotAppliedNudge } from "./agent-core/edit-scope.js";
 
 export interface StudioAttachment {
   name: string;
@@ -213,6 +213,12 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   let error: string | undefined;
   let bootstrapNudges = 0;
   let sweepNudges = 0;
+  let colorNudges = 0;
+  // EDIÇÃO GLOBAL de cor: guarda a PALETA ANTERIOR para provar (no fim) se a
+  // identidade antiga continuou no código (evidência, não achismo).
+  const globalVisualEdit = !isFirst && isGlobalVisualEdit(input.instruction ?? "");
+  const paletteTarget = globalVisualEdit ? namedColorTarget(input.instruction ?? "") : null;
+  const paletteBefore = globalVisualEdit ? colorTokens(input.readWorkspace()) : new Set<string>();
 
   input.emit({ type: "agent_interaction", agent_name: "Selector", message_type: "thought", content: isFirst ? "Primeira mensagem do projeto — Coder inicia." : "Retomando o projeto — Coder inicia.", timestamp: Date.now() });
 
@@ -299,7 +305,7 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
     // EDIÇÃO GLOBAL: se o pedido é uma mudança de identidade visual e o Coder NÃO
     // varreu o projeto (nem buscou, nem tocou vários arquivos/tokens), cobramos a
     // aplicação completa — evita deixar metade do site com a identidade antiga.
-    const globalEdit = !isFirst && isGlobalVisualEdit(input.instruction ?? "");
+    const globalEdit = globalVisualEdit;
     if (
       globalEdit && finishing && !coder.error && sweepNudges < 1 && round < maxRounds - 1
       && !wasProjectSwept({ touched: [...touched], toolNames: coder.toolUses.map((u) => u.name) })
@@ -310,6 +316,21 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
       lastSpeaker = "Coder";
       lastSignal = null;
       continue;
+    }
+
+    // COR PEDIDA NÃO APLICADA: o usuário nomeou uma cor e o código AINDA usa a
+    // paleta anterior → cobramos com a evidência exata (bounded, 1 vez).
+    if (globalEdit && paletteTarget && finishing && !coder.error && colorNudges < 1 && round < maxRounds - 1) {
+      const after = colorTokens(input.readWorkspace());
+      if (!targetApplied(after, paletteTarget) && paletteStillOld(paletteBefore, after)) {
+        colorNudges += 1;
+        const kept = [...paletteBefore].filter((t) => after.has(t));
+        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "A cor pedida ainda não está aplicada em todo o site — vou corrigir as sobras da identidade antiga.", timestamp: Date.now() });
+        messages = [...messages, { role: "user", content: colorNotAppliedNudge(kept) }];
+        lastSpeaker = "Coder";
+        lastSignal = null;
+        continue;
+      }
     }
 
     if (!coder.signal) break; // sem sinal e sem ferramentas → considera final
