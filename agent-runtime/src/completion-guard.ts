@@ -250,6 +250,10 @@ export interface CompletionState {
    *  falha da alteração — só impede declarar a verificação como concluída. */
   verifyToolFailure?: boolean;
   verifyToolFailureDetail?: string | null;
+  /** O guard de conclusão RECUSOU o `finish_task` (verificação não comprovada).
+   *  NÃO é falha de ferramenta — é o guard exercendo autoridade. */
+  guardBlocked?: boolean;
+  guardBlockedDetail?: string | null;
   /** Arquivos alterados nesta execução (para a mensagem honesta). */
   touched: string[];
   /** Arquivos realmente editados (work evidence) — usado no relatório. */
@@ -272,6 +276,8 @@ export interface CompletionStates {
   regression_detected: boolean;
   tool_failure: boolean;
   finish_task_called: boolean;
+  /** O guard recusou o finish_task (não é falha de ferramenta). */
+  guard_blocked?: boolean;
 }
 
 export interface CompletionVerdict {
@@ -282,6 +288,36 @@ export interface CompletionVerdict {
   error: string | null;
   unverified: boolean;
   states: CompletionStates;
+}
+
+export type ToolResultFailureKind = "none" | "guard" | "verify" | "tool";
+
+export interface ToolResultFailureClassification {
+  kind: ToolResultFailureKind;
+  detail?: string | null;
+}
+
+/**
+ * Classifica o resultado de uma ferramenta que terminou com erro.
+ *  - `finish_task` recusado pelo completion guard ⇒ `guard` (NÃO é ferramenta quebrada);
+ *  - ferramenta de verificação/leitura ⇒ `verify` (não invalida a alteração);
+ *  - demais (ex.: write_file/edit_file com erro) ⇒ `tool` (falha real);
+ *  - sem erro ⇒ `none`.
+ */
+export function classifyToolResultFailure(input: {
+  toolName: string;
+  isError: boolean;
+  message?: string | null;
+  /** true quando a ferramenta é de verificação/inspeção (somente leitura). */
+  readOnlyVerify: boolean;
+}): ToolResultFailureClassification {
+  if (!input.isError) return { kind: "none" };
+  const detail = input.message ? `${input.toolName}: ${input.message}` : input.toolName;
+  if (input.toolName === "finish_task") {
+    return { kind: "guard", detail: input.message ?? "conclusão recusada pelo guard (verificação não comprovada)" };
+  }
+  if (input.readOnlyVerify) return { kind: "verify", detail };
+  return { kind: "tool", detail };
 }
 
 // ── RELATÓRIO FINAL DA EDIÇÃO (closed-loop: o que mudou + verificação) ──────
@@ -363,6 +399,7 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
     regression_detected: !!terminal,
     tool_failure: s.toolFailure,
     finish_task_called: s.finishTaskCalled,
+    guard_blocked: s.guardBlocked === true,
   };
 
   // 1) BLOQUEIO CONCRETO (gate/regressão/visual/console no limite): falha real.
@@ -376,6 +413,16 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
     const partial = s.changeApplied ? " A alteração pode ter ficado parcial." : "";
     const msg = `Não concluí a alteração: uma ferramenta falhou durante a execução.${partial}${detail}`.trim();
     return { ok: false, reply: msg, error: msg, unverified, states };
+  }
+
+  // 2b) GUARD bloqueou a conclusão (finish_task recusado) — NÃO é ferramenta
+  //     quebrada. O guard continua com a autoridade (não é sucesso automático);
+  //     a mensagem explica que a VERIFICAÇÃO não pôde ser confirmada.
+  if (s.guardBlocked && s.verificationRequired && !s.finishTaskCalled) {
+    const partial = s.changeApplied ? " A alteração pode ter sido aplicada, mas não foi validada." : "";
+    const detail = s.guardBlockedDetail ? ` Detalhe: ${s.guardBlockedDetail}.` : "";
+    const msg = `Não consegui confirmar a verificação final desta alteração (o guard de conclusão recusou o finish_task antes da verificação).${partial}${detail}`.trim();
+    return { ok: false, reply: msg, error: msg, unverified: true, states };
   }
 
   // 3) EDIÇÃO SEM falha concreta. Fecha o ciclo com um RELATÓRIO CLARO:

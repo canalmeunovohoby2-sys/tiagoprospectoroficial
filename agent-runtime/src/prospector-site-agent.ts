@@ -9,7 +9,7 @@ import { buildBrowserTools } from "./browser-tools.js";
 import { BrowserSession } from "./browser-session.js";
 import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
-import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, classifyCompletion, type CompletionStates, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
+import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, classifyCompletion, classifyToolResultFailure, type CompletionStates, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
 import { analyzeVisualEvidence } from "./visual-analysis.js";
 import { hasImageReferenceChange, requestsImageSwap, requestsFramingFix, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
@@ -228,6 +228,10 @@ export class ProspectorSiteAgent {
    *  falha da alteração — pode ser recuperada por método alternativo. */
   private verifyToolFailure = false;
   private verifyToolFailureDetail: string | null = null;
+  /** Guard de conclusão RECUSOU o finish_task (verificação não comprovada).
+   *  NÃO é falha de ferramenta — o guard exerceu autoridade. */
+  private guardBlocked = false;
+  private guardBlockedDetail: string | null = null;
   /** Pesquisas web REALMENTE executadas nesta missão (prova de não-simulação). */
   private researchTrace: ResearchTraceItem[] = [];
 
@@ -498,6 +502,8 @@ export class ProspectorSiteAgent {
     this.toolFailureDetail = null;
     this.verifyToolFailure = false;
     this.verifyToolFailureDetail = null;
+    this.guardBlocked = false;
+    this.guardBlockedDetail = null;
     // RECUPERAÇÃO do Cline: se a sessão ficou presa numa run anterior (ex.: o
     // cliente desistiu após timeout e o engine continua "already running"),
     // abortamos a tarefa em voo ANTES de rodar — sem isso a próxima execução
@@ -531,18 +537,23 @@ export class ProspectorSiteAgent {
           rec.ok = !detection.isError;
           if (detection.isError) {
             const toolName = ev.toolName ?? ev.toolCall?.toolName ?? rec.toolName ?? "ferramenta";
-            const detail = `${toolName}${detection.message ? `: ${detection.message}` : ""}`;
             // Ferramenta de VERIFICAÇÃO/INSPEÇÃO (ex.: browser_reload) que falha
             // NÃO significa que a alteração falhou — pode ser confirmada por outro
             // caminho (browser_open/browser_eval/screenshot). Só ferramentas de
             // ALTERAÇÃO (write/edit/delete/rename/move) contam como falha real.
             const readOnly = !EDIT_TOOLS.has(toolName) && (VERIFY_TOOLS.has(toolName) || INSPECT_TOOLS.has(toolName));
-            if (readOnly) {
+            const classification = classifyToolResultFailure({ toolName, isError: true, message: detection.message, readOnlyVerify: readOnly });
+            if (classification.kind === "guard") {
+              // finish_task recusado pelo completion guard: o guard exerceu
+              // autoridade — NÃO é ferramenta quebrada.
+              this.guardBlocked = true;
+              if (!this.guardBlockedDetail) this.guardBlockedDetail = classification.detail ?? null;
+            } else if (classification.kind === "verify") {
               this.verifyToolFailure = true;
-              if (!this.verifyToolFailureDetail) this.verifyToolFailureDetail = detail;
-            } else {
+              if (!this.verifyToolFailureDetail) this.verifyToolFailureDetail = classification.detail ?? null;
+            } else if (classification.kind === "tool") {
               this.toolFailure = true;
-              if (!this.toolFailureDetail) this.toolFailureDetail = detail;
+              if (!this.toolFailureDetail) this.toolFailureDetail = classification.detail ?? null;
             }
           }
         }
@@ -617,6 +628,8 @@ export class ProspectorSiteAgent {
         toolFailureDetail: this.toolFailureDetail,
         verifyToolFailure: this.verifyToolFailure,
         verifyToolFailureDetail: this.verifyToolFailureDetail,
+        guardBlocked: this.guardBlocked,
+        guardBlockedDetail: this.guardBlockedDetail,
         touched,
         editedPaths: workEvidence.editedPaths,
         verificationTools,
