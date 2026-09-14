@@ -44,7 +44,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); });
 
-describe("Gravador de voz do Studio (estilo WhatsApp) — transcreve e envia como texto", () => {
+describe("Gravador de voz do Studio — transcreve para o CAMPO (você decide enviar)", () => {
   it("1) campo vazio mostra o mic; ao gravar, aparece a barra (timer) e o texto some", () => {
     renderPanel();
     expect(micButton()).toBeTruthy();
@@ -56,27 +56,29 @@ describe("Gravador de voz do Studio (estilo WhatsApp) — transcreve e envia com
     expect(FakeRecognition.instances).toHaveLength(1);
   });
 
-  it("2) falar → enviar → entrega UMA transcrição e volta ao campo de texto", () => {
+  it("2) falar → NÃO envia: a transcrição vai para o campo de texto", async () => {
     const onSend = vi.fn();
     renderPanel(onSend);
     fireEvent.click(micButton());
     act(() => lastRec().final("Crie um site para a clínica"));
-    expect(onSend).not.toHaveBeenCalled(); // nada é enviado durante a gravação
-    fireEvent.click(sendButton());
-    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled(); // nada durante a gravação
+    fireEvent.click(sendButton()); // ✓ da barra = finalizar gravação
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Crie um site para a clínica"));
+    expect(onSend).not.toHaveBeenCalled(); // NUNCA envia sozinho
+    // o usuário decide enviar
+    fireEvent.click(screen.getByTitle("Enviar"));
     expect(onSend).toHaveBeenCalledWith("Crie um site para a clínica");
-    expect(screen.getByRole("textbox")).toBeTruthy(); // barra fechou
   });
 
-  it("3) NADA é enviado durante a gravação; se só houver interim, ele é entregue ao enviar", async () => {
+  it("3) se só houver interim, ele vai como fallback para o CAMPO (sem enviar)", async () => {
     const onSend = vi.fn();
     renderPanel(onSend);
     fireEvent.click(micButton());
     act(() => lastRec().interim("texto provisório"));
-    expect(onSend).not.toHaveBeenCalled(); // nada durante a gravação
+    expect(onSend).not.toHaveBeenCalled();
     fireEvent.click(sendButton());
-    // Sem final, aguarda a janela de finalização e entrega o interim (fallback).
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith("texto provisório"), { timeout: 2000 });
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("texto provisório"), { timeout: 2000 });
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("3b) sem nenhum resultado → avisa que não transcreveu e não envia", async () => {
@@ -89,17 +91,18 @@ describe("Gravador de voz do Studio (estilo WhatsApp) — transcreve e envia com
     expect(screen.getByRole("textbox")).toBeTruthy();
   });
 
-  it("4) cancelar (lixeira) descarta: nada é enviado e volta ao campo", () => {
+  it("4) cancelar (lixeira) descarta: nada vai para o campo nem é enviado", () => {
     const onSend = vi.fn();
     renderPanel(onSend);
     fireEvent.click(micButton());
     act(() => lastRec().final("não deve ser enviado"));
     fireEvent.click(cancelButton());
     expect(onSend).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox")).toBeTruthy();
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(box.value).toBe("");
   });
 
-  it("5) pausa longa (onend automático) reinicia e as partes Somam na ordem", () => {
+  it("5) pausa longa (onend automático) reinicia e as partes Somam no campo", async () => {
     const onSend = vi.fn();
     renderPanel(onSend);
     fireEvent.click(micButton());
@@ -108,7 +111,8 @@ describe("Gravador de voz do Studio (estilo WhatsApp) — transcreve e envia com
     expect(FakeRecognition.instances.length).toBeGreaterThanOrEqual(2);
     act(() => lastRec().final("Segunda parte"));
     fireEvent.click(sendButton());
-    expect(onSend).toHaveBeenCalledWith("Primeira parte Segunda parte");
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Primeira parte Segunda parte"));
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("6) microfone negado → avisa e não grava (sem enviar nada)", () => {
@@ -131,20 +135,22 @@ describe("Gravador de voz do Studio (estilo WhatsApp) — transcreve e envia com
     expect(screen.getByRole("textbox")).toBeTruthy();
   });
 
-  it("8) duas gravações seguidas funcionam (regressão) e sessão antiga não interfere", () => {
+  it("8) duas gravações seguidas acumulam no campo (sem envio automático)", async () => {
     const onSend = vi.fn();
     renderPanel(onSend);
     fireEvent.click(micButton());
     act(() => lastRec().final("Um"));
     fireEvent.click(sendButton());
-    expect(onSend).toHaveBeenLastCalledWith("Um");
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Um"));
     const old = FakeRecognition.instances[0];
     act(() => old.end()); // evento tardio da sessão antiga
     fireEvent.click(micButton());
     expect(lastRec()).not.toBe(old);
     act(() => lastRec().final("Dois"));
     fireEvent.click(sendButton());
-    expect(onSend).toHaveBeenLastCalledWith("Dois");
-    expect(onSend).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Um Dois"));
+    expect(onSend).not.toHaveBeenCalled(); // só envia no botão Enviar
+    fireEvent.click(screen.getByTitle("Enviar"));
+    expect(onSend).toHaveBeenCalledWith("Um Dois");
   });
 });

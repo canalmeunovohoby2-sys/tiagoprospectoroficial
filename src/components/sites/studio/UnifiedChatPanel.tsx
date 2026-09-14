@@ -83,10 +83,17 @@ export function UnifiedChatPanel({
   const [pending, setPending] = useState<ChatAttachmentRef[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const textRef = useRef<HTMLTextAreaElement>(null);
 
-  // Gravador de voz (estilo WhatsApp): transcreve e envia como instrução.
+  // Gravador de voz (estilo WhatsApp): transcreve para o CAMPO DE TEXTO — o
+  // usuário revisa/edita e decide enviar. NUNCA envia sozinho.
   const rec = useVoiceRecorder({
-    onTranscript: (t) => { setMicNotice(null); onSend(t); },
+    onTranscript: (t) => {
+      setMicNotice(null);
+      setText((prev) => (prev.trim() ? `${prev.trim()} ${t}` : t));
+      // foco no campo para revisar e apertar Enviar
+      window.setTimeout(() => textRef.current?.focus(), 0);
+    },
     onNotice: (m) => setMicNotice(m),
   });
 
@@ -287,6 +294,7 @@ export function UnifiedChatPanel({
             )}
             <div className="flex items-end gap-2">
             <textarea
+              ref={textRef}
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={onKeyDown}
@@ -310,23 +318,27 @@ export function UnifiedChatPanel({
               <Button type="button" size="icon" variant="destructive" className="h-9 w-9 shrink-0" onClick={onCancel} title="Cancelar execução">
                 <Square className="h-4 w-4" />
               </Button>
-            ) : (text.trim() || pending.length > 0) ? (
-              <Button type="button" size="icon" className="h-9 w-9 shrink-0" disabled={!canSend} onClick={submit} title="Enviar">
-                <Send className="h-4 w-4" />
-              </Button>
             ) : (
-              // Campo vazio → mic (igual ao WhatsApp). A voz vira texto e é enviada.
-              <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                className="h-9 w-9 shrink-0"
-                disabled={disabled}
-                onClick={() => { setMicNotice(null); rec.start(); }}
-                title="Gravar com voz"
-              >
-                <Mic className="h-4 w-4" />
-              </Button>
+              <>
+                {/* Mic SEMPRE disponível (ditar de novo/acrescentar); o Enviar
+                    aparece quando há texto ou anexos — a transcrição NÃO envia. */}
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  className="h-9 w-9 shrink-0"
+                  disabled={disabled}
+                  onClick={() => { setMicNotice(null); rec.start(); }}
+                  title="Gravar com voz"
+                >
+                  <Mic className="h-4 w-4" />
+                </Button>
+                {(text.trim() || pending.length > 0) && (
+                  <Button type="button" size="icon" className="h-9 w-9 shrink-0" disabled={!canSend} onClick={submit} title="Enviar">
+                    <Send className="h-4 w-4" />
+                  </Button>
+                )}
+              </>
             )}
             </div>
           </div>
