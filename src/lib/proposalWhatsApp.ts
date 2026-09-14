@@ -8,8 +8,16 @@ export interface ProposalLeadLike {
   whatsapp?: string | null;
   phone?: string | null;
   segment?: string | null;
+  category?: string | null;
   city?: string | null;
   state?: string | null;
+  address?: string | null;
+  /** Foto real do estabelecimento (scraper/og:image/Google Places). */
+  photo_name?: string | null;
+  /** URL do Google Maps (fonte de place_id). */
+  google_url?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface ProposalTarget {

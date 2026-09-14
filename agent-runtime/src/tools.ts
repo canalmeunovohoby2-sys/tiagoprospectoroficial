@@ -20,6 +20,7 @@ import { isSensitivePath } from "./workspace.js";
 export interface BusinessContext {
   name?: string | null;
   segment?: string | null;
+  category?: string | null;
   city?: string | null;
   state?: string | null;
   phone?: string | null;
@@ -27,6 +28,14 @@ export interface BusinessContext {
   address?: string | null;
   about?: string | null;
   services?: string[];
+  /** Fotos REAIS do estabelecimento (URLs http/https fornecidas pelo sistema). Nunca inventar. */
+  photos?: string[];
+  /** Imagens ilustrativas/stock do sistema existente (apoio visual, NÃO do cliente). */
+  stockImages?: string[];
+  /** Place ID do Google (ChIJ...) para localização/mapa. */
+  placeId?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 export interface ToolEnv {

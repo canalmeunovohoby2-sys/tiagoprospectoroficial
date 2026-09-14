@@ -37,6 +37,7 @@ import { buildWorkTimeline } from "@/lib/agentWorkActivity";
 import { extractSitePalette } from "@/lib/sitePalette";
 import { ProposalWhatsAppDialog } from "@/components/app/ProposalWhatsAppDialog";
 import type { ProposalLeadLike } from "@/lib/proposalWhatsApp";
+import { buildSiteMediaContext, fetchIllustrativeImages } from "@/lib/studio/siteMediaContext";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -144,38 +145,56 @@ export default function SiteProjectPage() {
   const [genElapsed, setGenElapsed] = useState(0);
   const genStartRef = useRef(0);
   const [projectLead, setProjectLead] = useState<ProposalLeadLike | null>(null);
+  // Evita disparar a 1ª geração ANTES de termos os dados reais do lead (fotos,
+  // endereço, place/geo) — senão o site nasceria sem imagens/mapa.
+  const [leadLoaded, setLeadLoaded] = useState(false);
+  const projectLeadRef = useRef<ProposalLeadLike | null>(null);
+  projectLeadRef.current = projectLead;
 
-  // WhatsApp comprovado do lead vinculado ao projeto (leads.lead_id).
+  // Dados REAIS do lead vinculado ao projeto (inclui foto/geo/place para o site).
   useEffect(() => {
     const leadId = project?.lead_id ?? null;
     setProjectLead(null);
-    if (!leadId) return;
+    setLeadLoaded(false);
+    if (!leadId) { setLeadLoaded(true); return; }
     let cancelled = false;
     (async () => {
       const { data, error } = await supabase
         .from("leads")
-        .select("id, name, whatsapp, phone, segment, city")
+        .select("id, name, whatsapp, phone, segment, category, city, state, address, photo_name, google_url, latitude, longitude")
         .eq("id", String(leadId))
         .maybeSingle();
-      if (cancelled || error || !data) return;
-      setProjectLead(data as unknown as ProposalLeadLike);
+      if (cancelled) return;
+      if (!error && data) setProjectLead(data as unknown as ProposalLeadLike);
+      setLeadLoaded(true);
     })();
     return () => { cancelled = true; };
-  }, [project?.lead_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project?.lead_id]);
 
 // Primeira geração de um projeto React: instrução com os dados REAIS do cliente
 // (o template inicial NÃO é o site final). Roda pelo mesmo /run → StudioTeam.
 function buildReactKickoffInstruction(project: {
   name: string; company_name?: string | null; segment?: string | null;
   city?: string | null; state?: string | null; briefing?: unknown;
-}): string {
+}, lead?: ProposalLeadLike | null): string {
   const b = (project.briefing && typeof project.briefing === "object" ? project.briefing : {}) as Record<string, unknown>;
   const str = (...keys: string[]): string | null => {
     for (const k of keys) { const v = b[k]; if (typeof v === "string" && v.trim()) return v.trim(); }
     return null;
   };
-  const contact = str("phone", "telefone", "whatsapp");
-  const address = str("address", "endereco", "endereço");
+  const media = buildSiteMediaContext({
+    name: project.company_name || project.name,
+    segment: project.segment ?? str("segment", "segmento"),
+    category: lead?.category ?? str("category", "categoria"),
+    address: str("address", "endereco", "endereço") ?? lead?.address ?? null,
+    city: project.city ?? str("city", "cidade"),
+    state: project.state ?? str("state", "estado", "uf"),
+    photoName: lead?.photo_name,
+    googleUrl: lead?.google_url,
+    latitude: lead?.latitude,
+    longitude: lead?.longitude,
+  });
+  const contact = str("phone", "telefone", "whatsapp") ?? lead?.whatsapp ?? lead?.phone ?? null;
   const about = str("about", "sobre", "description");
   const userPrompt = typeof b.user_prompt === "string" ? b.user_prompt.trim() : "";
   const services = Array.isArray(b.services) ? (b.services as unknown[]).filter((x) => typeof x === "string").slice(0, 12).join(", ") : "";
@@ -184,15 +203,20 @@ function buildReactKickoffInstruction(project: {
     project.segment ? `Segmento: ${project.segment}` : null,
     project.city ? `Cidade: ${project.city}${project.state ? `/${project.state}` : ""}` : null,
     contact ? `Contato: ${contact}` : null,
-    address ? `Endereço: ${address}` : null,
+    media.address ? `Endereço: ${media.address}` : null,
+    media.photos.length ? `Fotos reais (use EXATAMENTE estas URLs): ${media.photos.join(", ")}` : "Fotos reais: nenhuma disponível",
+    media.placeId ? `Place ID do Google: ${media.placeId}` : null,
+    (media.latitude !== null && media.longitude !== null) ? `Coordenadas: ${media.latitude},${media.longitude}` : null,
     about ? `Sobre: ${about}` : null,
     services ? `Serviços: ${services}` : null,
   ].filter(Boolean).join("\n");
   return [
-    "Gere AGORA o site profissional COMPLETO deste cliente, substituindo o template inicial. Use SOMENTE os dados reais abaixo — NÃO invente telefone, endereço, serviços ou fatos comerciais.",
+    "Gere AGORA o site profissional COMPLETO deste cliente, substituindo o template inicial. Use SOMENTE os dados reais abaixo — NÃO invente telefone, endereço, serviços, depoimentos, números ou fatos comerciais.",
     userPrompt ? `Pedido original: ${userPrompt}` : "",
     facts,
-    "Entregue seções reais e responsivas (cabeçalho/navegação, hero, serviços, sobre, depoimentos, contato e rodapé) em React + Tailwind, com componentes funcionais.",
+    "Isto NÃO é um protótipo: entregue um site comercial premium, com várias seções quando o contexto permitir (cabeçalho/navegação, hero de alto impacto, apresentação, serviços/produtos, diferenciais, galeria com as fotos reais, processo, localização com Google Maps, contato/CTA e rodapé completo).",
+    "OBRIGATÓRIO: seção de Localização com endereço real, <iframe> responsivo do Google Maps e botão \"Abrir rota\". Use a URL de mapa indicada no contexto (sem chave de API).",
+    "Use as fotos reais fornecidas quando existirem; se não houver, não use imagens quebradas nem ícones no lugar de fotos. Responsivo em mobile (~390px) e desktop (~1366px).",
     "Use write_file/edit_file para alterar os arquivos reais do projeto e só finalize quando o site do cliente estiver aplicado.",
   ].filter(Boolean).join("\n\n");
 }
@@ -709,7 +733,7 @@ function buildReactKickoffInstruction(project: {
   async function runAiInstruction(
     instruction: string,
     attachment?: { dataUrl: string; label: string },
-    opts?: { displayText?: string; acceptReport?: boolean; files?: Record<string, string>; silent?: boolean },
+    opts?: { displayText?: string; acceptReport?: boolean; files?: Record<string, string>; silent?: boolean; media?: boolean },
   ) {
     if (!project) return;
     const displayText = opts?.displayText ?? instruction;
@@ -750,6 +774,28 @@ function buildReactKickoffInstruction(project: {
         try {
           const cContent = (draftSpec.content ?? {}) as Record<string, unknown>;
           const cContact = (cContent.contact ?? {}) as Record<string, unknown>;
+          const lead = projectLeadRef.current;
+          // Mídia/localização REAIS do cliente (React Studio). O front só entrega
+          // dados verificáveis; o runtime monta o mapa (sem API key) e as regras.
+          const media = isReactProject
+            ? buildSiteMediaContext({
+                name: project.company_name || project.name,
+                segment: project.segment,
+                category: lead?.category ?? null,
+                address: (typeof cContact.address === "string" ? cContact.address : null) ?? lead?.address ?? null,
+                city: project.city,
+                state: project.state,
+                photoName: lead?.photo_name,
+                googleUrl: lead?.google_url,
+                latitude: lead?.latitude,
+                longitude: lead?.longitude,
+              })
+            : null;
+          // Sem foto real e numa geração completa → imagens ilustrativas do
+          // sistema existente (Pexels via get-images). Best-effort, nunca falha.
+          const stock = media && media.photos.length === 0 && opts?.media
+            ? await fetchIllustrativeImages(project.segment, 6)
+            : [];
           agentRes = await invokeProspectorAgent({
             instruction,
             files: runFiles,
@@ -758,11 +804,17 @@ function buildReactKickoffInstruction(project: {
             context: {
               name: project.company_name || project.name,
               segment: project.segment,
+              category: media?.category ?? null,
               city: project.city,
               state: project.state,
               phone: typeof cContact.phone === "string" ? cContact.phone : null,
               whatsapp: typeof cContact.whatsapp === "string" ? cContact.whatsapp : null,
-              address: typeof cContact.address === "string" ? cContact.address : null,
+              address: media?.address ?? (typeof cContact.address === "string" ? cContact.address : null),
+              photos: media?.photos ?? [],
+              stockImages: stock,
+              placeId: media?.placeId ?? null,
+              latitude: media?.latitude ?? null,
+              longitude: media?.longitude ?? null,
             },
             memory: designMemory(),
             attachments: attachment ? [{ name: attachment.label, dataUrl: attachment.dataUrl, mediaType: guessMediaType(attachment.dataUrl), label: attachment.label }] : [],
@@ -1153,11 +1205,12 @@ function buildReactKickoffInstruction(project: {
   useEffect(() => {
     if (!project || !isReactProject || !kickoffPending) return;
     if (!draftFiles || Object.keys(draftFiles).length === 0) return;
+    if (!leadLoaded) return; // espera os dados reais (fotos/endereço/geo) do lead
     if (generating || aiRunning) return;
     if (kickoffStartedRef.current === project.id) return;
     kickoffStartedRef.current = project.id;
-    const instruction = buildReactKickoffInstruction(project);
-    void runAiInstruction(instruction).then(async () => {
+    const instruction = buildReactKickoffInstruction(project, projectLeadRef.current);
+    void runAiInstruction(instruction, undefined, { media: true }).then(async () => {
       try {
         await markReactKickoffDone(project.id);
         setProject((p) => (p ? { ...p, settings: { ...(p.settings ?? {}), kind: "react", kickoff: "done" } } : p));
@@ -1166,7 +1219,7 @@ function buildReactKickoffInstruction(project: {
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id, kickoffPending, isReactProject, draftFiles, generating, aiRunning]);
+  }, [project?.id, kickoffPending, isReactProject, draftFiles, leadLoaded, generating, aiRunning]);
 
   function handleStudioEvent(event: StudioStreamEvent) {
     studioChat.handleEvent(event);

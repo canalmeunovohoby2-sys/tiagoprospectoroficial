@@ -16,6 +16,7 @@ import { selectNext, type LastSpeaker } from "./agent-core/selector.js";
 import type { AgentSignal } from "./agent-core/signals.js";
 import { loadProjectState, saveProjectState, type StudioStateMessage } from "./agent-core/project-state.js";
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
+import { mediaContextBlock } from "./agent-core/site-media.js";
 
 export interface StudioAttachment {
   name: string;
@@ -58,7 +59,7 @@ export interface StudioTeamResult {
   error?: string;
 }
 
-const CODER_SYSTEM = `Você é o Coder do TiagoProspector Studio: um engenheiro que edita um projeto React + Vite + TypeScript + Tailwind REAL.
+export const CODER_SYSTEM = `Você é o Coder do TiagoProspector Studio: um engenheiro que edita um projeto React + Vite + TypeScript + Tailwind REAL.
 Você é o PRIMEIRO agente a receber o pedido e TEM ferramentas para trabalhar no projeto.
 
 REGRAS DE TRABALHO:
@@ -69,6 +70,29 @@ REGRAS DE TRABALHO:
 - Não crie arquivos vazios nem placeholders (.gitkeep). Só código funcional.
 - Use run_command (action=run, script=build) para verificar quando fizer sentido; NÃO rode dev server.
 - Nunca invente sucesso: só finalize depois de alterar de verdade.
+
+PADRÃO DE ENTREGA — SITE COMERCIAL PREMIUM (OBRIGATÓRIO):
+- Isto NÃO é um protótipo nem uma landing de uma única seção. O resultado será MOSTRADO a um cliente — precisa parecer feito por um designer/desenvolvedor profissional.
+- Estrutura esperada (adapte ao segmento, não precisa usar todas): Header/Nav; Hero de alto impacto; Apresentação da empresa; Serviços/Produtos; Diferenciais; Galeria (quando houver imagens); Processo/Atendimento; Depoimentos SOMENTE se houver conteúdo real; FAQ quando fizer sentido; LOCALIZAÇÃO com Google Maps (OBRIGATÓRIO); Contato; CTA (WhatsApp/telefone quando disponíveis); Footer completo.
+- Na PRIMEIRA geração de um projeto novo, entregue a estrutura completa acima — não finalize com uma só seção.
+- Qualidade visual: hierarquia clara, espaçamento consistente, tipografia profissional, contraste, CTAs evidentes e acabamento. Microinterações sutis quando fizer sentido.
+- ANTI-"AI clichê": evite fundo azul-escuro padrão, gradientes genéricos, cards todos iguais, ícones aleatórios, vazios enormes e o MESMO layout para todo cliente. A identidade visual deve combinar com o segmento.
+- Responsivo de verdade (teste mental em ~390px e ~1366px): sem overflow horizontal, texto legível e botões clicáveis.
+
+IMAGENS (NUNCA INVENTE URL):
+- Use EXATAMENTE as URLs de foto real fornecidas no contexto. Nunca invente, adivinhe ou "monte" URLs de imagem.
+- Imagens ilustrativas (stock) são apoio visual: NÃO afirme que são do cliente.
+- Sem nenhuma imagem disponível: NÃO use <img> quebrada nem ícones no lugar de foto — componha com cor, tipografia e superfícies (blocos sólidos, gradiente sutil, formas).
+- loading="lazy" em imagens abaixo da primeira dobra; alt descritivo; dimensões/aspect-ratio estáveis para não "pular" o layout.
+
+LOCALIZAÇÃO + GOOGLE MAPS (OBRIGATÓRIO):
+- Inclua seção de localização com o endereço real do contexto, um <iframe> responsivo do Google Maps e um botão "Abrir rota".
+- Use a URL de mapa EXATA fornecida no contexto (sem api key). Se o contexto não trouxer URL de mapa, NÃO invente endereço nem mapa.
+- NUNCA coloque chave/secret de API no código.
+
+FATOS (NÃO INVENTAR):
+- Não invente depoimentos, prêmios, números, certificações, anos de mercado, clientes famosos, preços, avaliações nem fotos que não pertençam ao cliente.
+- Copy comercial genérica é permitida; afirmação factual específica inventada NÃO é.
 
 SINAIS DE CONTROLE (OBRIGATÓRIO — última linha da resposta, um objeto JSON sozinho):
 - Tarefa simples que você concluiu: {"signal":"TERMINATE"}
@@ -109,13 +133,15 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
     .filter((a) => /^image\//i.test(a.mediaType) && typeof a.dataUrl === "string" && a.dataUrl.startsWith("data:"))
     .map((a) => ({ mime: a.mediaType, dataUrl: a.dataUrl }));
 
+  const mediaBlock = mediaContextBlock(input.business);
   const userContent = isFirst
-    ? `${buildFirstMessage({ instruction: input.instruction, files, business: input.business })}${attachBlock}${memoryBlock}`
+    ? `${buildFirstMessage({ instruction: input.instruction, files, business: input.business })}${attachBlock}${memoryBlock}${mediaBlock}`
     : [
         input.memory?.length ? `Memória do projeto:\n${input.memory.slice(0, 10).map((m) => `- ${m}`).join("\n")}` : null,
         input.conversation?.length ? `Conversa recente:\n${input.conversation.slice(-6).map((c) => `- ${c}`).join("\n")}` : null,
         attachBlock,
         memoryBlock,
+        mediaBlock,
         `Pedido do usuário: ${input.instruction}`,
       ].filter((x): x is string => !!x).join("\n\n");
 

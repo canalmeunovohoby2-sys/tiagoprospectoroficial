@@ -408,7 +408,7 @@ export async function invokeProspectorAgent(input: {
   instruction: string;
   files: Record<string, string>;
   projectId?: string;
-  context: { name?: string | null; segment?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null };
+  context: { name?: string | null; segment?: string | null; category?: string | null; city?: string | null; state?: string | null; phone?: string | null; whatsapp?: string | null; address?: string | null; photos?: string[]; stockImages?: string[]; placeId?: string | null; latitude?: number | null; longitude?: number | null };
   memory?: string[];
   attachments?: ChatAttachmentInput[];
   /** Conversa recente (contexto de continuidade) — usada no prompt do agente. */
