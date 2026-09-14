@@ -35,7 +35,6 @@ import { useStudioChat } from "@/hooks/studio/useStudioChat";
 import type { StudioStreamEvent, StudioFilesReadyEvent } from "@/lib/studio/streamEvents";
 import { GitHubProjectButton } from "@/components/app/GitHubProjectButton";
 import { buildStrategyInstruction, strategyById } from "@/lib/siteStrategies";
-import { buildWorkTimeline } from "@/lib/agentWorkActivity";
 import { extractSitePalette } from "@/lib/sitePalette";
 import { ProposalWhatsAppDialog } from "@/components/app/ProposalWhatsAppDialog";
 import type { ProposalLeadLike } from "@/lib/proposalWhatsApp";
@@ -762,11 +761,11 @@ function buildReactKickoffInstruction(project: {
     const stopProgress = runAgentProgress(EDIT_STEPS, 1400);
     const snapshot = draftSpec;
     const hasWorkspace = !!runFiles && Object.keys(runFiles).length > 0;
-    const pushReply = (msg: string, activity?: Array<{ phase: string; detail: string }>, changedFiles?: string[]) => {
-      // Resposta enxuta no chat: no máximo 3 linhas de timeline.
-      const full = `${msg}${buildWorkTimeline(activity, changedFiles, 3)}`;
-      setAiMessages((prev) => [...prev, { role: "assistant", text: full }]);
-      appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: full }], conversationId ?? undefined).catch(() => {});
+    // Resposta LIMPA no chat: o log interno (arquivos lidos/editados, ferramentas)
+    // NÃO é narrado — o progresso humanizado já cobre a execução.
+    const pushReply = (msg: string) => {
+      setAiMessages((prev) => [...prev, { role: "assistant", text: msg }]);
+      appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }], conversationId ?? undefined).catch(() => {});
     };
     try {
       // ===== CAMINHO PRINCIPAL: Cline Agent no workspace (código real) =====
@@ -843,7 +842,7 @@ function buildReactKickoffInstruction(project: {
           const agentAny = agentRes as { interaction_blocked?: boolean; errors?: string[] };
           if (agentAny.interaction_blocked) {
             const blocked = agentAny.errors?.length ? agentAny.errors.slice(0, 3).join("; ") : "alguns cliques deixam a tela preta";
-            pushReply(`⚠ Auditoria de interação bloqueou a entrega: ${blocked}. A alteração NÃO foi salva como concluída — continue me pedindo o ajuste que eu tento de novo.`, agentRes.activity);
+            pushReply(`⚠ Auditoria de interação bloqueou a entrega: ${blocked}. A alteração NÃO foi salva como concluída — continue me pedindo o ajuste que eu tento de novo.`);
             stopProgress();
             setAgentStep(null);
             setAiRunning(false);
@@ -865,7 +864,7 @@ function buildReactKickoffInstruction(project: {
           else savedNote = `\n\n⚠ Não foi possível salvar automaticamente: ${autosave.error || "erro desconhecido"}. Clique em Salvar para persistir.`;
           const valErrors = agentRes.status === "error" && agentRes.errors?.length ? `\n(Validação reportou: ${agentRes.errors.slice(0, 2).join("; ")})` : "";
           const changedKeys = Object.keys(agentRes.files).filter((p) => runFiles?.[p] !== agentRes.files?.[p]);
-          pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}${valErrors}`, agentRes.activity, changedKeys);
+          pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}${valErrors}`);
           stopProgress();
           setAgentStep(null);
           setAiRunning(false);
@@ -876,7 +875,7 @@ function buildReactKickoffInstruction(project: {
           // resultado correto. Nada é alterado, versionado nem salvo.
           const report = agentRes.reply?.trim();
           if (report) {
-            pushReply(report, agentRes.activity);
+            pushReply(report);
             stopProgress();
             setAgentStep(null);
             setAiRunning(false);
@@ -888,7 +887,7 @@ function buildReactKickoffInstruction(project: {
           // encontrar o trecho/arquivo). Honestidade: NÃO cair no fallback que
           // "responde que fez" sem ter feito — informa o bloqueio ao usuário.
           const reason = agentRes.errors!.slice(0, 3).join("; ");
-          pushReply(`⚠ Não consegui concluir essa alteração: ${reason}\nNada foi modificado no site. Me diga o que deseja de outro jeito (ou confira o nome/imagem exatos) que eu tento novamente.`, agentRes.activity);
+          pushReply(`⚠ Não consegui concluir essa alteração: ${reason}\nNada foi modificado no site. Me diga o que deseja de outro jeito (ou confira o nome/imagem exatos) que eu tento novamente.`);
           stopProgress();
           setAgentStep(null);
           setAiRunning(false);

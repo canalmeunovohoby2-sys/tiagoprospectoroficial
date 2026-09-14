@@ -43,8 +43,74 @@ export type UnifiedChatItem =
       status: StudioRunStatus;
       filesUpdated?: boolean;
       startedAt: number;
+      /** Progresso HUMANIZADO (único, atualizado durante a execução). */
+      progress: AgentProgress;
     }
   | { kind: "commit"; id: string; message: string; hash?: string };
+
+/** Estados do progresso exibido ao usuário (PT-BR, sem nomes de ferramentas). */
+export type AgentProgressStatus =
+  | "ANALYZING"
+  | "DESIGNING"
+  | "BUILDING"
+  | "INTEGRATING"
+  | "REFINING"
+  | "VALIDATING"
+  | "COMPLETED"
+  | "ERROR"
+  | "CANCELLED";
+
+export interface AgentProgress {
+  id: string;
+  status: AgentProgressStatus;
+  message: string;
+}
+
+/** ID único do item de progresso (o MESMO item é atualizado, nunca duplicado). */
+export const AGENT_PROGRESS_ID = "agent-progress";
+
+export const AGENT_PROGRESS_MESSAGE: Record<AgentProgressStatus, string> = {
+  ANALYZING: "🔎 Analisando o projeto e as informações do negócio...",
+  DESIGNING: "🎨 Definindo a direção visual e a identidade do site...",
+  BUILDING: "🧩 Construindo o layout e os componentes...",
+  INTEGRATING: "🖼️ Integrando imagens, localização e elementos visuais...",
+  REFINING: "✨ Refinando composição, responsividade e acabamento...",
+  VALIDATING: "🧪 Validando o resultado final...",
+  COMPLETED: "✅ Site concluído.",
+  ERROR: "⚠️ Encontrei um problema durante a geração. Estou ajustando...",
+  CANCELLED: "⚠️ Geração cancelada.",
+};
+
+const WRITE_TOOLS = new Set(["write_file", "edit_file", "create_file", "delete_file", "rename_file", "move_file"]);
+
+/**
+ * Progresso humanizado a partir dos eventos REAIS da run. Escada monotônica
+ * (analisar → desenhar → construir → integrar → refinar → validar) para o usuário
+ * ver UM único status evoluindo — sem nomes de ferramentas nem log interno.
+ */
+export function deriveAgentProgress(run: StudioRun | null, running: boolean): AgentProgress {
+  const base = (status: AgentProgressStatus): AgentProgress => ({ id: AGENT_PROGRESS_ID, status, message: AGENT_PROGRESS_MESSAGE[status] });
+  if (!run) return base("ANALYZING");
+  if (!running || run.status !== "running") {
+    if (run.status === "error") return base("ERROR");
+    if (run.status === "cancelled") return base("CANCELLED");
+    return base("COMPLETED");
+  }
+
+  const calls = run.events.filter((e) => e.message_type === "tool_call");
+  const toolNames = calls.map((e) => String(e.tool_name ?? ""));
+  const writes = toolNames.filter((n) => WRITE_TOOLS.has(n)).length;
+  const hasDesign = toolNames.includes("design_skills") || run.events.some((e) => e.agent_name === "Planner");
+  const hasValidate = writes > 0 && toolNames.includes("run_command");
+
+  let status: AgentProgressStatus = "ANALYZING";
+  if (hasDesign) status = "DESIGNING";
+  if (writes >= 1) status = "BUILDING";
+  if (writes >= 2) status = "INTEGRATING";
+  if (writes >= 4) status = "REFINING";
+  if (hasValidate) status = "VALIDATING";
+  return base(status);
+}
 
 export interface BuildUnifiedChatInput {
   messages: ChatConversationMessage[];
@@ -94,6 +160,7 @@ function toActivityItem(run: StudioRun): UnifiedChatItem {
     status: run.status,
     filesUpdated: run.filesUpdated,
     startedAt: run.startedAt,
+    progress: deriveAgentProgress(run, run.status === "running"),
   };
 }
 

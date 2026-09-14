@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, type ComponentProps } from "react";
-import { ListChecks, Route as RouteIcon, Sparkles } from "lucide-react";
+import { Loader2, Route as RouteIcon } from "lucide-react";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
-import { AgentInteraction } from "./AgentInteraction";
-import { ToolExecutionBlock } from "./ToolExecutionBlock";
 import { UnifiedChatPanel } from "./UnifiedChatPanel";
-import { buildUnifiedChat } from "@/lib/studio/chatModel";
+import { buildUnifiedChat, deriveAgentProgress } from "@/lib/studio/chatModel";
 import type { UseStudioChatResult } from "@/hooks/studio/useStudioChat";
 
 export type StudioChatPanelProps = ComponentProps<typeof SiteChat> & {
@@ -24,12 +22,17 @@ function StudioStreamTimeline({ stream }: { stream: UseStudioChatResult }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const visible = stream.running || stream.items.length > 0 || !!stream.plan || !!stream.route;
   const routeLabel = stream.route?.route === "planner" ? "Planner → Coder" : stream.route ? "Coder direto" : null;
+  const lastRun = stream.runs.length ? stream.runs[stream.runs.length - 1] : null;
+  // UM status humanizado (PT-BR) — operações internas NÃO aparecem no chat.
+  const progress = useMemo(() => deriveAgentProgress(lastRun, stream.running), [lastRun, stream.running]);
 
   useEffect(() => {
     if (stream.running) bottomRef.current?.scrollIntoView({ block: "end" });
   }, [stream.items.length, stream.running]);
 
   if (!visible) return null;
+  const done = progress.status === "COMPLETED";
+  const errored = progress.status === "ERROR" || progress.status === "CANCELLED";
 
   return (
     <div className="flex max-h-[40%] shrink-0 flex-col overflow-hidden rounded-xl border border-primary/20 bg-primary/[0.03]">
@@ -49,27 +52,13 @@ function StudioStreamTimeline({ stream }: { stream: UseStudioChatResult }) {
         {stream.cancelled && <span className="text-[10px] text-amber-600">cancelada</span>}
       </div>
 
-      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-2 [scrollbar-width:thin]">
-        {stream.plan && (
-          <div className="rounded-lg border border-amber-400/30 bg-amber-500/5 px-2.5 py-1.5">
-            <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600">
-              <ListChecks className="h-3 w-3" /> Plano do Planner
-            </p>
-            <pre className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-foreground/90">{stream.plan}</pre>
-          </div>
-        )}
-        {stream.items.map((item) =>
-          item.kind === "thought" ? (
-            <AgentInteraction key={item.id} agent={item.agent} content={item.content} />
-          ) : (
-            <ToolExecutionBlock key={item.id} item={item} />
-          ),
-        )}
-        {stream.running && stream.items.length === 0 && !stream.plan && (
-          <p className="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-            <Sparkles className="h-3 w-3 text-primary" /> preparando a execução…
-          </p>
-        )}
+      <div className="min-h-0 flex-1 overflow-y-auto p-2.5 [scrollbar-width:thin]">
+        <div role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 ${errored ? "border-destructive/30 bg-destructive/5 text-destructive" : done ? "border-emerald-500/25 bg-emerald-500/5 text-emerald-700" : "border-primary/25 bg-primary/[0.04]"}`}>
+          {!done && !errored
+            ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+            : <span className="shrink-0 text-[13px] leading-none">{done ? "✅" : "⚠️"}</span>}
+          <span className="text-[12.5px] font-medium">{progress.message}</span>
+        </div>
         <div ref={bottomRef} />
       </div>
     </div>

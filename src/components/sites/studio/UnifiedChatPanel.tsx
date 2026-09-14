@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
-  Bot, CheckCircle2, ChevronDown, ChevronRight, GitCommitHorizontal, Loader2, Mic, Paperclip,
+  Bot, CheckCircle2, GitCommitHorizontal, Loader2, Mic, Paperclip,
   Paintbrush, RotateCcw, Send, Sparkles, Square, User, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { AgentInteraction } from "./AgentInteraction";
-import { ToolExecutionBlock } from "./ToolExecutionBlock";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { VoiceRecordingBar } from "./VoiceRecordingBar";
 import { useVoiceRecorder } from "@/hooks/studio/useVoiceRecorder";
@@ -30,38 +28,26 @@ export interface UnifiedChatPanelProps {
   disabled?: boolean;
 }
 
-function ActivityBlock({ item }: { item: Extract<UnifiedChatItem, { kind: "activity" }> }) {
-  const [open, setOpen] = useState(item.status === "running");
-  const running = item.status === "running";
+/**
+ * Progresso do agente no chat: UM único status humanizado (PT-BR), atualizado
+ * durante a execução. As operações internas (read_file, list_files, design_skills,
+ * write_file, terminal...) continuam acontecendo, mas NÃO são exibidas ao usuário.
+ */
+function ProgressBlock({ item }: { item: Extract<UnifiedChatItem, { kind: "activity" }> }) {
+  const p = item.progress;
+  const done = p.status === "COMPLETED";
+  const errored = p.status === "ERROR" || p.status === "CANCELLED";
+  const tone = errored
+    ? "border-destructive/30 bg-destructive/5 text-destructive"
+    : done
+      ? "border-emerald-500/25 bg-emerald-500/5 text-emerald-700"
+      : "border-primary/25 bg-primary/[0.04] text-foreground";
   return (
-    <div className={`rounded-xl border bg-card/50 ${running ? "border-primary/30" : "border-border/60"}`}>
-      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-3 py-2 text-left">
-        <span className="relative flex h-2 w-2">
-          {running && <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />}
-          <span className={`relative inline-flex h-2 w-2 rounded-full ${running ? "bg-primary" : item.status === "error" ? "bg-destructive" : "bg-emerald-500"}`} />
-        </span>
-        <span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Agent Activity</span>
-        {item.filesUpdated && <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600">arquivos atualizados</span>}
-        <span className="ml-auto text-muted-foreground">{open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}</span>
-      </button>
-      {open && (
-        <div className="space-y-1.5 border-t border-border/50 p-2.5">
-          {item.plan && (
-            <div className="rounded-lg border border-amber-400/30 bg-amber-500/5 px-2.5 py-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">Plano do Planner</p>
-              <pre className="mt-0.5 whitespace-pre-wrap break-words text-[11.5px] leading-relaxed text-foreground/90">{item.plan}</pre>
-            </div>
-          )}
-          {item.items.length === 0 && !item.plan && (
-            <p className="px-1 text-[11px] text-muted-foreground">{running ? "preparando a execução…" : "sem detalhes"}</p>
-          )}
-          {item.items.map((it) =>
-            it.kind === "thought"
-              ? <AgentInteraction key={it.id} agent={it.agent} content={it.content} />
-              : <ToolExecutionBlock key={it.id} item={it} />,
-          )}
-        </div>
-      )}
+    <div role="status" aria-live="polite" className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${tone}`}>
+      {!done && !errored
+        ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+        : <span className="shrink-0 text-[13px] leading-none">{done ? "✅" : "⚠️"}</span>}
+      <span className="text-[12.5px] font-medium">{p.message}</span>
     </div>
   );
 }
@@ -75,7 +61,6 @@ export function UnifiedChatPanel({
   running,
   phase,
   currentAgent,
-  currentTool,
   error,
   visualMode,
   onToggleVisual,
@@ -101,7 +86,7 @@ export function UnifiedChatPanel({
   useEffect(() => {
     // jsdom não implementa scrollIntoView — guarda para testes/SSR.
     endRef.current?.scrollIntoView?.({ block: "end" });
-  }, [items.length, running, currentTool]);
+  }, [items.length, running, currentAgent]);
 
   const canSend = !!text.trim() && !running && !disabled;
   const submit = () => {
@@ -137,10 +122,8 @@ export function UnifiedChatPanel({
           {running && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
           {PHASE_LABEL[phase]}
         </span>
-        {running && (currentAgent || currentTool) && (
-          <span className="truncate text-[10px] text-muted-foreground">
-            {currentTool ? `${currentAgent ?? "Coder"} → ${currentTool}` : currentAgent}
-          </span>
+        {running && currentAgent && (
+          <span className="truncate text-[10px] text-muted-foreground">{currentAgent === "Planner" ? "Planejando" : "Trabalhando no projeto"}</span>
         )}
         <div className="ml-auto flex items-center gap-1">
           {onToggleVisual && (
@@ -194,7 +177,7 @@ export function UnifiedChatPanel({
               </div>
             );
           }
-          if (item.kind === "activity") return <ActivityBlock key={item.id} item={item} />;
+          if (item.kind === "activity") return <ProgressBlock key={item.id} item={item} />;
           if (item.kind === "commit") {
             return (
               <p key={item.id} className="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">

@@ -24,6 +24,7 @@ const items: UnifiedChatItem[] = [
       { kind: "thought", id: "t1", agent: "Coder", content: "Vou analisar a estrutura.", at: 1 },
       { kind: "tool", id: "c1", agent: "Coder", name: "read_file", args: { path: "src/App.tsx" }, response: "ok", status: "done", at: 2 },
     ],
+    progress: { id: "agent-progress", status: "BUILDING", message: "🧩 Construindo o layout e os componentes..." },
   },
   { kind: "assistant", id: "a1", text: "## Resumo\nA seção foi adicionada com **sucesso**." },
   { kind: "commit", id: "c1", message: "Adiciona seção de depoimentos", hash: "abc1234" },
@@ -42,11 +43,17 @@ function renderPanel(over: Partial<Parameters<typeof UnifiedChatPanel>[0]> = {})
 }
 
 describe("C2 · UnifiedChatPanel", () => {
-  it("mostra conversa, activity e commit no mesmo fluxo", () => {
+  it("mostra conversa, progresso humanizado e commit — SEM expor ferramentas internas", () => {
     renderPanel();
     expect(screen.getByText("Adicione uma seção de depoimentos")).toBeInTheDocument();
-    expect(screen.getByText("Agent Activity")).toBeInTheDocument();
-    expect(screen.getByText("read_file")).toBeInTheDocument();
+    // UM status de progresso em PT-BR…
+    expect(screen.getByText(/🧩 Construindo o layout/i)).toBeInTheDocument();
+    // …e NADA de nomes de ferramentas / labels internas.
+    expect(screen.queryByText("read_file")).toBeNull();
+    expect(screen.queryByText("Agent Activity")).toBeNull();
+    expect(screen.queryByText("list_files")).toBeNull();
+    expect(screen.queryByText("design_skills")).toBeNull();
+    expect(screen.queryByText("Vou analisar a estrutura.")).toBeNull();
     expect(screen.getByText(/Checkpoint: Adiciona seção de depoimentos/)).toBeInTheDocument();
   });
 
@@ -80,11 +87,12 @@ describe("C2 · UnifiedChatPanel", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
-  it("estado running: input desabilitado e cancelar funciona", () => {
+  it("estado running: input desabilitado e cancelar funciona (sem mostrar nome de tool)", () => {
     const onCancel = vi.fn();
     renderPanel({ running: true, phase: "tool_running", currentAgent: "Coder", currentTool: "write_file", onCancel });
     expect((screen.getByRole("textbox") as HTMLTextAreaElement).disabled).toBe(true);
-    expect(screen.getByText(/Coder → write_file/)).toBeInTheDocument();
+    expect(screen.queryByText(/write_file/)).toBeNull();
+    expect(screen.queryByText(/Coder →/)).toBeNull();
     fireEvent.click(screen.getByTitle("Cancelar execução"));
     expect(onCancel).toHaveBeenCalled();
   });
