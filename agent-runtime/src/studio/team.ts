@@ -90,7 +90,9 @@ IMAGENS (NUNCA INVENTE URL):
 - Use EXATAMENTE as URLs de foto real fornecidas no contexto. Nunca invente, adivinhe ou "monte" URLs de imagem.
 - Imagens ilustrativas (stock) são apoio visual: NÃO afirme que são do cliente.
 - Sem nenhuma imagem disponível: NÃO use <img> quebrada nem ícones no lugar de foto — componha com cor, tipografia e superfícies (blocos sólidos, gradiente sutil, formas).
-- loading="lazy" em imagens abaixo da primeira dobra; alt descritivo; dimensões/aspect-ratio estáveis para não "pular" o layout.
+- Todo <img> DEVE ter referrerPolicy="no-referrer", alt descritivo e loading="lazy" abaixo da primeira dobra. Isso evita o bloqueio de hotlink que deixa a foto quebrada.
+- Todo <img> DEVE ter onError que ESCONDE a imagem (ex.: e.currentTarget.style.display = "none") ou troca por um bloco de cor. NUNCA deixe o ícone de imagem quebrada/quadrado vazio aparecer.
+- Não referencie imagens locais por caminho relativo; use as URLs http(s) do contexto.
 
 AMBIENTE TÉCNICO (o PREVIEW e o BUILD precisam funcionar SEM novo npm install):
 - NÃO adicione dependências nem importe pacotes externos (ex.: lucide-react, react-icons, framer-motion, @mui, next/*, styled-components). O projeto tem SOMENTE React, ReactDOM e Tailwind — não altere package.json para adicionar bibliotecas.
@@ -102,6 +104,7 @@ AMBIENTE TÉCNICO (o PREVIEW e o BUILD precisam funcionar SEM novo npm install):
 LOCALIZAÇÃO + GOOGLE MAPS (OBRIGATÓRIO):
 - Inclua seção de localização com o endereço real do contexto, um <iframe> responsivo do Google Maps e um botão "Abrir rota".
 - Use a URL de mapa EXATA fornecida no contexto (sem api key). Se o contexto não trouxer URL de mapa, NÃO invente endereço nem mapa.
+- O <iframe> do mapa DEVE ter loading="lazy", referrerPolicy="no-referrer" e title. SEMPRE inclua também um link/botão "Abrir no Google Maps" (rota) visível — assim a localização funciona mesmo se o iframe for bloqueado.
 - NUNCA coloque chave/secret de API no código.
 
 FATOS (NÃO INVENTAR):

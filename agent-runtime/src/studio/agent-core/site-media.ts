@@ -140,7 +140,10 @@ export function mediaContextBlock(business: BusinessContext): string {
       : "  - SEM dados de endereço/cidade confiáveis: NÃO invente endereço nem mapa; omita a seção de mapa.",
     mapDirectionsUrl ? `  - Botão \"Abrir rota\": ${mapDirectionsUrl}` : "",
     cleanText(business.address) ? `  - Endereço real: ${cleanText(business.address)}` : "",
-    "  - Regras de imagem: loading=\"lazy\" abaixo da primeira dobra; alt descritivo; dimensões/aspect-ratio estáveis.",
+    "  - O <iframe> do mapa DEVE ter: loading=\"lazy\", referrerPolicy=\"no-referrer\" e título. Mostre SEMPRE um link/botão \"Abrir no Google Maps\" (rota) ao lado — mesmo se o iframe for bloqueado, a localização funciona.",
+    "REGRAS DE IMAGEM (evitam foto quebrada):",
+    "  - Todo <img> DEVE ter referrerPolicy=\"no-referrer\" (evita bloqueio de hotlink), alt descritivo e loading=\"lazy\" abaixo da primeira dobra.",
+    "  - Todo <img> DEVE ter onError que esconde a imagem (ex.: e.currentTarget.style.display=\"none\") ou troca por um bloco de cor — NUNCA deixe aparecer o ícone de imagem quebrada nem caixa vazia.",
   );
 
   return `\n\n${lines.filter(Boolean).join("\n")}`;

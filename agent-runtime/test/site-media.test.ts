@@ -64,6 +64,13 @@ describe("site-media · fotos reais vs ilustrativas", () => {
     expect(block).toContain("OBRIGATÓRIO");
   });
 
+  it("bloco de contexto exige img/mapa resilientes (sem foto quebrada, mapa com fallback)", () => {
+    const block = mediaContextBlock({ name: "Clínica X", photos: [PHOTO_A], address: "Rua A, 1", city: "Bauru", state: "SP" });
+    expect(block).toContain('referrerPolicy="no-referrer"');
+    expect(block).toContain("onError");
+    expect(block).toContain("Abrir no Google Maps");
+  });
+
   it("sem fotos reais avisa que não há — e proíbe inventar", () => {
     const block = mediaContextBlock({ name: "Sem Foto", city: "Bauru", state: "SP" });
     expect(block).toContain("nenhuma disponível");
@@ -97,5 +104,11 @@ describe("site-media · padrão premium no prompt central do Coder", () => {
     expect(CODER_SYSTEM).toMatch(/lucide-react/i);
     expect(CODER_SYSTEM).toMatch(/SVG inline/i);
     expect(CODER_SYSTEM).toMatch(/RELATIVOS/i);
+  });
+
+  it("CODER_SYSTEM exige imagem/mapa que não quebram", () => {
+    expect(CODER_SYSTEM).toContain('referrerPolicy="no-referrer"');
+    expect(CODER_SYSTEM).toContain("onError");
+    expect(CODER_SYSTEM).toMatch(/Abrir no Google Maps/);
   });
 });

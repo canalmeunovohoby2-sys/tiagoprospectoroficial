@@ -85,7 +85,7 @@ export default function PublicSitePage() {
       <iframe
         title={data.name}
         srcDoc={reactBuiltHtml}
-        sandbox="allow-scripts allow-modals allow-forms allow-popups allow-popups-to-escape-sandbox"
+        sandbox="allow-scripts allow-same-origin allow-modals allow-forms allow-popups allow-popups-to-escape-sandbox"
         className="block h-screen w-full border-0 bg-white"
       />
     );

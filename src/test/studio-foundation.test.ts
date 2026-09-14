@@ -99,4 +99,17 @@ describe("C0 · isolation (COOP/COEP)", () => {
     expect(keys).toContain("Cross-Origin-Opener-Policy");
     expect(keys).toContain("Cross-Origin-Embedder-Policy");
   });
+
+  it("site publicado libera mídia cross-origin: iframe same-origin + COEP desligado em /public", () => {
+    const root = process.cwd();
+    const pub = readFileSync(join(root, "src/pages/PublicSitePage.tsx"), "utf8");
+    expect(pub).toContain("allow-same-origin");
+    const vercel = JSON.parse(readFileSync(join(root, "vercel.json"), "utf8")) as {
+      headers: Array<{ source: string; headers: Array<{ key: string; value: string }> }>;
+    };
+    const publicRule = vercel.headers.find((h) => h.source === "/public/(.*)");
+    expect(publicRule, "regra de /public ausente").toBeTruthy();
+    const coep = publicRule?.headers.find((x) => x.key === "Cross-Origin-Embedder-Policy");
+    expect(coep?.value).toBe("unsafe-none");
+  });
 });
