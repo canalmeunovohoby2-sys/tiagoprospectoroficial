@@ -116,6 +116,9 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
   const briefingMap = pickLeadForSpec(lead);
   const briefing = briefingMap as unknown as Json;
   const slug = await uniqueSlug(name);
+  // FLUXO ÚNICO: o Lead cria um projeto REACT já com o template Vite em
+  // `generated_code` (Studio/WebContainer). NÃO passa por /generate nem Cline.
+  const template = buildReactTemplateFiles({ name, tagline: String(briefingMap.segment ?? name) });
   const { data: created, error } = await supabase
     .from("site_projects")
     .insert({
@@ -127,7 +130,9 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
       segment: briefingMap.segment ? String(briefingMap.segment) : null,
       city: briefingMap.city ? String(briefingMap.city) : null,
       state: briefingMap.state ? String(briefingMap.state) : null,
-      status: "draft",
+      status: "generated",
+      settings: { kind: "react" } as unknown as Json,
+      generated_code: template as unknown as Json,
       briefing,
     })
     .select("id")
@@ -139,7 +144,10 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
 // Cria um Site Project INDEPENDENTE de Lead, a partir do prompt do usuário.
 // lead_id fica NULL (o schema permite `on delete set null`); o prompt original
 // é guardado em briefing.user_prompt para alimentar a geração e as edições.
-export async function createSiteProjectFromPrompt(userId: string, prompt: string, kind: SiteProjectKind = "static"): Promise<string> {
+//
+// FLUXO ÚNICO: todo NOVO projeto nasce React (Studio/WebContainer). O parâmetro
+// `kind` segue existindo apenas por compatibilidade interna; a UI usa sempre "react".
+export async function createSiteProjectFromPrompt(userId: string, prompt: string, kind: SiteProjectKind = "react"): Promise<string> {
   const cleaned = (prompt ?? "").trim();
   if (!cleaned) throw new Error("Descreva o site que você quer criar.");
   // Nome comercial plausível extraído do prompt; nunca o checklist/slug.

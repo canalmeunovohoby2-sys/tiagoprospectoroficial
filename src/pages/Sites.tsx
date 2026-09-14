@@ -12,7 +12,6 @@ import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow } from "@/data/siteProjects";
 import { statusLabel } from "@/data/siteProjects";
 import { listSiteProjects, deleteSiteProject, createSiteProjectFromPrompt } from "@/lib/siteProjectsApi";
-import type { SiteProjectKind } from "@/data/siteProjects";
 import { createBrandingProject as createBrand } from "@/lib/brandingApi";
 import { PromptCreator } from "@/components/app/PromptCreator";
 
@@ -36,8 +35,6 @@ export default function Sites() {
   const [creating, setCreating] = useState(false);
   // Modo do Studio: gerar site (fluxo existente) OU criar prompt premium.
   const [mode, setMode] = useState<"generate" | "prompt">("generate");
-  // C0: tipo do projeto criado (static = legado; react = WebContainer).
-  const [createKind, setCreateKind] = useState<SiteProjectKind>("static");
 
   async function load() {
     if (!user) return;
@@ -58,10 +55,10 @@ export default function Sites() {
     if (!p) { toast.error("Descreva o site que você quer criar."); return; }
     setCreating(true);
     try {
-      const id = await createSiteProjectFromPrompt(user.id, p, createKind);
+      // Fluxo ÚNICO de criação: todo novo projeto nasce React (Studio/WebContainer).
+      const id = await createSiteProjectFromPrompt(user.id, p, "react");
       setOpenCreate(false);
       setPrompt("");
-      setCreateKind("static");
       navigate(`/sites/${id}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao criar projeto");
@@ -242,32 +239,11 @@ export default function Sites() {
               />
               <p className="text-[11px] text-muted-foreground mt-1">Exemplo: “{CREATE_EXAMPLE}”</p>
             </div>
-            <div className="space-y-1.5">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Tipo de projeto</p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCreateKind("static")}
-                  className={`rounded-lg border px-3 py-1.5 text-left text-xs transition-colors ${createKind === "static" ? "border-primary/50 bg-primary/10" : "border-border/70 hover:border-primary/30"}`}
-                >
-                  <span className="block font-medium">Site (HTML)</span>
-                  <span className="text-[10.5px] text-muted-foreground">Fluxo atual de geração</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCreateKind("react")}
-                  className={`rounded-lg border px-3 py-1.5 text-left text-xs transition-colors ${createKind === "react" ? "border-primary/50 bg-primary/10" : "border-border/70 hover:border-primary/30"}`}
-                >
-                  <span className="block font-medium">App React (Vite)</span>
-                  <span className="text-[10.5px] text-muted-foreground">Novo: WebContainer + preview real</span>
-                </button>
-              </div>
-            </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" disabled={creating} onClick={() => setOpenCreate(false)}>Cancelar</Button>
               <Button size="sm" disabled={creating || !prompt.trim()} onClick={() => void handleCreateSite()}>
                 {creating ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Wand2 className="h-4 w-4 mr-1" />}
-                {createKind === "react" ? "Criar app React" : "Criar site"}
+                Criar site
               </Button>
             </div>
           </div>

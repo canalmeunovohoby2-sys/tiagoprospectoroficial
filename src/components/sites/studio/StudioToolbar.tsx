@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import {
-  Code2, Columns2, Eye, FileText, FolderDown, Hammer, History, Loader2, Paintbrush, Play,
+  Code2, Columns2, Copy, Eye, ExternalLink, FileText, FolderDown, Globe, Hammer, History, Loader2, Paintbrush, Play,
   RefreshCw, Rocket, Send, Undo2, Video,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -25,6 +25,10 @@ export interface StudioCommercialActions {
   onBuild?: () => void;
   building?: boolean;
   canBuild?: boolean;
+  /** URL pública do site publicado (quando houver) — reusa a rota /public/:slug. */
+  publishedUrl?: string | null;
+  /** Copia o link público (reusa a lógica existente do container). */
+  onCopyLink?: () => void;
   /** Botão de GitHub já existente (integração). */
   githubSlot?: ReactNode;
 }
@@ -141,6 +145,42 @@ export function StudioToolbar({ activeView, onViewChange, visualMode, onToggleVi
             {c.publishing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Rocket className="h-3 w-3" />}
             <span className="hidden xl:inline">Publicar</span>
           </ToolButton>
+        )}
+
+        {c.publishedUrl && (
+          <span className="inline-flex min-w-0 items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/5 px-1.5 py-1 text-[10.5px] text-emerald-700">
+            <Globe className="h-3 w-3 shrink-0" />
+            <span className="hidden min-w-0 max-w-[150px] truncate font-mono text-[10px] sm:inline" title={c.publishedUrl}>{c.publishedUrl}</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={c.onCopyLink}
+                  className="inline-flex h-5 items-center gap-1 rounded px-1 hover:bg-emerald-500/10"
+                  title="Copiar link"
+                  aria-label="Copiar link"
+                >
+                  <Copy className="h-3 w-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Copiar link</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <a
+                  href={c.publishedUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-5 items-center gap-1 rounded px-1 hover:bg-emerald-500/10"
+                  title="Abrir site"
+                  aria-label="Abrir site"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Abrir site</TooltipContent>
+            </Tooltip>
+          </span>
         )}
 
         {c.githubSlot}

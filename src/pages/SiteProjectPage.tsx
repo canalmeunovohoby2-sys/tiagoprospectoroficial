@@ -1436,6 +1436,8 @@ export default function SiteProjectPage() {
               onBuild: () => { void handleBuild(); },
               building,
               canBuild: isReactProject,
+              publishedUrl: project.published_status === "published" ? publicUrl() : null,
+              onCopyLink: copyPublicLink,
               githubSlot: <StudioGitConfigDialog projectId={project.id} userId={user?.id} />,
             }}
             onOpenHistory={() => ((studioEnabled || isReactProject) ? setGitHistoryOpen(true) : setVersionsOpen(true))}
