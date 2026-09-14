@@ -2,24 +2,23 @@
 // real (AnalyserNode) e transcreve com a Web Speech API, entregando TEXTO — que é
 // o que o agente entende. Não altera o sistema de anexos/edição.
 //
-// Robustez: se a transcrição não existir no navegador, avisa em vez de falhar em
-// silêncio; se o microfone for negado, avisa e descarta. Nunca envia texto parcial
-// durante a gravação — o texto só sai ao ENVIAR (igual ao ditado do SiteChat).
+// Transcrição robusta: ao ENVIAR, aguarda por um instante o resultado FINAL que o
+// navegador emite após o `stop()` (senão a última fala se perde) e, se ainda não
+// houver final, usa o INTERIM acumulado — nunca descarta a fala do usuário.
+// Nada é enviado durante a gravação (igual ao ditado do SiteChat).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface VoiceRecorderOptions {
-  /** Chamado UMA vez, ao enviar, com o texto transcrito (pode estar vazio → não envia). */
+  /** Chamado UMA vez, ao enviar, com o texto transcrito. */
   onTranscript: (text: string) => void;
   /** Aviso para a UI (sem suporte, microfone negado, transcrição vazia). */
   onNotice?: (message: string) => void;
 }
 
 export interface VoiceRecorderApi {
-  /** Web Speech API disponível neste navegador. */
   supported: boolean;
   recording: boolean;
-  /** Segundos decorridos (para o timer mm:ss). */
   seconds: number;
   /** Últimos níveis de áudio (0..1) para as barras; vazio se não houver análise. */
   levels: number[];
@@ -39,6 +38,11 @@ interface SpeechRecognitionLike {
   stop: () => void;
 }
 
+interface SpeechResultLike {
+  isFinal?: boolean;
+  0?: { transcript?: string };
+}
+
 function getRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
   if (typeof window === "undefined") return null;
   const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
@@ -46,6 +50,8 @@ function getRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
 }
 
 const MAX_LEVELS = 28;
+// Janela para o navegador emitir o resultado FINAL depois do stop().
+const FINALIZE_WAIT_MS = 500;
 
 export function useVoiceRecorder({ onTranscript, onNotice }: VoiceRecorderOptions): VoiceRecorderApi {
   const [recording, setRecording] = useState(false);
@@ -55,25 +61,26 @@ export function useVoiceRecorder({ onTranscript, onNotice }: VoiceRecorderOption
   const sessionRef = useRef(0);
   const activeRef = useRef(false);
   const finalsRef = useRef<string[]>([]);
+  const interimRef = useRef("");
+  const seenFinalCountRef = useRef(0);
   const recRef = useRef<SpeechRecognitionLike | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const drainRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   const onNoticeRef = useRef(onNotice);
   onTranscriptRef.current = onTranscript;
   onNoticeRef.current = onNotice;
 
+  const currentText = useCallback(() => (
+    [finalsRef.current.join(" "), interimRef.current].join(" ").replace(/\s+/g, " ").trim()
+  ), []);
+
   const teardownStream = useCallback(() => {
-    if (rafRef.current !== null) {
-      try { cancelAnimationFrame(rafRef.current); } catch { /* noop */ }
-      rafRef.current = null;
-    }
-    if (timerRef.current !== null) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+    if (rafRef.current !== null) { try { cancelAnimationFrame(rafRef.current); } catch { /* noop */ } rafRef.current = null; }
+    if (timerRef.current !== null) { clearInterval(timerRef.current); timerRef.current = null; }
     try { recRef.current?.stop(); } catch { /* noop */ }
     recRef.current = null;
     try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
@@ -82,19 +89,17 @@ export function useVoiceRecorder({ onTranscript, onNotice }: VoiceRecorderOption
     audioCtxRef.current = null;
   }, []);
 
-  const stop = useCallback((emit: boolean) => {
-    const hadSession = activeRef.current;
-    activeRef.current = false; // impede reinício por onend tardio
+  /** Descarta a gravação atual (invalida a sessão para ignorar resultados tardios). */
+  const discard = useCallback(() => {
+    activeRef.current = false;
+    sessionRef.current += 1;
+    if (drainRef.current !== null) { clearTimeout(drainRef.current); drainRef.current = null; }
     teardownStream();
+    finalsRef.current = [];
+    interimRef.current = "";
+    seenFinalCountRef.current = 0;
     setRecording(false);
     setLevels([]);
-    if (!hadSession) return;
-    if (emit) {
-      const text = finalsRef.current.join(" ").replace(/\s+/g, " ").trim();
-      if (text) onTranscriptRef.current(text);
-      else onNoticeRef.current?.("Não consegui transcrever nada. Tente novamente mais perto do microfone.");
-    }
-    finalsRef.current = [];
   }, [teardownStream]);
 
   const start = useCallback(() => {
@@ -107,11 +112,12 @@ export function useVoiceRecorder({ onTranscript, onNotice }: VoiceRecorderOption
     const mySession = ++sessionRef.current;
     activeRef.current = true;
     finalsRef.current = [];
+    interimRef.current = "";
     setLevels([]);
     setSeconds(0);
     setRecording(true);
 
-    // Nível de áudio real (best-effort; se indisponível, as barras são animadas por CSS).
+    // Nível de áudio real (best-effort; sem análise, as barras são animadas por CSS).
     void (async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -146,26 +152,43 @@ export function useVoiceRecorder({ onTranscript, onNotice }: VoiceRecorderOption
 
     const startRecognition = () => {
       if (!activeRef.current || mySession !== sessionRef.current) return;
+      seenFinalCountRef.current = 0; // nova sessão de reconhecimento → zera a contagem
       let rec: SpeechRecognitionLike;
-      try { rec = new Ctor(); } catch { onNoticeRef.current?.("Não foi possível iniciar o gravador de voz."); stop(false); return; }
+      try { rec = new Ctor(); } catch { onNoticeRef.current?.("Não foi possível iniciar o gravador de voz."); discard(); return; }
       rec.lang = "pt-BR";
       rec.continuous = true;
       rec.interimResults = true;
       rec.onresult = (ev: unknown) => {
-        if (!activeRef.current || mySession !== sessionRef.current) return;
-        const results = (ev as { results?: ArrayLike<{ isFinal?: boolean; 0?: { transcript?: string } }> }).results;
+        // Aceita resultados da MESMA sessão (inclusive os que chegam após o stop,
+        // durante a janela de finalização) — só a troca de sessão os invalida.
+        if (mySession !== sessionRef.current) return;
+        const results = (ev as { results?: ArrayLike<SpeechResultLike> }).results;
         if (!results) return;
+        // `results` é CUMULATIVO dentro de uma sessão de reconhecimento. Contamos os
+        // finais já vistos para acrescentar só os NOVOS (sem duplicar) e mantemos as
+        // partes anteriores quando o navegador reinicia por silêncio.
+        let finalCount = 0;
+        let interim = "";
         for (let i = 0; i < results.length; i++) {
           const r = results[i];
-          if (r?.isFinal && typeof r[0]?.transcript === "string") finalsRef.current.push(r[0].transcript);
+          const txt = typeof r?.[0]?.transcript === "string" ? r[0].transcript : "";
+          if (!txt) continue;
+          if (r?.isFinal) {
+            finalCount += 1;
+            if (finalCount > seenFinalCountRef.current) finalsRef.current.push(txt);
+          } else {
+            interim += interim ? ` ${txt}` : txt;
+          }
         }
+        if (finalCount > 0) seenFinalCountRef.current = finalCount;
+        interimRef.current = interim;
       };
       rec.onerror = (e) => {
-        if (!activeRef.current || mySession !== sessionRef.current) return;
+        if (mySession !== sessionRef.current) return;
         const code = e?.error ?? "";
         if (code === "not-allowed" || code === "service-not-allowed") {
           onNoticeRef.current?.("Permita o acesso ao microfone no navegador para gravar voz.");
-          stop(false);
+          discard();
         }
         // "no-speech"/"aborted" são temporários: onend reinicia.
       };
@@ -177,25 +200,47 @@ export function useVoiceRecorder({ onTranscript, onNotice }: VoiceRecorderOption
       };
       try { rec.start(); recRef.current = rec; }
       catch {
-        // Chrome às vezes lança InvalidStateError no 1º start → tenta 1x.
         setTimeout(() => { if (activeRef.current && mySession === sessionRef.current) { try { rec.start(); } catch { /* noop */ } } }, 400);
       }
     };
     startRecognition();
-  }, [stop]);
+  }, [discard]);
 
-  const finish = useCallback(() => stop(true), [stop]);
-  const cancel = useCallback(() => stop(false), [stop]);
+  /** Enviar: fecha a captura e entrega a transcrição (final imediato ou após a janela). */
+  const finish = useCallback(() => {
+    if (!activeRef.current) return;
+    const mySession = sessionRef.current;
+    activeRef.current = false; // impede reinício por onend
+    setRecording(false);
+    setLevels([]);
+    try { recRef.current?.stop(); } catch { /* noop */ }
 
-  useEffect(() => () => { activeRef.current = false; teardownStream(); }, [teardownStream]);
+    const emit = () => {
+      drainRef.current = null;
+      if (mySession !== sessionRef.current) return; // outra gravação assumiu
+      const text = currentText();
+      teardownStream();
+      finalsRef.current = [];
+      interimRef.current = "";
+      seenFinalCountRef.current = 0;
+      if (text) onTranscriptRef.current(text);
+      else onNoticeRef.current?.("Não consegui transcrever nada. Tente novamente mais perto do microfone.");
+    };
 
-  return {
-    supported: !!getRecognitionCtor(),
-    recording,
-    seconds,
-    levels,
-    start,
-    finish,
-    cancel,
-  };
+    // Já temos final? Entrega na hora. Só interim (ou nada)? Aguarda a janela de
+    // finalização do navegador — é o que evita perder a última fala.
+    if (finalsRef.current.length > 0) emit();
+    else drainRef.current = setTimeout(emit, FINALIZE_WAIT_MS);
+  }, [currentText, teardownStream]);
+
+  const cancel = useCallback(() => discard(), [discard]);
+
+  useEffect(() => () => {
+    activeRef.current = false;
+    sessionRef.current += 1;
+    if (drainRef.current !== null) clearTimeout(drainRef.current);
+    teardownStream();
+  }, [teardownStream]);
+
+  return { supported: !!getRecognitionCtor(), recording, seconds, levels, start, finish, cancel };
 }

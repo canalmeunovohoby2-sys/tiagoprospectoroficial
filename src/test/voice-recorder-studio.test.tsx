@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor, cleanup } from "@testing-library/react";
 import { UnifiedChatPanel } from "@/components/sites/studio/UnifiedChatPanel";
 
 // Simula a Web Speech API (transcrição) para exercitar o fluxo REAL do componente.
@@ -68,14 +68,25 @@ describe("Gravador de voz do Studio (estilo WhatsApp) — transcreve e envia com
     expect(screen.getByRole("textbox")).toBeTruthy(); // barra fechou
   });
 
-  it("3) interim NÃO é usado; enviar sem transcrição final → avisa e não envia", () => {
+  it("3) NADA é enviado durante a gravação; se só houver interim, ele é entregue ao enviar", async () => {
     const onSend = vi.fn();
     renderPanel(onSend);
     fireEvent.click(micButton());
     act(() => lastRec().interim("texto provisório"));
+    expect(onSend).not.toHaveBeenCalled(); // nada durante a gravação
     fireEvent.click(sendButton());
+    // Sem final, aguarda a janela de finalização e entrega o interim (fallback).
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("texto provisório"), { timeout: 2000 });
+  });
+
+  it("3b) sem nenhum resultado → avisa que não transcreveu e não envia", async () => {
+    const onSend = vi.fn();
+    renderPanel(onSend);
+    fireEvent.click(micButton());
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(screen.getByText(/Não consegui transcrever/i)).toBeTruthy(), { timeout: 2000 });
     expect(onSend).not.toHaveBeenCalled();
-    expect(screen.getByText(/Não consegui transcrever/i)).toBeTruthy();
+    expect(screen.getByRole("textbox")).toBeTruthy();
   });
 
   it("4) cancelar (lixeira) descarta: nada é enviado e volta ao campo", () => {
