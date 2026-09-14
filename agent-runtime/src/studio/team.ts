@@ -9,7 +9,7 @@
 import type { BusinessContext } from "../tools.js";
 import { buildCoderTools } from "./agent-core/agent-tools.js";
 import { callModelWithTools, type ModelCaller, type ModelMessage } from "./agent-core/model.js";
-import { buildFirstMessage } from "./agent-core/first-message.js";
+import { buildFirstMessage, isBootstrapProject } from "./agent-core/first-message.js";
 import { runCoderTurn } from "./agent-core/coder.js";
 import { runPlanner, type RunPlannerInput, type RunPlannerResult } from "./agent-core/planner.js";
 import { selectNext, type LastSpeaker } from "./agent-core/selector.js";
@@ -66,10 +66,17 @@ REGRAS DE TRABALHO:
 - Antes de CADA ferramenta, escreva 1 frase curta explicando o que vai fazer e por quê.
 - Se o pedido EXIGE alterar/criar o site, você OBRIGATORIAMENTE deve chamar ferramentas de edição (write_file/edit_file/create_file) para gravar os arquivos REAIS. Responder apenas com texto NÃO conclui a tarefa.
 - Leia o arquivo antes de editá-lo. Use edit_file para mudanças cirúrgicas; write_file para arquivo novo/grande.
-- Preserve o que não foi pedido: classes, estilos, estrutura, animações e responsividade.
+- Em EDIÇÕES, preserve o que não foi pedido: classes, estilos, estrutura, animações e responsividade.
 - Não crie arquivos vazios nem placeholders (.gitkeep). Só código funcional.
 - Use run_command (action=run, script=build) para verificar quando fizer sentido; NÃO rode dev server.
 - Nunca invente sucesso: só finalize depois de alterar de verdade.
+
+CRIAÇÃO (PRIMEIRA GERAÇÃO DE UM PROJETO NOVO) — IDENTIDADE PRÓPRIA:
+- O projeto começa com um BOOTSTRAP neutro marcado "prospector-bootstrap". Ele é DESCARTÁVEL e NÃO é a identidade final. Nesta primeira geração você DEVE substituí-lo.
+- Antes de escrever código, declare em 1-2 linhas a DIREÇÃO VISUAL deste negócio: (a) paleta com códigos HEX, (b) tipografia (fontes de título e corpo), (c) arquétipo de layout/composição, (d) lista de seções escolhidas para ESTE segmento.
+- Depois IMPLEMENTE exatamente essa direção: reescreva "src/App.tsx" e "src/index.css", crie componentes próprios (ex.: "src/components/*") e materialize o design (variáveis de cor/tipografia). NÃO mantenha as cores/estrutura do rascunho.
+- A direção deve ser ESPECÍFICA do negócio: um eletricista e um pet shop NÃO podem ter a mesma cara. Nada de reaproveitar o mesmo layout/paleta/textos para clientes diferentes.
+- Diferencie de verdade (não só troque nome/cor): composição do hero, ritmo das seções, tipografia, formas, tratamentos de imagem e CTAs.
 
 PADRÃO DE ENTREGA — SITE COMERCIAL PREMIUM (OBRIGATÓRIO):
 - Isto NÃO é um protótipo nem uma landing de uma única seção. O resultado será MOSTRADO a um cliente — precisa parecer feito por um designer/desenvolvedor profissional.
@@ -159,6 +166,7 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   let touched: string[] = [];
   let iterations = 0;
   let error: string | undefined;
+  let bootstrapNudges = 0;
 
   input.emit({ type: "agent_interaction", agent_name: "Selector", message_type: "thought", content: isFirst ? "Primeira mensagem do projeto — Coder inicia." : "Retomando o projeto — Coder inicia.", timestamp: Date.now() });
 
@@ -216,6 +224,23 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
     lastSignal = coder.signal;
 
     if (coder.error) { error = coder.error; break; }
+
+    // ANTI-TEMPLATE: na 1ª geração o rascunho `prospector-bootstrap` NÃO pode ser
+    // a entrega final. Quando o Coder acha que terminou (TERMINATE/sem sinal) e o
+    // rascunho ainda está lá, forçamos a criação real (bounded, sem loop infinito).
+    const finishing = !coder.signal || coder.signal.type === "TERMINATE";
+    if (isFirst && finishing && isBootstrapProject(input.readWorkspace()) && bootstrapNudges < 2 && round < maxRounds - 1) {
+      bootstrapNudges += 1;
+      input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "O rascunho inicial ainda está no projeto — vou criar o site real, específico deste negócio, agora.", timestamp: Date.now() });
+      messages = [
+        ...messages,
+        { role: "user", content: "O projeto AINDA contém o rascunho `prospector-bootstrap` — você NÃO entregou o site real. Substitua AGORA src/App.tsx e src/index.css por uma implementação PRÓPRIA e específica deste negócio (direção visual, seções, imagens reais e mapa), sem manter o rascunho. Use write_file." },
+      ];
+      lastSpeaker = "Coder";
+      lastSignal = null;
+      continue;
+    }
+
     if (!coder.signal) break; // sem sinal e sem ferramentas → considera final
   }
 
@@ -235,5 +260,9 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   saveMemory(input.workspaceRoot, projectMemory);
 
   if (!reply) reply = "Concluí a solicitação.";
+  // Honestidade: se o rascunho ainda está lá, NÃO declarar identidade final.
+  if (isFirst && !error && isBootstrapProject(input.readWorkspace())) {
+    reply = `${reply}\n\n⚠ O site ainda contém o rascunho inicial (bootstrap) — pode não refletir o design final do negócio.`;
+  }
   return { ok: !error, reply, signal: lastSignal, iterations, touched, plan, error };
 }

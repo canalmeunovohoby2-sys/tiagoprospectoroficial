@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import vm from "node:vm";
 import {
   buildReactProject, collapseDistToSingleHtml, collectDistFiles, isReactBuildHtml, validateBuildOutput,
 } from "../src/studio/build";
@@ -73,6 +74,67 @@ describe("C5 · build (colapso + validação)", () => {
 
   it("devolve null sem index.html", () => {
     expect(collapseDistToSingleHtml({ "assets/x.js": "x" })).toBeNull();
+  });
+});
+
+describe("C5 · navegação do site publicado (menu sem F5)", () => {
+  it("injeta o runtime de âncoras no HTML colapsado, dentro do <body>", () => {
+    const html = collapseDistToSingleHtml(collectDistFiles(distRoot))!;
+    expect(html).toContain('data-prospector-nav="1"');
+    const navIdx = html.indexOf('data-prospector-nav="1"');
+    const bodyEnd = html.toLowerCase().lastIndexOf("</body>");
+    expect(navIdx).toBeGreaterThan(-1);
+    expect(navIdx).toBeLessThan(bodyEnd);
+  });
+
+  it("clique em href=#secao faz scroll (preventDefault + scrollIntoView), sem navegar", () => {
+    const html = collapseDistToSingleHtml(collectDistFiles(distRoot))!;
+    const script = html.match(/<script data-prospector-nav="1">([\s\S]*?)<\/script>/)![1];
+
+    const listeners: Record<string, (ev: unknown) => void> = {};
+    const scrollIntoView = vi.fn();
+    const preventDefault = vi.fn();
+    const replaceState = vi.fn();
+    const sandbox: Record<string, unknown> = {
+      document: {
+        addEventListener: (t: string, fn: (ev: unknown) => void) => { listeners[t] = fn; },
+        getElementById: (id: string) => (id === "servicos" ? { scrollIntoView } : null),
+        getElementsByName: () => [],
+      },
+      window: { scrollTo: vi.fn(), addEventListener: () => { /* noop */ } },
+      location: { href: "about:srcdoc", origin: "null", pathname: "srcdoc", hash: "" },
+      history: { replaceState },
+      URL,
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(script, sandbox);
+
+    const anchor = { getAttribute: (n: string) => (n === "href" ? "#servicos" : null), hasAttribute: () => false };
+    listeners.click({ target: { closest: () => anchor }, preventDefault });
+
+    // Sem navegação (preventDefault) E com scroll real na seção.
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(replaceState).toHaveBeenCalledWith(null, "", "#servicos");
+  });
+
+  it("não interfere em link externo (WhatsApp/rota)", () => {
+    const html = collapseDistToSingleHtml(collectDistFiles(distRoot))!;
+    const script = html.match(/<script data-prospector-nav="1">([\s\S]*?)<\/script>/)![1];
+    const listeners: Record<string, (ev: unknown) => void> = {};
+    const preventDefault = vi.fn();
+    const sandbox: Record<string, unknown> = {
+      document: { addEventListener: (t: string, fn: (ev: unknown) => void) => { listeners[t] = fn; }, getElementById: () => null, getElementsByName: () => [] },
+      window: { scrollTo: vi.fn(), addEventListener: () => { /* noop */ } },
+      location: { href: "https://site.com/", origin: "https://site.com", pathname: "/", hash: "" },
+      history: { replaceState: vi.fn() },
+      URL,
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(script, sandbox);
+    const anchor = { getAttribute: () => "https://wa.me/5511999999999", hasAttribute: () => false };
+    listeners.click({ target: { closest: () => anchor }, preventDefault });
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 });
 

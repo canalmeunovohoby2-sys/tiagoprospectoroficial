@@ -15,6 +15,14 @@ const TEMPLATE = {
   "src/App.tsx": "export default function App(){return null}",
 };
 
+// Bootstrap REAL (com a marca) — usado para provar o anti-template.
+const BOOTSTRAP = {
+  "package.json": JSON.stringify({ name: "t", private: true, scripts: { dev: "vite", build: "vite build" } }),
+  "index.html": '<div id="root"></div>',
+  "src/main.tsx": "import React from 'react';",
+  "src/App.tsx": "// prospector-bootstrap: rascunho neutro descartável\nexport default function App(){return <main>Rascunho</main>}",
+};
+
 function scriptedModel(turns: ModelTurn[]): ModelCaller {
   let i = 0;
   return async () => {
@@ -32,16 +40,22 @@ describe("C1 · StudioTeam (vertical slice)", () => {
   let root = "";
   let rootA = "";
   let rootB = "";
+  let bootRoot = "";
+  let bootRoot2 = "";
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "prospector-team-"));
     rootA = mkdtempSync(join(tmpdir(), "prospector-team-a-"));
     rootB = mkdtempSync(join(tmpdir(), "prospector-team-b-"));
+    bootRoot = mkdtempSync(join(tmpdir(), "prospector-bootstrap-"));
+    bootRoot2 = mkdtempSync(join(tmpdir(), "prospector-bootstrap2-"));
     materializeWorkspace(root, TEMPLATE);
     materializeWorkspace(rootA, TEMPLATE);
     materializeWorkspace(rootB, TEMPLATE);
+    materializeWorkspace(bootRoot, BOOTSTRAP);
+    materializeWorkspace(bootRoot2, BOOTSTRAP);
   });
   afterAll(() => {
-    for (const r of [root, rootA, rootB]) {
+    for (const r of [root, rootA, rootB, bootRoot, bootRoot2]) {
       rmSync(r, { recursive: true, force: true });
       try { rmSync(stateFilePath(r), { force: true }); } catch { /* noop */ }
     }
@@ -130,5 +144,44 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     const model = scriptedModel([{ text: "x", toolCalls: [] }]);
     const result = await runStudioTeam({ instruction: "x", projectId: "pc", workspaceRoot: rootB, business: {}, ai: {}, emit: vi.fn(), readWorkspace: () => readWorkspace(rootB), model, signal: controller.signal });
     expect(result.iterations).toBe(0);
+  });
+
+  it("ANTI-TEMPLATE: 1ª geração não aceita o rascunho bootstrap (força a criação real)", async () => {
+    let calls = 0;
+    const model: ModelCaller = async () => {
+      calls += 1;
+      if (calls === 1) {
+        // Finge que terminou SEM criar nada — o rascunho continua no projeto.
+        return { ok: true, turn: { text: 'Pronto!\n{"signal":"TERMINATE"}', toolCalls: [] } };
+      }
+      // Depois do nudge, cria a identidade real.
+      return { ok: true, turn: { text: "Vou criar o site real.", toolCalls: [writeCall("src/App.tsx", "export default function App(){return <main><h1>Eletrica Voltz</h1></main>}")] } };
+    };
+    const result = await runStudioTeam({
+      instruction: "crie o site do eletricista", projectId: "pb", workspaceRoot: bootRoot,
+      business: { name: "Eletrica Voltz", segment: "Eletricista" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(bootRoot), model,
+    });
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(readFileSync(join(bootRoot, "src/App.tsx"), "utf8")).not.toContain("prospector-bootstrap");
+    expect(readFileSync(join(bootRoot, "src/App.tsx"), "utf8")).toContain("Eletrica Voltz");
+    expect(result.touched).toContain("src/App.tsx");
+  });
+
+  it("ANTI-TEMPLATE: se o rascunho persistir, para em nº limitado e avisa (sem loop infinito)", async () => {
+    let calls = 0;
+    const model: ModelCaller = async () => {
+      calls += 1;
+      return { ok: true, turn: { text: 'Pronto.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    const result = await runStudioTeam({
+      instruction: "crie o site", projectId: "pb2", workspaceRoot: bootRoot2, business: {}, ai: {},
+      emit: vi.fn(), readWorkspace: () => readWorkspace(bootRoot2), model,
+    });
+    // Limitado: no máximo 2 nudges do guard × (nudge interno do Coder), nunca infinito.
+    expect(calls).toBeLessThanOrEqual(9);
+    expect(calls).toBeGreaterThanOrEqual(3);
+    expect(result.reply).toMatch(/rascunho inicial/i);
+    expect(readFileSync(join(bootRoot2, "src/App.tsx"), "utf8")).toContain("prospector-bootstrap");
   });
 });

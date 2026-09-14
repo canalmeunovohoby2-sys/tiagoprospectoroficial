@@ -121,6 +121,60 @@ export function validateBuildOutput(distFiles: Record<string, string>): { ok: bo
 }
 
 /**
+ * Runtime de NAVEGAÇÃO do site publicado.
+ *
+ * O site publicado roda num iframe `srcDoc` SANDBOX SEM `allow-same-origin`
+ * (origem opaca). Nesse contexto, um clique em `<a href="#secao">` dispara uma
+ * navegação de fragmento que o sandbox bloqueia/recarrega — e como o app React é
+ * um module script inline, ele não reinicializa depois, então o menu "morre".
+ *
+ * Esta correção intercepta os cliques de âncora (fase de captura, no documento)
+ * e faz o scroll na própria página, SEM navegação. Por ser um script clássico
+ * embutido no HTML, ele roda de novo a cada load — o menu continua funcionando
+ * depois de qualquer reload/F5. Não cria roteador nem navegação paralela.
+ */
+export const PUBLIC_NAV_RUNTIME_SCRIPT = [
+  '<script data-prospector-nav="1">',
+  "(function(){",
+  "  function scrollToHash(hash){",
+  '    var id = String(hash || "").replace(/^#/, "");',
+  "    if(!id){ try{ window.scrollTo({top:0,behavior:\"smooth\"}); }catch(e){ window.scrollTo(0,0); } return true; }",
+  "    var el = document.getElementById(id) || (document.getElementsByName(id)[0] || null);",
+  "    if(!el) return false;",
+  "    try{ el.scrollIntoView({behavior:\"smooth\",block:\"start\"}); }catch(e){ try{ el.scrollIntoView(); }catch(e2){} }",
+  "    return true;",
+  "  }",
+  '  document.addEventListener("click", function(ev){',
+  "    var node = ev.target;",
+  '    var a = node && node.closest ? node.closest("a[href]") : null;',
+  "    if(!a || a.hasAttribute(\"data-prospector-external\")) return;",
+  '    var href = a.getAttribute("href") || "";',
+  '    if(href.charAt(0) === "#"){',
+  "      ev.preventDefault();",
+  '      if(scrollToHash(href)){ try{ history.replaceState(null, "", href); }catch(e){} }',
+  "      return;",
+  "    }",
+  "    try{",
+  "      var u = new URL(href, location.href);",
+  "      var sameDoc = u.origin === location.origin && u.pathname === location.pathname && !u.search && !!u.hash;",
+  '      if(sameDoc){ ev.preventDefault(); if(scrollToHash(u.hash)){ try{ history.replaceState(null, "", u.hash); }catch(e){} } }',
+  "    }catch(e){}",
+  "  }, true);",
+  '  window.addEventListener("load", function(){ try{ if(location.hash){ scrollToHash(location.hash); } }catch(e){} });',
+  "})();",
+  "</script>",
+].join("\n");
+
+/** Injeta o runtime de âncoras antes de `</body>` (ou no fim, se ausente). */
+export function injectPublicNavRuntime(html: string): string {
+  if (!html) return html;
+  if (html.includes('data-prospector-nav="1"')) return html;
+  const idx = html.toLowerCase().lastIndexOf("</body>");
+  if (idx >= 0) return `${html.slice(0, idx)}\n${PUBLIC_NAV_RUNTIME_SCRIPT}\n${html.slice(idx)}`;
+  return `${html}\n${PUBLIC_NAV_RUNTIME_SCRIPT}`;
+}
+
+/**
  * Colapsa o build Vite num HTML auto-contido (inline de JS/CSS). Assim o site
  * publicado renderiza pelo pipeline existente (published_code → iframe), sem
  * depender de servidor de assets. Não altera o código-fonte do projeto.
@@ -139,6 +193,7 @@ export function collapseDistToSingleHtml(distFiles: Record<string, string>): str
     return key ? `<style>\n${distFiles[key]}\n</style>` : match;
   });
   out = out.replace(/<link\b[^>]*\brel=["']modulepreload["'][^>]*>/gi, "");
+  out = injectPublicNavRuntime(out);
   return `${REACT_BUILD_MARKER}\n${out}`;
 }
 

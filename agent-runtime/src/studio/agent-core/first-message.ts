@@ -42,6 +42,18 @@ function isTextLike(path: string): boolean {
   return /\.(tsx|jsx|ts|js|mjs|cjs|css|scss|json|html|htm|md|txt|svg|yml|yaml)$/i.test(path);
 }
 
+/** Marca do rascunho neutro (mesma marca do template do front). */
+const BOOTSTRAP_MARKER = "prospector-bootstrap";
+
+/** true quando o projeto ainda contém o BOOTSTRAP (rascunho) a ser substituído. */
+export function isBootstrapProject(files: Record<string, string>): boolean {
+  for (const path of ["src/App.tsx", "src/index.css"]) {
+    const content = files?.[path];
+    if (typeof content === "string" && content.includes(BOOTSTRAP_MARKER)) return true;
+  }
+  return false;
+}
+
 /** Árvore de arquivos do projeto (só caminhos), ordenada por prioridade. */
 export function projectTree(files: Record<string, string>): string[] {
   const paths = Object.keys(files ?? {}).filter((p) => !isSensitive(p));
@@ -87,6 +99,9 @@ export function buildFirstMessage(input: FirstMessageInput): string {
     "",
     "Você está em um projeto React + Vite + TypeScript + Tailwind (workspace real).",
     businessLine ? `Contexto do negócio: ${businessLine}` : null,
+    isBootstrapProject(input.files)
+      ? "BOOTSTRAP DESCARTÁVEL: o projeto começa com um rascunho neutro (marcado `prospector-bootstrap`). Ele NÃO é a identidade final — SUBSTITUA-O por uma implementação PRÓPRIA deste negócio, sem preservar cores/estrutura do rascunho."
+      : null,
     "",
     `Árvore de arquivos do projeto (${tree.length} arquivos):`,
     tree.map((p) => `  ${p}`).join("\n"),

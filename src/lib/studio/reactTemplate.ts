@@ -10,6 +10,13 @@ export interface ReactTemplateInput {
   tagline?: string;
 }
 
+/**
+ * Marca do BOOTSTRAP (rascunho neutro descartável). NÃO é identidade final:
+ * a primeira geração do Coder deve SUBSTITUÍ-LA. O runtime usa esta marca para
+ * detectar "template não substituído" e forçar a criação real do site.
+ */
+export const REACT_BOOTSTRAP_MARKER = "prospector-bootstrap";
+
 const PKG = {
   name: "prospector-site",
   private: true,
@@ -56,7 +63,7 @@ function escapeHtml(value: string): string {
 /** Mapa `{ path: content }` do template React, pronto para `generated_code`. */
 export function buildReactTemplateFiles(input: ReactTemplateInput = {}): Record<string, string> {
   const name = (input.name ?? "Meu Site").trim() || "Meu Site";
-  const tagline = (input.tagline ?? "Criado com TiagoProspector").trim();
+  const tagline = (input.tagline ?? "Rascunho inicial — gere o site real").trim();
   const safeName = escapeHtml(name);
   const safeTagline = escapeHtml(tagline);
 
@@ -134,15 +141,14 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>,
 );
 `,
-    "src/App.tsx": `export default function App() {
+    "src/App.tsx": `// ${REACT_BOOTSTRAP_MARKER}: rascunho neutro descartável — o site real substitui este arquivo.
+export default function App() {
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100">
-      <section className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center gap-4 px-6 text-center">
-        <span className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-wide text-slate-400">
-          TiagoProspector
-        </span>
-        <h1 className="text-4xl font-bold sm:text-5xl">${safeName}</h1>
-        <p className="max-w-xl text-slate-400">${safeTagline}</p>
+    <main className="min-h-screen bg-white text-neutral-900">
+      <section className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center gap-3 px-6 text-center">
+        <p className="text-xs uppercase tracking-[0.2em] text-neutral-400">Rascunho</p>
+        <h1 className="text-3xl font-semibold sm:text-4xl">${safeName}</h1>
+        <p className="max-w-xl text-neutral-500">${safeTagline}</p>
       </section>
     </main>
   );
@@ -152,7 +158,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: dark; }
+/* ${REACT_BOOTSTRAP_MARKER}: base neutra — a identidade visual real vem da geração. */
 body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 `,
   };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildReactTemplateFiles, isReactProjectFiles, REACT_TEMPLATE_PATHS } from "@/lib/studio/reactTemplate";
+import { buildReactTemplateFiles, isReactProjectFiles, REACT_TEMPLATE_PATHS, REACT_BOOTSTRAP_MARKER } from "@/lib/studio/reactTemplate";
 import { projectKindOf } from "@/data/siteProjects";
 import { WEB_CONTAINER_HEADERS, isCrossOriginIsolated, isolationDiagnostic } from "@/lib/studio/isolation";
 import { readFileSync } from "node:fs";
@@ -36,6 +36,16 @@ describe("C0 · template React/Vite", () => {
   it("isReactProjectFiles rejeita mapas sem estrutura", () => {
     expect(isReactProjectFiles({ "index.html": "<div/>" })).toBe(false);
     expect(isReactProjectFiles({})).toBe(false);
+  });
+
+  it("o bootstrap é NEUTRO e marcado — não é identidade final", () => {
+    const files = buildReactTemplateFiles({ name: "Loja X" });
+    expect(files["src/App.tsx"]).toContain(REACT_BOOTSTRAP_MARKER);
+    expect(files["src/index.css"]).toContain(REACT_BOOTSTRAP_MARKER);
+    // Sem a antiga identidade escura/azul e sem branding do Prospector no site.
+    expect(files["src/App.tsx"]).not.toContain("bg-slate-950");
+    expect(files["src/App.tsx"]).not.toContain("TiagoProspector");
+    expect(files["src/index.css"]).not.toContain("color-scheme: dark");
   });
 });
 
