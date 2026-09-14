@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
-  Bot, CheckCircle2, ChevronDown, ChevronRight, GitCommitHorizontal, Loader2, Paperclip,
+  Bot, CheckCircle2, ChevronDown, ChevronRight, GitCommitHorizontal, Loader2, Mic, Paperclip,
   Paintbrush, RotateCcw, Send, Sparkles, Square, User, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AgentInteraction } from "./AgentInteraction";
 import { ToolExecutionBlock } from "./ToolExecutionBlock";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { VoiceRecordingBar } from "./VoiceRecordingBar";
+import { useVoiceRecorder } from "@/hooks/studio/useVoiceRecorder";
 import { PHASE_LABEL, type StudioPhase, type UnifiedChatItem } from "@/lib/studio/chatModel";
 
 export interface UnifiedChatPanelProps {
@@ -86,8 +88,15 @@ export function UnifiedChatPanel({
   disabled,
 }: UnifiedChatPanelProps) {
   const [text, setText] = useState("");
+  const [micNotice, setMicNotice] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Gravador de voz (estilo WhatsApp): transcreve e envia como instrução.
+  const rec = useVoiceRecorder({
+    onTranscript: (t) => { setMicNotice(null); onSend(t); },
+    onNotice: (m) => setMicNotice(m),
+  });
 
   useEffect(() => {
     // jsdom não implementa scrollIntoView — guarda para testes/SSR.
@@ -219,36 +228,61 @@ export function UnifiedChatPanel({
       </div>
 
       <div className="shrink-0 border-t border-border/60 p-2.5">
-        <div className="flex items-end gap-2">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={onKeyDown}
-            rows={2}
-            disabled={disabled || running}
-            placeholder={running ? "Executando…" : "Peça uma criação ou alteração (Enter envia, Shift+Enter quebra linha)"}
-            className="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-xl border border-border/70 bg-background px-3 py-2 text-[13px] outline-none focus:border-primary/50 disabled:opacity-60"
+        {rec.recording ? (
+          <VoiceRecordingBar
+            seconds={rec.seconds}
+            levels={rec.levels}
+            onCancel={() => { rec.cancel(); setMicNotice(null); }}
+            onSend={() => { rec.finish(); }}
           />
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={(e) => { attach(e.target.files?.[0] ?? null); e.target.value = ""; }}
-          />
-          <Button type="button" size="icon" variant="outline" className="h-9 w-9 shrink-0" disabled={running || disabled} onClick={() => fileRef.current?.click()} title="Anexar">
-            <Paperclip className="h-4 w-4" />
-          </Button>
-          {running ? (
-            <Button type="button" size="icon" variant="destructive" className="h-9 w-9 shrink-0" onClick={onCancel} title="Cancelar execução">
-              <Square className="h-4 w-4" />
+        ) : (
+          <div className="flex items-end gap-2">
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={onKeyDown}
+              rows={2}
+              disabled={disabled || running}
+              placeholder={running ? "Executando…" : "Peça uma criação ou alteração (Enter envia, Shift+Enter quebra linha)"}
+              className="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-xl border border-border/70 bg-background px-3 py-2 text-[13px] outline-none focus:border-primary/50 disabled:opacity-60"
+            />
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              onChange={(e) => { attach(e.target.files?.[0] ?? null); e.target.value = ""; }}
+            />
+            <Button type="button" size="icon" variant="outline" className="h-9 w-9 shrink-0" disabled={running || disabled} onClick={() => fileRef.current?.click()} title="Anexar">
+              <Paperclip className="h-4 w-4" />
             </Button>
-          ) : (
-            <Button type="button" size="icon" className="h-9 w-9 shrink-0" disabled={!canSend} onClick={submit} title="Enviar">
-              <Send className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
+            {running ? (
+              <Button type="button" size="icon" variant="destructive" className="h-9 w-9 shrink-0" onClick={onCancel} title="Cancelar execução">
+                <Square className="h-4 w-4" />
+              </Button>
+            ) : text.trim() ? (
+              <Button type="button" size="icon" className="h-9 w-9 shrink-0" disabled={!canSend} onClick={submit} title="Enviar">
+                <Send className="h-4 w-4" />
+              </Button>
+            ) : (
+              // Campo vazio → mic (igual ao WhatsApp). A voz vira texto e é enviada.
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className="h-9 w-9 shrink-0"
+                disabled={disabled}
+                onClick={() => { setMicNotice(null); rec.start(); }}
+                title="Gravar com voz"
+              >
+                <Mic className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        )}
+        {micNotice && !rec.recording && (
+          <p className="mt-1 px-1 text-[10.5px] text-amber-600">{micNotice}</p>
+        )}
         {!running && items.some((i) => i.kind === "assistant") && (
           <p className="mt-1 flex items-center gap-1 px-1 text-[10px] text-muted-foreground"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> concluído</p>
         )}
