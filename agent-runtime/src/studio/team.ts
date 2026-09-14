@@ -18,6 +18,7 @@ import { loadProjectState, saveProjectState, type StudioStateMessage } from "./a
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
 import { mediaContextBlock } from "./agent-core/site-media.js";
 import { buildDesignDirection, hasArtDirection, ART_DIRECTION_MARKER } from "./agent-core/design-direction.js";
+import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE } from "./agent-core/edit-scope.js";
 
 export interface StudioAttachment {
   name: string;
@@ -67,7 +68,7 @@ REGRAS DE TRABALHO:
 - Antes de CADA ferramenta, escreva 1 frase curta explicando o que vai fazer e por quê.
 - Se o pedido EXIGE alterar/criar o site, você OBRIGATORIAMENTE deve chamar ferramentas de edição (write_file/edit_file/create_file) para gravar os arquivos REAIS. Responder apenas com texto NÃO conclui a tarefa.
 - Leia o arquivo antes de editá-lo. Use edit_file para mudanças cirúrgicas; write_file para arquivo novo/grande.
-- Em EDIÇÕES, preserve o que não foi pedido: classes, estilos, estrutura, animações e responsividade.
+- Em EDIÇÕES, preserve APENAS o que continua coerente com o pedido (ver seção de EDIÇÕES abaixo).
 - Não crie arquivos vazios nem placeholders (.gitkeep). Só código funcional.
 - Use run_command (action=run, script=build) para verificar quando fizer sentido; NÃO rode dev server.
 - Nunca invente sucesso: só finalize depois de alterar de verdade.
@@ -78,6 +79,19 @@ CRIAÇÃO (PRIMEIRA GERAÇÃO DE UM PROJETO NOVO) — IDENTIDADE PRÓPRIA:
 - Depois IMPLEMENTE exatamente essa direção: reescreva "src/App.tsx" e "src/index.css", crie componentes próprios (ex.: "src/components/*") e materialize o design (variáveis de cor/tipografia). NÃO mantenha as cores/estrutura do rascunho.
 - A direção deve ser ESPECÍFICA do negócio: um eletricista e um pet shop NÃO podem ter a mesma cara. Nada de reaproveitar o mesmo layout/paleta/textos para clientes diferentes.
 - Diferencie de verdade (não só troque nome/cor): composição do hero, ritmo das seções, tipografia, formas, tratamentos de imagem e CTAs.
+
+EDIÇÕES EM PROJETO EXISTENTE (pense como DEV FRONT-END SÊNIOR + UI/UX; NÃO é "patch mínimo"):
+- Interprete pelo RESULTADO: o pedido define o que o site deve ficar. Você decide como chegar lá. Não procure apenas uma string para trocar.
+- "Preservar" = manter o que continua coerente com o pedido. NÃO significa "mexer o mínimo". Se o pedido contradiz o estado atual, ATUALIZE tudo que for afetado.
+- Liberdade total: editar/criar/remover arquivos e componentes, alterar JSX/TS/CSS/Tailwind, design tokens/variáveis, seções, ordem dos elementos, tipografia, cores, backgrounds, gradientes, bordas, sombras, hovers/focus, animações, responsividade, imagens e o sistema visual.
+- MUDANÇA GLOBAL (ex.: "troque a cor/tema para X", "deixe mais escuro/sofisticado/minimalista", "site inteiro"): ANTES de editar, use grep_search para encontrar TODAS as ocorrências da identidade atual (CSS variables, classes Tailwind, hex/rgb, gradientes, botões, links, bordas, cards, header, hero, footer, overlays, hover/focus, dark/claro). Atualize primeiro o design system/tokens e depois elimine o que restou com a identidade antiga. NÃO pode ficar metade com a identidade anterior.
+- Trocar a cor principal: mude variáveis/tokens + todas as superfícies e estados; nunca só o hero.
+- Remover seção: remova de verdade (componente, imports, ids, links de navegação e dados usados só por ela); não basta esconder.
+- Adicionar seção: componha na identidade existente (integrada ao design system), responsiva e com hierarquia — não despeje cards genéricos.
+- Se for melhor reconstruir/substituir/refatorar uma seção ou componente, FAÇA. Código antigo que impede o resultado pedido não deve ser preservado.
+- Preserve o que NÃO foi pedido: conteúdo válido, dados, integrações, funcionalidades e comportamentos que não conflitam com a solicitação.
+- AUTOVERIFICAÇÃO antes de concluir: "se o usuário olhar o site AGORA, ele verá exatamente a mudança pedida em TODO o site?" Se não, CONTINUE trabalhando (não conclua).
+- Revisão visual final: coerência de cores/contraste/hierarquia/espaçamento/tipografia/estados hover/responsividade entre TODAS as seções (header, hero, conteúdo, cards, CTA, footer). Alteração parcial NÃO é entrega.
 
 METODOLOGIA (pense como diretor de arte, não como quem "monta uma página"):
 - Você tem a ferramenta "design_skills": consulte-a ao criar/reformular o visual quando precisar da técnica (ela é o seu guia instalado — não precisa decorar tudo).
@@ -198,6 +212,7 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   let iterations = 0;
   let error: string | undefined;
   let bootstrapNudges = 0;
+  let sweepNudges = 0;
 
   input.emit({ type: "agent_interaction", agent_name: "Selector", message_type: "thought", content: isFirst ? "Primeira mensagem do projeto — Coder inicia." : "Retomando o projeto — Coder inicia.", timestamp: Date.now() });
 
@@ -276,6 +291,22 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
         ? "O projeto AINDA contém o rascunho `prospector-bootstrap` — você NÃO entregou o site real. Substitua AGORA src/App.tsx e src/index.css por uma implementação PRÓPRIA e específica deste negócio (direção visual, seções, imagens reais e mapa), sem manter o rascunho. Use write_file."
         : `Falta a DIREÇÃO DE ARTE. Antes de finalizar: (1) defina arquétipo, paleta HEX, fontes, composição de hero, grid e ritmo específicos deste negócio; (2) registre como comentário em src/App.tsx começando com "${ART_DIRECTION_MARKER}"; (3) garanta que a composição implementada reflete essa direção (hero com personalidade, imagens participando, grid com intenção, ritmo variado — nada de "site de blocos"). Faça a AUTOCRÍTICA e reestruture se estiver genérico. Use write_file.`;
       messages = [...messages, { role: "user", content: ask }];
+      lastSpeaker = "Coder";
+      lastSignal = null;
+      continue;
+    }
+
+    // EDIÇÃO GLOBAL: se o pedido é uma mudança de identidade visual e o Coder NÃO
+    // varreu o projeto (nem buscou, nem tocou vários arquivos/tokens), cobramos a
+    // aplicação completa — evita deixar metade do site com a identidade antiga.
+    const globalEdit = !isFirst && isGlobalVisualEdit(input.instruction ?? "");
+    if (
+      globalEdit && finishing && !coder.error && sweepNudges < 1 && round < maxRounds - 1
+      && !wasProjectSwept({ touched: [...touched], toolNames: coder.toolUses.map((u) => u.name) })
+    ) {
+      sweepNudges += 1;
+      input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "Vou revisar TODAS as ocorrências da identidade visual para aplicar o pedido no site inteiro.", timestamp: Date.now() });
+      messages = [...messages, { role: "user", content: EDIT_SWEEP_NUDGE }];
       lastSpeaker = "Coder";
       lastSignal = null;
       continue;

@@ -45,6 +45,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
   let dirRoot = "";
   let dirRoot2 = "";
   let skillsRoot = "";
+  let editRoot = "";
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "prospector-team-"));
     rootA = mkdtempSync(join(tmpdir(), "prospector-team-a-"));
@@ -54,6 +55,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     dirRoot = mkdtempSync(join(tmpdir(), "prospector-dir-"));
     dirRoot2 = mkdtempSync(join(tmpdir(), "prospector-dir2-"));
     skillsRoot = mkdtempSync(join(tmpdir(), "prospector-skills-"));
+    editRoot = mkdtempSync(join(tmpdir(), "prospector-edit-"));
     materializeWorkspace(root, TEMPLATE);
     materializeWorkspace(rootA, TEMPLATE);
     materializeWorkspace(rootB, TEMPLATE);
@@ -62,9 +64,10 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     materializeWorkspace(dirRoot, BOOTSTRAP);
     materializeWorkspace(dirRoot2, BOOTSTRAP);
     materializeWorkspace(skillsRoot, BOOTSTRAP);
+    materializeWorkspace(editRoot, BOOTSTRAP);
   });
   afterAll(() => {
-    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2, skillsRoot]) {
+    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2, skillsRoot, editRoot]) {
       rmSync(r, { recursive: true, force: true });
       try { rmSync(stateFilePath(r), { force: true }); } catch { /* noop */ }
     }
@@ -234,8 +237,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     expect(calls).toBeLessThanOrEqual(9);
   });
 
-  it("ECONOMIA DE API: as skills NÃO vão no prompt do Coder (são ferramenta consultável)", async () => {
-    const systems: string[] = [];
+  it("ECONOMIA DE API: as skills NÃO vão no prompt do Coder (são ferramenta consultável)", async () => {    const systems: string[] = [];
     const model: ModelCaller = async (input) => {
       systems.push(input.system);
       if (systems.length === 1) {
@@ -256,5 +258,55 @@ describe("C1 · StudioTeam (vertical slice)", () => {
       // …apenas a menção à ferramenta instalada (barata e estável).
       expect(s).toContain("design_skills");
     }
+  });
+
+  it("EDIÇÃO GLOBAL: pedido de cor/tema exige varredura — superficial recebe nudge", async () => {
+    const genModel: ModelCaller = async () => ({
+      ok: true,
+      turn: { text: "ok", toolCalls: [writeCall("src/App.tsx", "// ART-DIRECTION: x\nexport default function App(){return <main>ok</main>}")] },
+    });
+    // 1) Primeira geração (estabelece o estado do projeto; isFirst=false depois).
+    await runStudioTeam({
+      instruction: "crie o site", projectId: "edit-1", workspaceRoot: editRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(editRoot), model: genModel,
+    });
+
+    // 2) Edição GLOBAL "superficial": só App.tsx, sem busca → deve ser cobrado.
+    const captured: string[] = [];
+    let calls = 0;
+    const shallow: ModelCaller = async (input) => {
+      calls += 1;
+      for (const m of input.messages) if (typeof m.content === "string") captured.push(m.content);
+      if (calls === 1) return { ok: true, turn: { text: "mudei a cor", toolCalls: [writeCall("src/App.tsx", "export default function App(){return <main style={{color:'red'}}>ok</main>}")] } };
+      return { ok: true, turn: { text: 'Pronto.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "troque a cor do site para vermelho", projectId: "edit-1", workspaceRoot: editRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(editRoot), model: shallow,
+    });
+    expect(captured.some((c) => c.includes("Sua alteração parece LOCAL"))).toBe(true);
+
+    // 3) Edição GLOBAL COM varredura (grep + css) → NÃO é cobrado.
+    const captured2: string[] = [];
+    let sweptCalls = 0;
+    const swept: ModelCaller = async (input) => {
+      sweptCalls += 1;
+      for (const m of input.messages) if (typeof m.content === "string") captured2.push(m.content);
+      if (sweptCalls === 1) {
+        return { ok: true, turn: { text: "varri e apliquei", toolCalls: [
+          { id: "g1", name: "grep_search", arguments: { pattern: "#0f172a" }, rawArguments: "{}" },
+          { id: "w1", name: "write_file", arguments: { path: "src/index.css", content: ":root{--brand:#dc2626}" }, rawArguments: "{}" },
+        ] } };
+      }
+      return { ok: true, turn: { text: 'Concluído.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "troque a cor do site para vermelho", projectId: "edit-2", workspaceRoot: editRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(editRoot), model: swept,
+    });
+    expect(captured2.some((c) => c.includes("Sua alteração parece LOCAL"))).toBe(false);
   });
 });
