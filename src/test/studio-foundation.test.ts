@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildReactTemplateFiles, isReactProjectFiles, REACT_TEMPLATE_PATHS, REACT_BOOTSTRAP_MARKER } from "@/lib/studio/reactTemplate";
+import { buildReactTemplateFiles, isReactProjectFiles, isBootstrapFiles, REACT_TEMPLATE_PATHS, REACT_BOOTSTRAP_MARKER } from "@/lib/studio/reactTemplate";
 import { projectKindOf } from "@/data/siteProjects";
 import { WEB_CONTAINER_HEADERS, isCrossOriginIsolated, isolationDiagnostic } from "@/lib/studio/isolation";
 import { readFileSync } from "node:fs";
@@ -46,6 +46,22 @@ describe("C0 · template React/Vite", () => {
     expect(files["src/App.tsx"]).not.toContain("bg-slate-950");
     expect(files["src/App.tsx"]).not.toContain("TiagoProspector");
     expect(files["src/index.css"]).not.toContain("color-scheme: dark");
+  });
+
+  it("isBootstrapFiles detecta rascunho pendente e libera quando o site real é aplicado", () => {
+    const template = buildReactTemplateFiles({ name: "Loja X" });
+    expect(isBootstrapFiles(template)).toBe(true);
+    expect(isBootstrapFiles({ ...template, "src/App.tsx": "export default function App(){return null}" })).toBe(false);
+    // Rascunho legado (branding do Prospector) também conta como pendente.
+    expect(isBootstrapFiles({ "src/App.tsx": "export default function App(){return <span>TiagoProspector</span>}" })).toBe(true);
+    expect(isBootstrapFiles(null)).toBe(false);
+  });
+
+  it("o template resolve o alias @ → src (evita preview em branco)", () => {
+    const files = buildReactTemplateFiles({ name: "Loja X" });
+    expect(files["vite.config.ts"]).toMatch(/alias/);
+    expect(files["vite.config.ts"]).toContain('"@"');
+    expect(files["tsconfig.json"]).toContain('"@/*"');
   });
 });
 

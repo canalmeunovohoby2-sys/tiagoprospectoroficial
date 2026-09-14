@@ -92,6 +92,13 @@ IMAGENS (NUNCA INVENTE URL):
 - Sem nenhuma imagem disponível: NÃO use <img> quebrada nem ícones no lugar de foto — componha com cor, tipografia e superfícies (blocos sólidos, gradiente sutil, formas).
 - loading="lazy" em imagens abaixo da primeira dobra; alt descritivo; dimensões/aspect-ratio estáveis para não "pular" o layout.
 
+AMBIENTE TÉCNICO (o PREVIEW e o BUILD precisam funcionar SEM novo npm install):
+- NÃO adicione dependências nem importe pacotes externos (ex.: lucide-react, react-icons, framer-motion, @mui, next/*, styled-components). O projeto tem SOMENTE React, ReactDOM e Tailwind — não altere package.json para adicionar bibliotecas.
+- ÍCONES: desenhe SVG inline no próprio componente (nunca biblioteca de ícones).
+- Fontes: use a pilha de fontes do sistema; se quiser Google Fonts, coloque um <link> no index.html (nunca via import de pacote).
+- Imports: use caminhos RELATIVOS entre seus componentes (ex.: "./components/Header"). O alias "@/..." não está garantido no runtime.
+- Se um import não resolver, o preview fica em branco: prefira poucos arquivos e caminhos simples e verifique com run_command (build) antes de finalizar.
+
 LOCALIZAÇÃO + GOOGLE MAPS (OBRIGATÓRIO):
 - Inclua seção de localização com o endereço real do contexto, um <iframe> responsivo do Google Maps e um botão "Abrir rota".
 - Use a URL de mapa EXATA fornecida no contexto (sem api key). Se o contexto não trouxer URL de mapa, NÃO invente endereço nem mapa.

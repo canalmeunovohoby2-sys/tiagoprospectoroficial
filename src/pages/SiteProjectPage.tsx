@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf, projectKickoffPending } from "@/data/siteProjects";
+import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
 import {
   fetchSiteProject, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject, publishReactSite,
@@ -1199,11 +1200,15 @@ function buildReactKickoffInstruction(project: {
 
   // KICKOFF: novo projeto React (bootstrap) dispara a PRIMEIRA geração real pelo
   // /run → StudioTeam, com os dados do cliente. Nunca cai em spec/HTML legado.
-  // Uma vez por projectId (guard por ref + flag persistida `kickoff`).
+  // Dispara também quando o projeto AINDA está no rascunho (bootstrap) — assim um
+  // projeto que ficou preso no template (falha anterior) se recupera ao reabrir.
+  // Uma tentativa por projectId por sessão (guard por ref; sem loop infinito).
   const kickoffStartedRef = useRef<string | null>(null);
   const kickoffPending = projectKickoffPending(project);
+  const bootstrapPending = isReactProject && isBootstrapFiles(draftFiles);
+  const needsKickoff = kickoffPending || bootstrapPending;
   useEffect(() => {
-    if (!project || !isReactProject || !kickoffPending) return;
+    if (!project || !isReactProject || !needsKickoff) return;
     if (!draftFiles || Object.keys(draftFiles).length === 0) return;
     if (!leadLoaded) return; // espera os dados reais (fotos/endereço/geo) do lead
     if (generating || aiRunning) return;
@@ -1211,15 +1216,23 @@ function buildReactKickoffInstruction(project: {
     kickoffStartedRef.current = project.id;
     const instruction = buildReactKickoffInstruction(project, projectLeadRef.current);
     void runAiInstruction(instruction, undefined, { media: true }).then(async () => {
-      try {
-        await markReactKickoffDone(project.id);
-        setProject((p) => (p ? { ...p, settings: { ...(p.settings ?? {}), kind: "react", kickoff: "done" } } : p));
-      } catch {
-        /* mantém pendente para o usuário tentar de novo manualmente */
+      // Só marca como concluído quando o rascunho foi REALMENTE substituído.
+      const produced = prevFilesRef.current;
+      if (produced && Object.keys(produced).length > 0 && !isBootstrapFiles(produced)) {
+        try {
+          await markReactKickoffDone(project.id);
+          setProject((p) => (p ? { ...p, settings: { ...(p.settings ?? {}), kind: "react", kickoff: "done" } } : p));
+        } catch {
+          /* mantém pendente para o usuário tentar de novo manualmente */
+        }
+      } else {
+        // NÃO marca como concluído: permanece pendente e tenta de novo ao reabrir.
+        // O usuário também pode pedir no chat.
+        toast.error("A geração inicial não aplicou o site (ainda está no rascunho). Abra o projeto novamente ou peça o site no chat.");
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id, kickoffPending, isReactProject, draftFiles, leadLoaded, generating, aiRunning]);
+  }, [project?.id, needsKickoff, kickoffPending, bootstrapPending, isReactProject, draftFiles, leadLoaded, generating, aiRunning]);
 
   function handleStudioEvent(event: StudioStreamEvent) {
     studioChat.handleEvent(event);

@@ -64,6 +64,16 @@ describe("Kickoff — primeira geração de novo projeto React", () => {
     expect(page).toMatch(/buildReactKickoffInstruction\(project,\s*projectLeadRef\.current\)/);
   });
 
+  it("recupera projeto preso no rascunho e só marca done quando o site foi aplicado", () => {
+    const page = read("src/pages/SiteProjectPage.tsx");
+    // Dispara geração também quando ainda está no bootstrap (self-heal ao reabrir).
+    expect(page).toContain("isBootstrapFiles");
+    expect(page).toMatch(/needsKickoff/);
+    expect(page).toMatch(/kickoffPending \|\| bootstrapPending/);
+    // Nunca marca concluído se o rascunho permaneceu.
+    expect(page).toMatch(/!isBootstrapFiles\(produced\)/);
+  });
+
   it("WebContainer isola por projectId (não reusa a instância anterior)", () => {
     const wc = read("src/lib/studio/webcontainer.ts");
     expect(wc).toContain("mountedProjectId");

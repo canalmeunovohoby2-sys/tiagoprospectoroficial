@@ -91,4 +91,11 @@ describe("site-media · padrão premium no prompt central do Coder", () => {
     expect(CODER_SYSTEM).toMatch(/anti-"AI clichê"/i);
     expect(CODER_SYSTEM).toMatch(/NÃO invente depoimentos/i);
   });
+
+  it("CODER_SYSTEM impede o preview em branco (sem deps novas, imports relativos, SVG inline)", () => {
+    expect(CODER_SYSTEM).toMatch(/NÃO adicione dependências/i);
+    expect(CODER_SYSTEM).toMatch(/lucide-react/i);
+    expect(CODER_SYSTEM).toMatch(/SVG inline/i);
+    expect(CODER_SYSTEM).toMatch(/RELATIVOS/i);
+  });
 });

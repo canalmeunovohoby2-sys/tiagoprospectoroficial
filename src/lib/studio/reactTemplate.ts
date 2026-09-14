@@ -84,9 +84,11 @@ export function buildReactTemplateFiles(input: ReactTemplateInput = {}): Record<
 `,
     "vite.config.ts": `import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
   plugins: [react()],
+  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   server: { host: true, port: 5173 },
 });
 `,
@@ -105,6 +107,8 @@ export default defineConfig({
           noEmit: true,
           jsx: "react-jsx",
           strict: true,
+          baseUrl: ".",
+          paths: { "@/*": ["src/*"] },
         },
         include: ["src"],
       },
@@ -171,4 +175,16 @@ export function isReactProjectFiles(files: Record<string, string>): boolean {
   const hasIndex = typeof files["index.html"] === "string";
   const hasEntry = typeof files["src/main.tsx"] === "string" || typeof files["src/main.jsx"] === "string";
   return hasPkg && hasIndex && hasEntry;
+}
+
+/**
+ * true quando o projeto ainda está no BOOTSTRAP (site real ainda não aplicado).
+ * Cobre o rascunho neutro atual (marcador) e o rascunho legado (branding do
+ * Prospector) — assim um projeto preso no template se recupera ao reabrir.
+ */
+export function isBootstrapFiles(files: Record<string, string> | null | undefined): boolean {
+  if (!files || typeof files !== "object") return false;
+  const app = files["src/App.tsx"];
+  if (typeof app !== "string") return false;
+  return app.includes(REACT_BOOTSTRAP_MARKER) || app.includes("TiagoProspector");
 }
