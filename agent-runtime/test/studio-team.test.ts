@@ -42,20 +42,26 @@ describe("C1 · StudioTeam (vertical slice)", () => {
   let rootB = "";
   let bootRoot = "";
   let bootRoot2 = "";
+  let dirRoot = "";
+  let dirRoot2 = "";
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "prospector-team-"));
     rootA = mkdtempSync(join(tmpdir(), "prospector-team-a-"));
     rootB = mkdtempSync(join(tmpdir(), "prospector-team-b-"));
     bootRoot = mkdtempSync(join(tmpdir(), "prospector-bootstrap-"));
     bootRoot2 = mkdtempSync(join(tmpdir(), "prospector-bootstrap2-"));
+    dirRoot = mkdtempSync(join(tmpdir(), "prospector-dir-"));
+    dirRoot2 = mkdtempSync(join(tmpdir(), "prospector-dir2-"));
     materializeWorkspace(root, TEMPLATE);
     materializeWorkspace(rootA, TEMPLATE);
     materializeWorkspace(rootB, TEMPLATE);
     materializeWorkspace(bootRoot, BOOTSTRAP);
     materializeWorkspace(bootRoot2, BOOTSTRAP);
+    materializeWorkspace(dirRoot, BOOTSTRAP);
+    materializeWorkspace(dirRoot2, BOOTSTRAP);
   });
   afterAll(() => {
-    for (const r of [root, rootA, rootB, bootRoot, bootRoot2]) {
+    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2]) {
       rmSync(r, { recursive: true, force: true });
       try { rmSync(stateFilePath(r), { force: true }); } catch { /* noop */ }
     }
@@ -183,5 +189,45 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     expect(calls).toBeGreaterThanOrEqual(3);
     expect(result.reply).toMatch(/rascunho inicial/i);
     expect(readFileSync(join(bootRoot2, "src/App.tsx"), "utf8")).toContain("prospector-bootstrap");
+  });
+
+  it("DIREÇÃO DE ARTE: registrada no código → NÃO recebe nudge extra", async () => {
+    let calls = 0;
+    const model: ModelCaller = async () => {
+      calls += 1;
+      if (calls === 1) {
+        const app = `// ART-DIRECTION: archetype=editorial; palette=#0f172a,#c8a25a; hero=split; grid=assimétrico\nexport default function App(){return <main><h1>Eletrica Voltz</h1></main>}`;
+        return { ok: true, turn: { text: "Criei a direção.", toolCalls: [writeCall("src/App.tsx", app)] } };
+      }
+      return { ok: true, turn: { text: 'Concluído.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "crie o site", projectId: "dir-ok", workspaceRoot: dirRoot,
+      business: { name: "Eletrica Voltz", segment: "Eletricistas" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(dirRoot), model,
+    });
+    // Sem nudge do guard: escreveu + terminou (2 chamadas), não reabriu para "direção".
+    expect(calls).toBeLessThanOrEqual(2);
+    expect(readFileSync(join(dirRoot, "src/App.tsx"), "utf8")).toContain("ART-DIRECTION:");
+  });
+
+  it("DIREÇÃO DE ARTE: sem o marcador, a 1ª geração é nudgeada (bounded)", async () => {
+    let calls = 0;
+    const model: ModelCaller = async () => {
+      calls += 1;
+      if (calls === 1) {
+        // Substitui o bootstrap, mas SEM registrar direção de arte.
+        return { ok: true, turn: { text: "pronto", toolCalls: [writeCall("src/App.tsx", "export default function App(){return <main>Site</main>}")] } };
+      }
+      return { ok: true, turn: { text: 'Pronto.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "crie o site", projectId: "dir-missing", workspaceRoot: dirRoot2,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(dirRoot2), model,
+    });
+    // Reabre para cobrar a direção (mais chamadas que o caso "com marcador").
+    expect(calls).toBeGreaterThanOrEqual(3);
+    expect(calls).toBeLessThanOrEqual(9);
   });
 });

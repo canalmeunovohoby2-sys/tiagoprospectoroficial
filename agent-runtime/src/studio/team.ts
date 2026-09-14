@@ -17,6 +17,7 @@ import type { AgentSignal } from "./agent-core/signals.js";
 import { loadProjectState, saveProjectState, type StudioStateMessage } from "./agent-core/project-state.js";
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
 import { mediaContextBlock } from "./agent-core/site-media.js";
+import { buildDesignDirection, hasArtDirection, ART_DIRECTION_MARKER } from "./agent-core/design-direction.js";
 
 export interface StudioAttachment {
   name: string;
@@ -77,6 +78,20 @@ CRIAÇÃO (PRIMEIRA GERAÇÃO DE UM PROJETO NOVO) — IDENTIDADE PRÓPRIA:
 - Depois IMPLEMENTE exatamente essa direção: reescreva "src/App.tsx" e "src/index.css", crie componentes próprios (ex.: "src/components/*") e materialize o design (variáveis de cor/tipografia). NÃO mantenha as cores/estrutura do rascunho.
 - A direção deve ser ESPECÍFICA do negócio: um eletricista e um pet shop NÃO podem ter a mesma cara. Nada de reaproveitar o mesmo layout/paleta/textos para clientes diferentes.
 - Diferencie de verdade (não só troque nome/cor): composição do hero, ritmo das seções, tipografia, formas, tratamentos de imagem e CTAs.
+
+METODOLOGIA (pense como diretor de arte, não como quem "monta uma página"):
+- ANÁLISE primeiro: segmento, público, posicionamento, ticket percebido, objetivo comercial, principal dúvida do cliente. Depois decida o design.
+- Você recebe um BRIEFING DE DIREÇÃO DE ARTE no contexto (arquétipo, hero, grid, ritmo, tratamento de imagem, movimento, tipografia, CTA). Siga-o e refine com decisões próprias; ele existe para você NÃO repetir o mesmo "site de blocos".
+- PROIBIDO como padrão: navbar → hero centralizado → 3 cards → texto+imagem → 4 cards → galeria → depoimentos → CTA. Essa ordem só vale se fizer sentido para ESTE negócio.
+- HERO é a peça-chave: nada de "título enorme centralizado + 2 botões + imagem abaixo". Use composição assimétrica, imagem dominante, sobreposição, tipografia em escalas diferentes ou CTA integrado à composição.
+- Composição: use o grid com intenção (assimetria, colunas de larguras diferentes, elementos fora do eixo, títulos atravessando colunas, imagens maiores que o texto). NÃO centralize tudo nem transforme tudo em card.
+- Ritmo: alterne impacto, respiro, informação e chamada comercial. NÃO use o mesmo espaçamento entre todas as seções.
+- Hierarquia: cada viewport deve deixar claro onde está, o que a empresa faz, por que confiar e qual ação tomar — com contraste real de escala/peso, não tudo com o mesmo peso.
+- Conversão: CTAs com a linguagem do negócio (Solicitar orçamento, Agendar avaliação, Falar no WhatsApp, Ver imóveis...). Nunca repetir "Saiba mais" em tudo; o CTA principal tem destaque.
+- Movimento: sutil (entrada, hover, transições). Não faça demonstração de efeitos.
+- Clichês proibidos: gradientes sem motivo, glassmorphism gratuito, blobs/círculos aleatórios, ícones genéricos em excesso, emojis como design, sombras/bordas exageradas, dashboard, textos corporativos vazios.
+- AUTOCRÍTICA antes de finalizar (se falhar, reestruture — não finalize): sem nome/logo ainda parece deste segmento? poderia ser confundido com outro site do sistema? o hero tem personalidade? as imagens participam da composição? há hierarquia e ritmo? há excesso de cards/seções iguais?
+- Registre a direção como comentário em src/App.tsx começando com "${ART_DIRECTION_MARKER}" (arquétipo, paleta HEX, fontes, hero, grid) e implemente de verdade.
 
 PADRÃO DE ENTREGA — SITE COMERCIAL PREMIUM (OBRIGATÓRIO):
 - Isto NÃO é um protótipo nem uma landing de uma única seção. O resultado será MOSTRADO a um cliente — precisa parecer feito por um designer/desenvolvedor profissional.
@@ -151,14 +166,19 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
     .map((a) => ({ mime: a.mediaType, dataUrl: a.dataUrl }));
 
   const mediaBlock = mediaContextBlock(input.business);
+  // Direção de arte DETERMINÍSTICA por negócio (mesmo projeto → estável; projetos
+  // diferentes → direções diferentes). Impede o "site de blocos" repetido.
+  const direction = buildDesignDirection(input.business, input.projectId);
+  const directionBlock = `\n\n${direction.block}`;
   const userContent = isFirst
-    ? `${buildFirstMessage({ instruction: input.instruction, files, business: input.business })}${attachBlock}${memoryBlock}${mediaBlock}`
+    ? `${buildFirstMessage({ instruction: input.instruction, files, business: input.business })}${attachBlock}${memoryBlock}${mediaBlock}${directionBlock}`
     : [
         input.memory?.length ? `Memória do projeto:\n${input.memory.slice(0, 10).map((m) => `- ${m}`).join("\n")}` : null,
         input.conversation?.length ? `Conversa recente:\n${input.conversation.slice(-6).map((c) => `- ${c}`).join("\n")}` : null,
         attachBlock,
         memoryBlock,
         mediaBlock,
+        directionBlock,
         `Pedido do usuário: ${input.instruction}`,
       ].filter((x): x is string => !!x).join("\n\n");
 
@@ -235,17 +255,24 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
 
     if (coder.error) { error = coder.error; break; }
 
-    // ANTI-TEMPLATE: na 1ª geração o rascunho `prospector-bootstrap` NÃO pode ser
-    // a entrega final. Quando o Coder acha que terminou (TERMINATE/sem sinal) e o
-    // rascunho ainda está lá, forçamos a criação real (bounded, sem loop infinito).
+    // ANTI-TEMPLATE + DIREÇÃO DE ARTE: na 1ª geração o rascunho `prospector-bootstrap`
+    // NÃO pode ser a entrega final e a direção de arte precisa estar registrada no
+    // código. Quando o Coder acha que terminou e ainda falta isso, forçamos a
+    // criação real (bounded, sem loop infinito).
     const finishing = !coder.signal || coder.signal.type === "TERMINATE";
-    if (isFirst && finishing && isBootstrapProject(input.readWorkspace()) && bootstrapNudges < 2 && round < maxRounds - 1) {
+    const filesNow = input.readWorkspace();
+    const stillBootstrap = isBootstrapProject(filesNow);
+    const missingDirection = !stillBootstrap && !hasArtDirection(filesNow);
+    if (isFirst && finishing && (stillBootstrap || missingDirection) && bootstrapNudges < 2 && round < maxRounds - 1) {
       bootstrapNudges += 1;
-      input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "O rascunho inicial ainda está no projeto — vou criar o site real, específico deste negócio, agora.", timestamp: Date.now() });
-      messages = [
-        ...messages,
-        { role: "user", content: "O projeto AINDA contém o rascunho `prospector-bootstrap` — você NÃO entregou o site real. Substitua AGORA src/App.tsx e src/index.css por uma implementação PRÓPRIA e específica deste negócio (direção visual, seções, imagens reais e mapa), sem manter o rascunho. Use write_file." },
-      ];
+      const reason = stillBootstrap
+        ? "O rascunho inicial ainda está no projeto — vou criar o site real, específico deste negócio, agora."
+        : "Falta registrar e aplicar a DIREÇÃO DE ARTE deste negócio — vou definir e implementar agora.";
+      input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: reason, timestamp: Date.now() });
+      const ask = stillBootstrap
+        ? "O projeto AINDA contém o rascunho `prospector-bootstrap` — você NÃO entregou o site real. Substitua AGORA src/App.tsx e src/index.css por uma implementação PRÓPRIA e específica deste negócio (direção visual, seções, imagens reais e mapa), sem manter o rascunho. Use write_file."
+        : `Falta a DIREÇÃO DE ARTE. Antes de finalizar: (1) defina arquétipo, paleta HEX, fontes, composição de hero, grid e ritmo específicos deste negócio; (2) registre como comentário em src/App.tsx começando com "${ART_DIRECTION_MARKER}"; (3) garanta que a composição implementada reflete essa direção (hero com personalidade, imagens participando, grid com intenção, ritmo variado — nada de "site de blocos"). Faça a AUTOCRÍTICA e reestruture se estiver genérico. Use write_file.`;
+      messages = [...messages, { role: "user", content: ask }];
       lastSpeaker = "Coder";
       lastSignal = null;
       continue;
