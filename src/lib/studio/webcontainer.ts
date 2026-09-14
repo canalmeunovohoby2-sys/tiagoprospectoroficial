@@ -16,6 +16,8 @@ export interface WCFileSystem {
   writeFile(path: string, content: string): Promise<void>;
   rm(path: string, options?: { force?: boolean; recursive?: boolean }): Promise<void>;
   readFile(path: string, encoding: string): Promise<string>;
+  /** Cria diretório. `writeFile` NÃO cria pastas-pai — necessário antes de escrever. */
+  mkdir?(path: string, options?: { recursive?: boolean }): Promise<void>;
 }
 
 export interface WCProcess {
@@ -98,6 +100,21 @@ function pipeOutput(proc: WCProcess, onLog?: ServiceLog): void {
   } catch {
     /* stream indisponível */
   }
+}
+
+/**
+ * Garante o diretório-pai antes de escrever. O `fs.writeFile` do WebContainer
+ * cria o ARQUIVO, mas não as PASTAS novas (ex.: `src/components/`), então um
+ * arquivo gerado pelo agente num diretório novo falharia com ENOENT e abortaria
+ * o sync — deixando o preview preso no template.
+ */
+async function ensureParentDir(container: WCInstance, path: string): Promise<void> {
+  const normalized = String(path ?? "").replace(/\\/g, "/");
+  const idx = normalized.lastIndexOf("/");
+  if (idx <= 0) return;
+  const dir = normalized.slice(0, idx);
+  if (!dir || dir === "." || !container.fs.mkdir) return;
+  try { await container.fs.mkdir(dir, { recursive: true }); } catch { /* já existe */ }
 }
 
 export function createWebContainerService(
@@ -202,7 +219,8 @@ export function createWebContainerService(
   }
 
   async function syncFiles(files: Record<string, string>, onLog?: ServiceLog): Promise<{ updated: number; removed: number }> {
-    if (!instance) return { updated: 0, removed: 0 };
+    const container = instance;
+    if (!container) return { updated: 0, removed: 0 };
     const incoming = new Set(Object.keys(files));
     const toUpdate: Array<[string, string]> = [];
     for (const [p, c] of Object.entries(files)) {
@@ -212,12 +230,13 @@ export function createWebContainerService(
     for (const cached of cache.keys()) if (!incoming.has(cached)) toRemove.push(cached);
 
     for (const p of toRemove) {
-      try { await instance.fs.rm(p, { force: true }); } catch { /* ignora */ }
+      try { await container.fs.rm(p, { force: true }); } catch { /* ignora */ }
       cache.delete(p);
     }
     // Escritas sequenciais: reduz corrida de HMR (mesmo cuidado do DaveLovable).
     for (const [p, c] of toUpdate) {
-      await instance.fs.writeFile(p, c);
+      await ensureParentDir(container, p);
+      await container.fs.writeFile(p, c);
       cache.set(p, c);
     }
     if (toUpdate.length || toRemove.length) {

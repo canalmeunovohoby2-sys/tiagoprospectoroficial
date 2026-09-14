@@ -43,6 +43,6 @@ describe("Kickoff — primeira geração de novo projeto React", () => {
     expect(wc).toMatch(/mountedProjectId !== pid/);
     expect(wc).toContain("getProjectId");
     const hook = read("src/hooks/studio/useWebContainerPreview.ts");
-    expect(hook).toMatch(/service\.load\(filesRef\.current,\s*pushLog,\s*projectId\)/);
+    expect(hook).toMatch(/service\.load\(mounted,\s*pushLog,\s*projectId\)/);
   });
 });

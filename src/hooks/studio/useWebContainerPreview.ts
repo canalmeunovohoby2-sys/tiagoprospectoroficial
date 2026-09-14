@@ -63,11 +63,17 @@ export function useWebContainerPreview(input: {
         lastSyncedRef.current = null;
         await service.teardown();
       }
-      return service.load(filesRef.current, pushLog, projectId);
+      // Snapshot EXATO do que foi montado no container. Se o agente gerar
+      // arquivos durante o boot/npm install, eles NÃO podem ser marcados como
+      // "já sincronizados" — senão o sync pós-ready não roda e o preview fica
+      // preso no template para sempre.
+      const mounted = filesRef.current;
+      const devUrl = await service.load(mounted, pushLog, projectId);
+      return { devUrl, mounted };
     })()
-      .then((devUrl) => {
+      .then(({ devUrl, mounted }) => {
         if (cancelled) return;
-        lastSyncedRef.current = filesRef.current;
+        lastSyncedRef.current = mounted;
         setUrl(devUrl);
         setPhase("ready");
       })

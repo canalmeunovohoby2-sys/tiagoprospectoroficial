@@ -88,7 +88,12 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
 
     const turn = result.turn;
     if (turn.text) {
-      input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: turn.text, timestamp: Date.now() });
+      // O texto do modelo pode terminar com o objeto de controle
+      // ({"signal":"TERMINATE"}). Ele NUNCA deve aparecer no chat do usuário.
+      const visible = stripAgentSignal(turn.text);
+      if (visible) {
+        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: visible, timestamp: Date.now() });
+      }
     }
     const assistantMessage: ModelMessage = { role: "assistant", content: turn.text, toolCalls: turn.toolCalls };
     produced.push(assistantMessage);
@@ -114,7 +119,7 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
         ];
         continue;
       }
-      text = stripAgentSignal(turn.text).trim() || turn.text.trim();
+      text = stripAgentSignal(turn.text).trim();
       break;
     }
 

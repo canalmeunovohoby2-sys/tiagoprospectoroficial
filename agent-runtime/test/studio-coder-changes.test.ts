@@ -90,4 +90,23 @@ describe("C8 · mudança real exige tool de edição bem-sucedida", () => {
     expect(res.touched).toEqual([]);
     expect(res.toolUses).toEqual([]);
   });
+
+  it("NUNCA vaza o objeto de controle no chat (nem no emit, nem no texto final)", async () => {
+    const emits: Array<Record<string, unknown>> = [];
+    const { list } = buildCoderTools({ workspaceRoot: root, business: {} });
+    const model = scriptedModel([
+      call("1", "write_file", { path: "src/App.tsx", content: "export default function App(){return <h1>Ok</h1>}" }),
+      { text: 'Página pronta. {"signal":"TERMINATE"}', toolCalls: [] },
+    ]);
+    const res = await runCoderTurn({
+      model, system: "sys", messages: [{ role: "user", content: "crie o site" }],
+      tools: list, ai: {}, emit: (e) => emits.push(e), instruction: "Crie o site do cliente",
+    });
+    const shown = emits
+      .filter((e) => e.type === "agent_interaction")
+      .map((e) => String(e.content ?? ""))
+      .join("\n");
+    expect(shown).not.toContain("TERMINATE");
+    expect(res.text).not.toContain("TERMINATE");
+  });
 });

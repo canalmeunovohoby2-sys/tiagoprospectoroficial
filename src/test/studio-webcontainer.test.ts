@@ -7,6 +7,7 @@ interface FakeWC {
   spawned: string[];
   writes: Array<[string, string]>;
   removed: string[];
+  mkdirs: Array<[string, { recursive?: boolean } | undefined]>;
   mountTree: () => unknown;
   teardownCount: () => number;
 }
@@ -15,6 +16,7 @@ function makeFake(options: { autoReady?: boolean; exitCode?: number; neverReady?
   const spawned: string[] = [];
   const writes: Array<[string, string]> = [];
   const removed: string[] = [];
+  const mkdirs: Array<[string, { recursive?: boolean } | undefined]> = [];
   let mountTree: unknown = null;
   let teardownCount = 0;
 
@@ -32,12 +34,13 @@ function makeFake(options: { autoReady?: boolean; exitCode?: number; neverReady?
       async writeFile(path, content) { writes.push([path, content]); },
       async rm(path) { removed.push(path); },
       async readFile() { return ""; },
+      async mkdir(path, opts) { mkdirs.push([path, opts]); },
     },
     async teardown() { teardownCount += 1; },
   };
 
   const bootSpy = vi.fn(async () => instance);
-  return { instance, bootSpy, spawned, writes, removed, mountTree: () => mountTree, teardownCount: () => teardownCount };
+  return { instance, bootSpy, spawned, writes, removed, mkdirs, mountTree: () => mountTree, teardownCount: () => teardownCount };
 }
 
 describe("C0 · webcontainer (serviço)", () => {
@@ -91,6 +94,21 @@ describe("C0 · webcontainer (serviço)", () => {
     fake.writes.length = 0;
     const again = await service.syncFiles({ "a.tsx": "1b", "c.tsx": "3" });
     expect(again).toEqual({ updated: 0, removed: 0 });
+  });
+
+  it("syncFiles cria diretórios-pai novos (arquivos gerados em src/components)", async () => {
+    const fake = makeFake();
+    const service = createWebContainerService({ boot: fake.bootSpy }, { skipInstall: true, serverTimeoutMs: 2000 });
+    await service.load({ "package.json": "{}", "src/App.tsx": "y" });
+    fake.mkdirs.length = 0;
+    fake.writes.length = 0;
+
+    const res = await service.syncFiles({ "package.json": "{}", "src/App.tsx": "novo", "src/components/Header.tsx": "export default function Header(){return null}" });
+
+    expect(res.updated).toBe(2);
+    // O diretório-pai do arquivo NOVO é criado antes da escrita.
+    expect(fake.mkdirs).toContainEqual(["src/components", { recursive: true }]);
+    expect(fake.writes.map((w) => w[0])).toEqual(["src/App.tsx", "src/components/Header.tsx"]);
   });
 
   it("teardown limpa e permite novo boot", async () => {
