@@ -10,6 +10,8 @@
 // Regra de ouro: NUNCA inventar endereço nem URL de imagem. Sem dado → omite.
 
 import type { BusinessContext } from "../../tools.js";
+import { readWorkspace, safeWorkspaceJoin } from "../../workspace.js";
+import { writeFileSync } from "node:fs";
 
 function isHttpUrl(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -93,6 +95,45 @@ export function buildMapDirectionsUrl(business: BusinessContext): string | null 
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
+// `src` de <iframe> apontando para o Google Maps (somente iframes — links de
+// rota/WhatsApp em <a href> NÃO são tocados).
+const IFRAME_GOOGLE_MAPS_SRC = /(<iframe\b[^>]*?\bsrc\s*=\s*)(["'])([^"']*google\.[^"']*\/maps[^"']*)\2/gi;
+
+/**
+ * Garante que o <iframe> do Google Maps use a URL EMBUTÍVEL canônica
+ * (`output=embed`). O modelo às vezes escreve a URL "normal" do Maps (ex.: sem
+ * `output=embed`), que o Google BLOQUEIA em iframe: "recusou a conexão".
+ * Não altera embeds já válidos (`/maps/embed` ou `output=embed`) nem links
+ * comuns (<a href>), apenas o `src` de iframes do Maps.
+ */
+export function normalizeMapEmbedUrls(text: string, canonicalEmbedUrl: string): string {
+  if (!text || !canonicalEmbedUrl) return text;
+  return text.replace(IFRAME_GOOGLE_MAPS_SRC, (full, pre: string, quote: string, url: string) => {
+    if (/\/maps\/embed/i.test(url) || /[?&]output=embed/i.test(url)) return full;
+    return `${pre}${quote}${canonicalEmbedUrl}${quote}`;
+  });
+}
+
+/**
+ * Normaliza os embeds de mapa nos arquivos REAIS do projeto (determinístico).
+ * Devolve os caminhos alterados (para o front reaplicar os arquivos).
+ */
+export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessContext): string[] {
+  const canonical = buildMapEmbedUrl(business);
+  if (!canonical) return [];
+  const changed: string[] = [];
+  for (const [rel, content] of Object.entries(readWorkspace(root))) {
+    if (!/\.(tsx|jsx|ts|js|html?|css)$/i.test(rel)) continue;
+    if (!/google\./i.test(content) || !/maps/i.test(content)) continue;
+    const next = normalizeMapEmbedUrls(content, canonical);
+    if (next === content) continue;
+    const abs = safeWorkspaceJoin(root, rel);
+    if (!abs) continue;
+    try { writeFileSync(abs, next, "utf8"); changed.push(rel); } catch { /* noop */ }
+  }
+  return changed;
+}
+
 export interface SiteMediaContext {
   photos: string[];
   stock: string[];
@@ -140,7 +181,10 @@ export function mediaContextBlock(business: BusinessContext): string {
       : "  - SEM dados de endereço/cidade confiáveis: NÃO invente endereço nem mapa; omita a seção de mapa.",
     mapDirectionsUrl ? `  - Botão \"Abrir rota\": ${mapDirectionsUrl}` : "",
     cleanText(business.address) ? `  - Endereço real: ${cleanText(business.address)}` : "",
-    "  - O <iframe> do mapa DEVE ter: loading=\"lazy\", referrerPolicy=\"no-referrer\" e título. Mostre SEMPRE um link/botão \"Abrir no Google Maps\" (rota) ao lado — mesmo se o iframe for bloqueado, a localização funciona.",
+    mapEmbedUrl
+      ? `  - COPIE ESTE SNIPPET (não invente outra URL de mapa; só ajuste classes/estilo se quiser): <iframe title="Localização" src="${mapEmbedUrl}" className="w-full h-[320px] rounded-xl border-0" loading="lazy" referrerPolicy="no-referrer" />`
+      : "",
+    "  - O <iframe> do mapa DEVE ter altura definida (ex.: h-[320px]) para não colapsar. SEMPRE inclua também um link/botão \"Abrir no Google Maps\" (rota) ao lado — a localização funciona mesmo se o iframe for bloqueado.",
     "REGRAS DE IMAGEM (evitam foto quebrada):",
     "  - Todo <img> DEVE ter referrerPolicy=\"no-referrer\" (evita bloqueio de hotlink), alt descritivo e loading=\"lazy\" abaixo da primeira dobra.",
     "  - Todo <img> DEVE ter onError que esconde a imagem (ex.: e.currentTarget.style.display=\"none\") ou troca por um bloco de cor — NUNCA deixe aparecer o ícone de imagem quebrada nem caixa vazia.",

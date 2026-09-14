@@ -31,6 +31,7 @@ import { applyDeterministicVisualEdit } from "./studio/visual-edit.js";
 import { ensureGitRepo, gitCommit, gitDiff, gitLog, gitRestore, gitShow, gitStatus } from "./studio/git.js";
 import { deriveCommitMessage } from "./studio/commit-message.js";
 import { buildReactProject } from "./studio/build.js";
+import { normalizeWorkspaceMapEmbeds } from "./studio/agent-core/site-media.js";
 import { EDIT_TOOLS } from "./work-evidence.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -1230,15 +1231,21 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               readWorkspace: () => readWorkspace(root),
               onFilesChanged: () => { emitFiles(); writeLine({ type: "reload_preview", reason: "files_changed", timestamp: Date.now() }); },
             });
+            // Google Maps SEMPRE embutível: o modelo às vezes escreve a URL do Maps
+            // sem `output=embed` (o Google bloqueia em iframe: "recusou a conexão").
+            // Normalização determinística nos arquivos REAIS do projeto.
+            const mapFixed = (() => { try { return normalizeWorkspaceMapEmbeds(root, business); } catch { return [] as string[]; } })();
             const finalFiles = readWorkspace(root);
+            if (mapFixed.length > 0) emitFiles();
+            const touched = [...new Set([...team.touched, ...mapFixed])];
             const payload = {
               status: team.ok ? "ok" : "error",
               reply: team.reply,
               error: team.error,
               errors: team.error ? [team.error] : undefined,
-              changed: team.touched.length > 0,
-              no_file_changes: team.touched.length === 0,
-              touched: team.touched,
+              changed: touched.length > 0,
+              no_file_changes: touched.length === 0,
+              touched,
               files: finalFiles,
               plan: team.plan ?? null,
               iterations: team.iterations,

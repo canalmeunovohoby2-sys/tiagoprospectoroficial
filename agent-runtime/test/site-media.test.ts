@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildMapEmbedUrl, buildMapDirectionsUrl, buildSiteMediaContext, mediaContextBlock, realPhotos, stockImages,
+  normalizeMapEmbedUrls, normalizeWorkspaceMapEmbeds,
 } from "../src/studio/agent-core/site-media";
 import { CODER_SYSTEM } from "../src/studio/team";
 
@@ -69,6 +73,59 @@ describe("site-media · fotos reais vs ilustrativas", () => {
     expect(block).toContain('referrerPolicy="no-referrer"');
     expect(block).toContain("onError");
     expect(block).toContain("Abrir no Google Maps");
+  });
+
+  it("o bloco entrega o SNIPPET exato do mapa (com altura) para evitar mapa colapsado", () => {
+    const block = mediaContextBlock({ name: "Clínica X", address: "Rua A, 1", city: "Bauru", state: "SP" });
+    expect(block).toMatch(/COPIE ESTE SNIPPET/);
+    expect(block).toContain("<iframe");
+    expect(block).toContain("output=embed");
+    expect(block).toContain("h-[320px]");
+  });
+
+  const CANON = "https://maps.google.com/maps?q=Av.%20Anchieta%2C%2011305%2C%20Bertioga%2FSP&z=16&output=embed";
+
+  it("troca a URL NÃO embutível pela canônica (era o 'recusou a conexão')", () => {
+    const code = `<iframe src="https://www.google.com/maps/place/Clinica+X" />`;
+    expect(normalizeMapEmbedUrls(code, CANON)).toBe(`<iframe src="${CANON}" />`);
+    const noEmbed = `<iframe src="https://maps.google.com/maps?q=Bauru&z=15" />`;
+    expect(normalizeMapEmbedUrls(noEmbed, CANON)).toBe(`<iframe src="${CANON}" />`);
+  });
+
+  it("preserva embeds já válidos (output=embed e /maps/embed?pb=)", () => {
+    const ok = `<iframe src="https://maps.google.com/maps?q=Bauru&z=15&output=embed" />`;
+    expect(normalizeMapEmbedUrls(ok, CANON)).toBe(ok);
+    const official = `<iframe src="https://www.google.com/maps/embed?pb=!1m18!2m3" />`;
+    expect(normalizeMapEmbedUrls(official, CANON)).toBe(official);
+  });
+
+  it("não mexe em outros links (WhatsApp, rota, texto comum)", () => {
+    const code = `<a href="https://wa.me/5511999999999">Whats</a> <a href="https://www.google.com/maps/dir/?api=1&destination=X">Rota</a>`;
+    expect(normalizeMapEmbedUrls(code, CANON)).toBe(code);
+  });
+
+  it("normaliza os arquivos do workspace e devolve os caminhos alterados", () => {
+    const root = mkdtempSync(join(tmpdir(), "map-fix-"));
+    try {
+      writeFileSync(join(root, "App.tsx"), `<iframe src="https://maps.google.com/maps?q=Bauru" />`, "utf8");
+      writeFileSync(join(root, "ok.tsx"), `<iframe src="https://maps.google.com/maps?q=Bauru&output=embed" />`, "utf8");
+      const changed = normalizeWorkspaceMapEmbeds(root, { address: "Av. Anchieta, 11305", city: "Bertioga", state: "SP" });
+      expect(changed).toEqual(["App.tsx"]);
+      expect(readFileSync(join(root, "App.tsx"), "utf8")).toContain("output=embed");
+      expect(readFileSync(join(root, "ok.tsx"), "utf8")).toContain("output=embed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("sem endereço/geo confiável não há mapa nem normalização (não inventa)", () => {
+    const root = mkdtempSync(join(tmpdir(), "map-fix2-"));
+    try {
+      writeFileSync(join(root, "App.tsx"), `<iframe src="https://maps.google.com/maps?q=Bauru" />`, "utf8");
+      expect(normalizeWorkspaceMapEmbeds(root, {})).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("sem fotos reais avisa que não há — e proíbe inventar", () => {
