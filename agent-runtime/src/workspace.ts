@@ -91,6 +91,23 @@ export function ensureWorkspaceDir(projectId: string, files: FileMap): string {
   return root;
 }
 
+// ── LOCK por projeto (serializa operações que MATERIALIZAM/escrevem o workspace) ──
+// Evita que /git, /build, /visual-edit ou autosave apaguem/reescrevam o workspace
+// enquanto um /run (Coder) está escrevendo. Escopo mínimo: uma fila por projectId.
+const workspaceLocks = new Map<string, Promise<unknown>>();
+
+export function withWorkspaceLock<T>(projectId: string, task: () => Promise<T>): Promise<T> {
+  const key = String(projectId || "default");
+  const prev = workspaceLocks.get(key) ?? Promise.resolve();
+  const next = prev.then(task, task);
+  const guard = next.then(() => undefined, () => undefined);
+  workspaceLocks.set(key, guard);
+  void guard.then(() => {
+    if (workspaceLocks.get(key) === guard) workspaceLocks.delete(key);
+  });
+  return next;
+}
+
 export function cleanupWorkspace(projectId: string): void {
   const root = resolveWorkspaceRoot(projectId);
   rmSync(root, { recursive: true, force: true });

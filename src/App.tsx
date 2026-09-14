@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { AppShell } from "@/components/app/AppShell";
 import { ErrorBoundary } from "@/components/app/ErrorBoundary";
@@ -69,6 +69,13 @@ const OAuthPopupCloser = () => {
   return null;
 };
 
+// Remonta a página por projectId: isola chat, arquivos, preview e WebContainer
+// entre projetos (nenhum estado do projeto A sobrevive ao abrir o projeto B).
+function SiteProjectPageRoute() {
+  const { id } = useParams<{ id: string }>();
+  return <SiteProjectPage key={id} />;
+}
+
 const App = () => (
   <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
@@ -93,7 +100,7 @@ const App = () => (
                     <Route path="/queue" element={<Queue />} />
                     <Route path="/services" element={<Services />} />
                     <Route path="/sites" element={<Sites />} />
-                    <Route path="/sites/:id" element={<SiteProjectPage />} />
+                    <Route path="/sites/:id" element={<SiteProjectPageRoute />} />
                     <Route path="/branding/:id" element={<BrandingStudioPage />} />
                     <Route path="/settings" element={<Settings />} />
                   </Route>

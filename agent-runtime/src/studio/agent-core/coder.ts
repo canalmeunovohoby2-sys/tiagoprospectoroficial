@@ -68,6 +68,9 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
       system: input.system,
       messages,
       tools: schemas,
+      // Orçamento maior evita TRUNCAR argumentos de tools (arquivos grandes),
+      // que resultariam em tool-call malformada e nenhuma alteração real.
+      maxTokens: 8_000,
       timeoutMs: 180_000,
     });
     if (!result.ok || !result.turn) {

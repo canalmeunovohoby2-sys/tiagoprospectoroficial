@@ -820,6 +820,18 @@ export default function SiteProjectPage() {
         }
       }
 
+      // REACT NUNCA usa o editor de spec / fluxo legado (editSiteWithAI / /generate
+      // / ProspectorSiteAgent). Se o StudioTeam terminou sem alterar arquivo
+      // (changed=false), a resposta é HONESTA: nada foi aplicado.
+      if (isReactProject) {
+        const agentReply = agentRes?.reply?.trim();
+        pushReply(`A instrução foi processada, mas nenhuma alteração de arquivo foi aplicada no projeto.${agentReply ? `\n\n${agentReply}` : ""}`);
+        stopProgress();
+        setAgentStep(null);
+        setAiRunning(false);
+        return;
+      }
+
       // ===== FALLBACK LEGADO: edit-site sobre a SiteSpec =====
       const ctx = {
         name: project.company_name || project.name,

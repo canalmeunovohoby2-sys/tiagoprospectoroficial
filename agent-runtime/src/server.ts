@@ -11,7 +11,7 @@ import { ProspectorSiteAgent, isSurgicalEditTask, type AgentRunOutcome } from ".
 import { BrowserSession } from "./browser-session.js";
 import { auditSiteInteractions } from "./interaction-audit.js";
 import { isBugReport } from "./completion-guard.js";
-import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace, materializeWorkspace } from "./workspace.js";
+import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace, materializeWorkspace, withWorkspaceLock } from "./workspace.js";
 import type { BusinessContext } from "./tools.js";
 import { assertGenerationQuality } from "./generation-gate.js";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js";
@@ -1031,40 +1031,43 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         }
         const action = String(body.action ?? "").trim();
         const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
-        // Materializa o estado atual (preservando `.git`) antes de operar.
-        const root = ensureWorkspaceDir(projectId || "default", files);
-        try {
-          let payload: unknown;
-          if (action === "status" || action === "ensure") {
-            const ensured = await ensureGitRepo(root);
-            payload = ensured.ok ? { ...(await gitStatus(root)), created: ensured.created } : { ok: false, repo: true, clean: false, entries: [], error: ensured.error };
-          } else if (action === "log") {
-            const ensured = await ensureGitRepo(root);
-            payload = ensured.ok ? await gitLog(root, Number(body.limit) || 50) : { ok: false, repo: true, commits: [], error: ensured.error };
-          } else if (action === "diff") {
-            await ensureGitRepo(root);
-            payload = await gitDiff(root, { from: body.from as string | undefined, to: body.to as string | undefined, path: body.path as string | undefined });
-          } else if (action === "show") {
-            await ensureGitRepo(root);
-            payload = await gitShow(root, { hash: String(body.hash ?? ""), path: String(body.path ?? "") });
-          } else if (action === "commit") {
-            const provided = String(body.message ?? "").trim();
-            const wsFiles = Object.keys(readWorkspace(root));
-            const message = deriveCommitMessage({
-              files: wsFiles,
-              summary: provided || (typeof body.summary === "string" ? body.summary : undefined),
-              instruction: typeof body.instruction === "string" ? body.instruction : undefined,
-            });
-            payload = await gitCommit(root, message);
-          } else if (action === "restore") {
-            payload = await gitRestore(root, { hash: String(body.hash ?? ""), path: body.path as string | undefined, message: body.message as string | undefined });
-          } else {
-            payload = { ok: false, error: `ação git desconhecida: ${action || "(vazia)"}` };
+        // Serializa por projeto: uma operação de Git NÃO materializa o workspace
+        // enquanto um /run (Coder) está escrevendo nele.
+        await withWorkspaceLock(projectId || "default", async () => {
+          const root = ensureWorkspaceDir(projectId || "default", files);
+          try {
+            let payload: unknown;
+            if (action === "status" || action === "ensure") {
+              const ensured = await ensureGitRepo(root);
+              payload = ensured.ok ? { ...(await gitStatus(root)), created: ensured.created } : { ok: false, repo: true, clean: false, entries: [], error: ensured.error };
+            } else if (action === "log") {
+              const ensured = await ensureGitRepo(root);
+              payload = ensured.ok ? await gitLog(root, Number(body.limit) || 50) : { ok: false, repo: true, commits: [], error: ensured.error };
+            } else if (action === "diff") {
+              await ensureGitRepo(root);
+              payload = await gitDiff(root, { from: body.from as string | undefined, to: body.to as string | undefined, path: body.path as string | undefined });
+            } else if (action === "show") {
+              await ensureGitRepo(root);
+              payload = await gitShow(root, { hash: String(body.hash ?? ""), path: String(body.path ?? "") });
+            } else if (action === "commit") {
+              const provided = String(body.message ?? "").trim();
+              const wsFiles = Object.keys(readWorkspace(root));
+              const message = deriveCommitMessage({
+                files: wsFiles,
+                summary: provided || (typeof body.summary === "string" ? body.summary : undefined),
+                instruction: typeof body.instruction === "string" ? body.instruction : undefined,
+              });
+              payload = await gitCommit(root, message);
+            } else if (action === "restore") {
+              payload = await gitRestore(root, { hash: String(body.hash ?? ""), path: body.path as string | undefined, message: body.message as string | undefined });
+            } else {
+              payload = { ok: false, error: `ação git desconhecida: ${action || "(vazia)"}` };
+            }
+            send(res, 200, payload);
+          } catch (e) {
+            send(res, 500, { ok: false, error: e instanceof Error ? e.message : "erro no git" });
           }
-          send(res, 200, payload);
-        } catch (e) {
-          send(res, 500, { ok: false, error: e instanceof Error ? e.message : "erro no git" });
-        }
+        });
         return;
       }
 
@@ -1081,18 +1084,20 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           return;
         }
         const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
-        const root = ensureWorkspaceDir(projectId || "default", files);
-        try {
-          const result = await buildReactProject(root);
-          send(res, 200, {
-            ok: result.ok,
-            html: result.html ?? null,
-            error: result.error ?? null,
-            log: (result.log ?? "").slice(0, 20_000),
-          });
-        } catch (e) {
-          send(res, 500, { ok: false, error: e instanceof Error ? e.message : "erro no build" });
-        }
+        await withWorkspaceLock(projectId || "default", async () => {
+          const root = ensureWorkspaceDir(projectId || "default", files);
+          try {
+            const result = await buildReactProject(root);
+            send(res, 200, {
+              ok: result.ok,
+              html: result.html ?? null,
+              error: result.error ?? null,
+              log: (result.log ?? "").slice(0, 20_000),
+            });
+          } catch (e) {
+            send(res, 500, { ok: false, error: e instanceof Error ? e.message : "erro no build" });
+          }
+        });
         return;
       }
 
@@ -1109,19 +1114,21 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           return;
         }
         const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
-        const root = ensureWorkspaceDir(projectId || "default", files);
-        const outcome = applyDeterministicVisualEdit(root, {
-          file: typeof body.file === "string" ? body.file : undefined,
-          line: typeof body.line === "number" ? body.line : undefined,
-          selector: typeof body.selector === "string" ? body.selector : undefined,
-          tagName: typeof body.tagName === "string" ? body.tagName : undefined,
-          classes: Array.isArray(body.classes) ? (body.classes as string[]) : undefined,
-          text: typeof body.text === "string" ? body.text : undefined,
-          newText: typeof body.newText === "string" ? body.newText : undefined,
-          changes: Array.isArray(body.changes) ? (body.changes as Array<{ property: string; value: string }>) : undefined,
-          scope: typeof body.scope === "string" ? body.scope : undefined,
+        await withWorkspaceLock(projectId || "default", async () => {
+          const root = ensureWorkspaceDir(projectId || "default", files);
+          const outcome = applyDeterministicVisualEdit(root, {
+            file: typeof body.file === "string" ? body.file : undefined,
+            line: typeof body.line === "number" ? body.line : undefined,
+            selector: typeof body.selector === "string" ? body.selector : undefined,
+            tagName: typeof body.tagName === "string" ? body.tagName : undefined,
+            classes: Array.isArray(body.classes) ? (body.classes as string[]) : undefined,
+            text: typeof body.text === "string" ? body.text : undefined,
+            newText: typeof body.newText === "string" ? body.newText : undefined,
+            changes: Array.isArray(body.changes) ? (body.changes as Array<{ property: string; value: string }>) : undefined,
+            scope: typeof body.scope === "string" ? body.scope : undefined,
+          });
+          send(res, 200, outcome);
         });
-        send(res, 200, outcome);
         return;
       }
 
@@ -1191,6 +1198,9 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         // NÃO usa o Router heurístico nem o ProspectorSiteAgent. O fluxo static
         // segue exatamente igual logo abaixo. =====
         if (String(body.projectKind ?? "") === "react") {
+          // Serializa por projeto: /build, /git, /visual-edit e autosave não
+          // materializam o workspace enquanto o Coder está escrevendo nele.
+          await withWorkspaceLock(projectId, async () => {
           const root = ensureWorkspaceDir(projectId, files);
           const writeLine = (obj: unknown) => { if (!stream) return; try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ } };
           const emit = (obj: Record<string, unknown>) => writeLine(obj);
@@ -1227,6 +1237,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               error: team.error,
               errors: team.error ? [team.error] : undefined,
               changed: team.touched.length > 0,
+              no_file_changes: team.touched.length === 0,
               touched: team.touched,
               files: finalFiles,
               plan: team.plan ?? null,
@@ -1247,10 +1258,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             }
           } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            const payload = { status: "error", error: message, errors: [message], changed: false, touched: [], files: readWorkspace(root), runtime: "studio-team" };
+            const payload = { status: "error", error: message, errors: [message], changed: false, no_file_changes: true, touched: [], files: readWorkspace(root), runtime: "studio-team" };
             if (stream) { writeLine({ type: "error", message }); writeLine({ type: "result", ...payload }); res.end(); }
             else send(res, 200, payload);
           }
+          });
           return;
         }
 

@@ -60,7 +60,9 @@ function safeJsonParse(value: unknown): Record<string, unknown> {
     const parsed = JSON.parse(value);
     return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
   } catch {
-    return { _raw: value };
+    // Argumentos truncados/malformados NÃO podem virar uma tool-call "válida":
+    // devolve vazio para que a tool falhe explicitamente (nunca sucesso falso).
+    return {};
   }
 }
 
