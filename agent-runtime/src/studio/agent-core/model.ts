@@ -53,8 +53,49 @@ export interface ModelCallResult {
 
 export type ModelCaller = (input: ModelCallInput) => Promise<ModelCallResult>;
 
-function safeJsonParse(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object") return value as Record<string, unknown>;
+/**
+ * Garante que o histórico enviado ao provider seja ESTRUTURALMENTE válido:
+ * toda mensagem `assistant` com `tool_calls` precisa ser seguida pelas mensagens
+ * `tool` com os MESMOS `tool_call_id` (o provider rejeita com HTTP 400 caso
+ * contrário: "assistant message with 'tool_calls' must be followed by tool
+ * messages"). Aqui:
+ *   - completa respostas FALTANTES com uma mensagem `tool` sintética (mantém o
+ *     protocolo válido, sem remover tool_calls do histórico);
+ *   - descarta respostas `tool` ÓRFÃS (sem tool_call correspondente), que também
+ *     seriam rejeitadas.
+ * Não altera conteúdo de ferramentas existentes nem as mensagens do usuário.
+ */
+export function ensureValidToolHistory(messages: ModelMessage[]): ModelMessage[] {
+  const out: ModelMessage[] = [];
+  let i = 0;
+  while (i < messages.length) {
+    const m = messages[i];
+    if (m.role === "assistant" && m.toolCalls?.length) {
+      const answers = new Map<string, ModelMessage>();
+      let j = i + 1;
+      while (j < messages.length && messages[j].role === "tool") {
+        const id = messages[j].toolCallId ?? "";
+        if (id && !answers.has(id)) answers.set(id, messages[j]);
+        j += 1;
+      }
+      out.push(m);
+      for (const call of m.toolCalls) {
+        out.push(
+          answers.get(call.id)
+            ?? { role: "tool", toolCallId: call.id, name: call.name, content: JSON.stringify({ error: "resposta da ferramenta ausente (sintetizada)" }) },
+        );
+      }
+      i = j; // respostas `tool` já consumidas (e órfãs descartadas)
+      continue;
+    }
+    if (m.role === "tool") { i += 1; continue; } // `tool` órfã: sem tool_call anterior
+    out.push(m);
+    i += 1;
+  }
+  return out;
+}
+
+function safeJsonParse(value: unknown): Record<string, unknown> {  if (value && typeof value === "object") return value as Record<string, unknown>;
   if (typeof value !== "string" || !value.trim()) return {};
   try {
     const parsed = JSON.parse(value);
@@ -152,6 +193,8 @@ export async function callModelWithTools(input: ModelCallInput): Promise<ModelCa
   if (!baseUrl || !model) return { ok: false, error: "Provider/modelo não resolvidos para o agente." };
   if (!input.apiKey && provider !== "ollama") return { ok: false, error: "Sem API key do provider para o agente." };
   const timeoutMs = input.timeoutMs ?? 120_000;
+  // Histórico SEMPRE válido para o provider (tool_calls ↔ tool por id).
+  const history = ensureValidToolHistory(input.messages);
 
   try {
     if (provider === "gemini") {
@@ -161,7 +204,7 @@ export async function callModelWithTools(input: ModelCallInput): Promise<ModelCa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: input.system }] },
-          contents: geminiContents(input.system, input.messages),
+          contents: geminiContents(input.system, history),
           tools: input.tools.length ? [{ functionDeclarations: input.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })) }] : undefined,
           generationConfig: { temperature: input.temperature ?? 0.3, ...(input.maxTokens ? { maxOutputTokens: input.maxTokens } : {}) },
         }),
@@ -180,7 +223,7 @@ export async function callModelWithTools(input: ModelCallInput): Promise<ModelCa
       headers: { "Content-Type": "application/json", ...(input.apiKey ? { Authorization: `Bearer ${input.apiKey}` } : {}) },
       body: JSON.stringify({
         model,
-        messages: openAiMessages(input.system, input.messages),
+        messages: openAiMessages(input.system, history),
         tools: input.tools.length ? input.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } })) : undefined,
         tool_choice: input.tools.length ? "auto" : undefined,
         temperature: input.temperature ?? 0.3,

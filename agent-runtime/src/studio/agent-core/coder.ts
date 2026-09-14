@@ -53,11 +53,16 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
   const schemas = input.tools.map((t) => t.schema);
 
   let messages: ModelMessage[] = [...input.messages];
-  const produced: ModelMessage[] = [];
+  const initialCount = input.messages.length;
   const toolUses: CoderToolUse[] = [];
   const touched = new Set<string>();
   let text = "";
   let signal: AgentSignal | null = null;
+  // `produced` = EXATAMENTE o que foi acrescentado ao histórico neste turno, na
+  // ordem correta (assistant com tool_calls SEGUIDO das mensagens `tool`). Sem isso,
+  // quem remonta o histórico (team.ts) enviaria `assistant(tool_calls)` sem `tool`
+  // → o provider rejeita com HTTP 400.
+  const producedNow = (): ModelMessage[] => messages.slice(initialCount);
   // A tarefa exige alteração de arquivo? Se sim, não aceitamos "texto otimista"
   // como conclusão nem terminamos sem ter usado uma ferramenta de edição.
   const requiresChange = instructionRequestsChange(input.instruction ?? "");
@@ -65,7 +70,7 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
 
   for (let round = 0; round < maxRounds; round += 1) {
     if (input.signal?.aborted) {
-      return { text, signal: { type: "TERMINATE", reason: "cancelado" }, toolUses, touched: [...touched], produced };
+      return { text, signal: { type: "TERMINATE", reason: "cancelado" }, toolUses, touched: [...touched], produced: producedNow() };
     }
     const result = await input.model({
       providerId: input.ai.providerId,
@@ -83,7 +88,7 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
     if (!result.ok || !result.turn) {
       const error = result.error ?? "modelo não retornou turno";
       input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: `Falha do modelo: ${error}`, timestamp: Date.now() });
-      return { text, signal: null, toolUses, touched: [...touched], produced, error };
+      return { text, signal: null, toolUses, touched: [...touched], produced: producedNow(), error };
     }
 
     const turn = result.turn;
@@ -96,7 +101,6 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
       }
     }
     const assistantMessage: ModelMessage = { role: "assistant", content: turn.text, toolCalls: turn.toolCalls };
-    produced.push(assistantMessage);
 
     signal = parseAgentSignal(turn.text);
     const noTools = turn.toolCalls.length === 0;
@@ -160,5 +164,5 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
     messages = [...messages, assistantMessage, ...toolMessages];
   }
 
-  return { text, signal, toolUses, touched: [...touched], produced };
+  return { text, signal, toolUses, touched: [...touched], produced: producedNow() };
 }

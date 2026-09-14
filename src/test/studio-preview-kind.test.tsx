@@ -56,4 +56,18 @@ describe("C0 · StudioPreviewPanel por project_kind", () => {
     rerender(<StudioPreviewPanel files={files} projectKind="react" projectId="p1" refreshKey="1" />);
     await waitFor(() => expect(screen.getByTitle("Preview do app React")).not.toBe(before), { timeout: 3000 });
   });
+
+  it("react SEM arquivos nunca usa o spec/instrução como página — mostra preparação", () => {
+    render(
+      <StudioPreviewPanel
+        files={{}}
+        projectKind="react"
+        projectId="p1"
+        fallback={<div>INSTRUÇÃO INTERNA DO AGENTE / PROMPT DO KICKOFF</div>}
+      />,
+    );
+    expect(screen.getByText(/Preparando o preview do site/i)).toBeInTheDocument();
+    expect(screen.queryByText(/INSTRUÇÃO INTERNA DO AGENTE/)).toBeNull();
+    expect(screen.queryByText(/PROMPT DO KICKOFF/)).toBeNull();
+  });
 });

@@ -1553,7 +1553,7 @@ function buildReactKickoffInstruction(project: {
             dirty={dirty}
             saving={saving}
             previewRefreshKey={previewNonce}
-            previewFallback={<SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />}
+            previewFallback={isReactProject ? undefined : <SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />}
             chat={{
               messages: aiMessages,
               running: aiRunning,

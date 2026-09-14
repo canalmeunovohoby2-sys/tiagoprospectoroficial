@@ -207,6 +207,18 @@ export function StudioPreviewPanel({
   }, [device, onViewportChange]);
 
   if (!files || Object.keys(files).length === 0) {
+    // Projeto React: o preview representa o SITE GERADO. Nunca usar spec/conversa/
+    // instrução do agente como conteúdo da página.
+    if (projectKind === "react") {
+      return (
+        <div className="flex h-full min-h-[320px] items-center justify-center rounded-none border-0 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+          <div className="space-y-2">
+            <p className="text-base">⏳ Preparando o preview do site...</p>
+            <p className="text-xs">Aguarde a geração dos arquivos do projeto.</p>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full min-h-[320px] items-center justify-center rounded-none border-0 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
         {fallback ?? (
