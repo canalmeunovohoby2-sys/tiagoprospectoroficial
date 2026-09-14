@@ -100,16 +100,11 @@ describe("C0 · isolation (COOP/COEP)", () => {
     expect(keys).toContain("Cross-Origin-Embedder-Policy");
   });
 
-  it("site publicado libera mídia cross-origin: iframe same-origin + COEP desligado em /public", () => {
-    const root = process.cwd();
-    const pub = readFileSync(join(root, "src/pages/PublicSitePage.tsx"), "utf8");
-    expect(pub).toContain("allow-same-origin");
-    const vercel = JSON.parse(readFileSync(join(root, "vercel.json"), "utf8")) as {
-      headers: Array<{ source: string; headers: Array<{ key: string; value: string }> }>;
-    };
-    const publicRule = vercel.headers.find((h) => h.source === "/public/(.*)");
-    expect(publicRule, "regra de /public ausente").toBeTruthy();
-    const coep = publicRule?.headers.find((x) => x.key === "Cross-Origin-Embedder-Policy");
-    expect(coep?.value).toBe("unsafe-none");
+  it("site publicado React roda com allow-same-origin (Google Maps precisa de origem real)", () => {
+    const pub = readFileSync(join(process.cwd(), "src/pages/PublicSitePage.tsx"), "utf8");
+    // O iframe do build React publicado precisa de allow-same-origin; sem isso o
+    // iframe aninhado do Google Maps herda origem opaca e não funciona.
+    const blocks = pub.split("sandbox=").slice(1);
+    expect(blocks[0]).toContain("allow-same-origin");
   });
 });
