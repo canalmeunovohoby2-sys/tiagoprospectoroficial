@@ -792,9 +792,10 @@ function buildReactKickoffInstruction(project: {
                 longitude: lead?.longitude,
               })
             : null;
-          // Sem foto real e numa geração completa → imagens ilustrativas do
-          // sistema existente (Pexels via get-images). Best-effort, nunca falha.
-          const stock = media && media.photos.length === 0 && opts?.media
+          // Imagens ilustrativas do sistema existente (Pexels via get-images),
+          // disponibilizadas SEMPRE na geração completa: se a foto real do lead
+          // falhar (hotlink/proxy), o site ainda tem imagens profissionais.
+          const stock = media && opts?.media
             ? await fetchIllustrativeImages(project.segment, 6)
             : [];
           agentRes = await invokeProspectorAgent({

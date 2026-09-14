@@ -74,6 +74,13 @@ describe("Kickoff — primeira geração de novo projeto React", () => {
     expect(page).toMatch(/!isBootstrapFiles\(produced\)/);
   });
 
+  it("imagens ilustrativas do sistema são oferecidas na 1ª geração (mesmo com foto real)", () => {
+    const page = read("src/pages/SiteProjectPage.tsx");
+    // Stock deixa de ser condicionado a "sem foto real": o site nunca fica sem imagem.
+    expect(page).toMatch(/media && opts\?\.media/);
+    expect(page).not.toMatch(/media\.photos\.length === 0 && opts\?\.media/);
+  });
+
   it("WebContainer isola por projectId (não reusa a instância anterior)", () => {
     const wc = read("src/lib/studio/webcontainer.ts");
     expect(wc).toContain("mountedProjectId");
