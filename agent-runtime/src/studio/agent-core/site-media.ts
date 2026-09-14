@@ -95,22 +95,28 @@ export function buildMapDirectionsUrl(business: BusinessContext): string | null 
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
-// `src` de <iframe> apontando para o Google Maps (somente iframes — links de
-// rota/WhatsApp em <a href> NÃO são tocados).
-const IFRAME_GOOGLE_MAPS_SRC = /(<iframe\b[^>]*?\bsrc\s*=\s*)(["'])([^"']*google\.[^"']*\/maps[^"']*)\2/gi;
+// `src` de <iframe> apontando para o Google Maps — cobre as formas:
+//   src="https://..."   src='https://...'   src={"https://..."}   src={'https://...'}
+// Somente iframes (links de rota/WhatsApp em <a href> NÃO são tocados).
+const IFRAME_GOOGLE_MAPS_SRC = /(<iframe\b[^>]*?\bsrc\s*=\s*)(?:"([^"]*)"|'([^']*)'|\{\s*(?:"([^"]*)"|'([^']*)')\s*\})/gi;
 
 /**
  * Garante que o <iframe> do Google Maps use a URL EMBUTÍVEL canônica
- * (`output=embed`). O modelo às vezes escreve a URL "normal" do Maps (ex.: sem
- * `output=embed`), que o Google BLOQUEIA em iframe: "recusou a conexão".
- * Não altera embeds já válidos (`/maps/embed` ou `output=embed`) nem links
- * comuns (<a href>), apenas o `src` de iframes do Maps.
+ * (`output=embed`). O modelo às vezes escreve a URL "normal" do Maps (ex.:
+ * `/maps/place/...`, sem `output=embed`), que o Google BLOQUEIA em iframe
+ * ("recusou a conexão"). Não altera embeds já válidos (`/maps/embed` ou
+ * `output=embed`) nem links comuns (<a href>), apenas o `src` de iframes do Maps.
  */
 export function normalizeMapEmbedUrls(text: string, canonicalEmbedUrl: string): string {
   if (!text || !canonicalEmbedUrl) return text;
-  return text.replace(IFRAME_GOOGLE_MAPS_SRC, (full, pre: string, quote: string, url: string) => {
+  return text.replace(IFRAME_GOOGLE_MAPS_SRC, (full, pre: string, dq?: string, sq?: string, jdq?: string, jsq?: string) => {
+    const isExpr = jdq !== undefined || jsq !== undefined;
+    const url = dq ?? sq ?? jdq ?? jsq ?? "";
+    if (!/google\./i.test(url) || !/\/maps/i.test(url)) return full;
     if (/\/maps\/embed/i.test(url) || /[?&]output=embed/i.test(url)) return full;
-    return `${pre}${quote}${canonicalEmbedUrl}${quote}`;
+    const q = isExpr ? '"' : (dq !== undefined ? '"' : "'");
+    const value = isExpr ? `{${q}${canonicalEmbedUrl}${q}}` : `${q}${canonicalEmbedUrl}${q}`;
+    return `${pre}${value}`;
   });
 }
 

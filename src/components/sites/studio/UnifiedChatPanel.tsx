@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { VoiceRecordingBar } from "./VoiceRecordingBar";
 import { useVoiceRecorder } from "@/hooks/studio/useVoiceRecorder";
-import { PHASE_LABEL, type StudioPhase, type UnifiedChatItem } from "@/lib/studio/chatModel";
+import { PHASE_LABEL, type ChatAttachmentRef, type StudioPhase, type UnifiedChatItem } from "@/lib/studio/chatModel";
 
 export interface UnifiedChatPanelProps {
   items: UnifiedChatItem[];
@@ -18,7 +18,7 @@ export interface UnifiedChatPanelProps {
   error?: string | null;
   visualMode?: boolean;
   onToggleVisual?: () => void;
-  onSend: (text: string, attachment?: { dataUrl: string; label: string }) => void;
+  onSend: (text: string, attachments?: ChatAttachmentRef[]) => void;
   onCancel?: () => void;
   /** C6: tenta novamente a última execução (sem duplicar mensagens). */
   onRetry?: () => void;
@@ -74,6 +74,9 @@ export function UnifiedChatPanel({
 }: UnifiedChatPanelProps) {
   const [text, setText] = useState("");
   const [micNotice, setMicNotice] = useState<string | null>(null);
+  // ANEXOS PENDENTES: selecionar imagem NÃO envia nada — o envio só acontece no
+  // botão Enviar (texto + anexos juntos). Removíveis e múltiplos.
+  const [pending, setPending] = useState<ChatAttachmentRef[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -88,11 +91,17 @@ export function UnifiedChatPanel({
     endRef.current?.scrollIntoView?.({ block: "end" });
   }, [items.length, running, currentAgent]);
 
-  const canSend = !!text.trim() && !running && !disabled;
+  const canSend = (!!text.trim() || pending.length > 0) && !running && !disabled;
   const submit = () => {
     if (!canSend) return;
-    onSend(text.trim());
+    const attachments = pending.length ? pending : undefined;
+    // Imagem sem texto → instrução padrão (nunca dispara no momento da seleção).
+    const outgoing = text.trim() || (attachments ? "Analise esta imagem e aguarde minha orientação." : "");
+    if (!outgoing) return;
+    // Mantém a assinatura antiga quando não há anexo (compatibilidade).
+    if (attachments) onSend(outgoing, attachments); else onSend(outgoing);
     setText("");
+    setPending([]);
   };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -101,15 +110,19 @@ export function UnifiedChatPanel({
     }
   };
 
-  const attach = (file: File | null) => {
-    if (!file || running) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result ?? "");
-      onSend(text.trim() || `Analise o anexo: ${file.name}`, { dataUrl, label: file.name });
-      setText("");
-    };
-    reader.readAsDataURL(file);
+  /** Seleciona/anexa arquivos: APENAS adiciona à lista pendente (sem enviar). */
+  const attach = (files: FileList | File[] | null) => {
+    if (running || disabled || !files) return;
+    const list = Array.from(files).slice(0, 6);
+    for (const file of list) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result ?? "");
+        if (!dataUrl) return;
+        setPending((prev) => (prev.length >= 6 ? prev : [...prev, { dataUrl, label: file.name }]));
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   return (
@@ -160,7 +173,19 @@ export function UnifiedChatPanel({
             return (
               <div key={item.id} className="flex justify-end gap-2">
                 <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-[13px] text-primary-foreground">
-                  {item.image && <img src={item.image} alt={item.fileLabel ?? "anexo"} className="mb-1.5 max-h-40 rounded-lg" />}
+                  {(() => {
+                    const atts = item.images?.length ? item.images : (item.image ? [{ dataUrl: item.image, label: item.fileLabel ?? "anexo" }] : []);
+                    if (atts.length === 0) return null;
+                    return (
+                      <div className="mb-1.5 flex flex-wrap gap-1.5">
+                        {atts.map((a, i) => (
+                          a.dataUrl.startsWith("data:image")
+                            ? <img key={i} src={a.dataUrl} alt={a.label} className="max-h-40 rounded-lg" />
+                            : <span key={i} className="rounded bg-primary-foreground/15 px-1.5 py-0.5 text-[11px]">📎 {a.label}</span>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   <p className="whitespace-pre-wrap break-words">{item.text}</p>
                 </div>
                 <span className="mt-1 hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted sm:flex"><User className="h-3.5 w-3.5" /></span>
@@ -219,7 +244,29 @@ export function UnifiedChatPanel({
             onSend={() => { rec.finish(); }}
           />
         ) : (
-          <div className="flex items-end gap-2">
+          <div className="space-y-2">
+            {pending.length > 0 && (
+              <div className="flex flex-wrap gap-1.5" aria-label="anexos pendentes">
+                {pending.map((a, i) => (
+                  <span key={`${a.label}-${i}`} className="inline-flex max-w-[180px] items-center gap-1.5 rounded-lg border border-border/70 bg-muted/40 px-1.5 py-1 text-[11px]">
+                    {a.dataUrl.startsWith("data:image")
+                      ? <img src={a.dataUrl} alt={a.label} className="h-7 w-7 rounded object-cover" />
+                      : <span aria-hidden>📎</span>}
+                    <span className="truncate">{a.label}</span>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive"
+                      title={`Remover ${a.label}`}
+                      aria-label={`Remover ${a.label}`}
+                      onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex items-end gap-2">
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -233,8 +280,9 @@ export function UnifiedChatPanel({
               ref={fileRef}
               type="file"
               accept="image/*,application/pdf"
+              multiple
               className="hidden"
-              onChange={(e) => { attach(e.target.files?.[0] ?? null); e.target.value = ""; }}
+              onChange={(e) => { attach(e.target.files); e.target.value = ""; }}
             />
             <Button type="button" size="icon" variant="outline" className="h-9 w-9 shrink-0" disabled={running || disabled} onClick={() => fileRef.current?.click()} title="Anexar">
               <Paperclip className="h-4 w-4" />
@@ -243,7 +291,7 @@ export function UnifiedChatPanel({
               <Button type="button" size="icon" variant="destructive" className="h-9 w-9 shrink-0" onClick={onCancel} title="Cancelar execução">
                 <Square className="h-4 w-4" />
               </Button>
-            ) : text.trim() ? (
+            ) : (text.trim() || pending.length > 0) ? (
               <Button type="button" size="icon" className="h-9 w-9 shrink-0" disabled={!canSend} onClick={submit} title="Enviar">
                 <Send className="h-4 w-4" />
               </Button>
@@ -261,6 +309,7 @@ export function UnifiedChatPanel({
                 <Mic className="h-4 w-4" />
               </Button>
             )}
+            </div>
           </div>
         )}
         {micNotice && !rec.recording && (

@@ -10,11 +10,21 @@
 import { buildInteractionItems, type StudioInteractionItem } from "./interactions";
 import type { StudioInteractionEvent } from "./streamEvents";
 
+export interface ChatAttachmentRef {
+  dataUrl: string;
+  label: string;
+}
+
+/** Aceita um anexo (legado), vários (novo) ou nenhum — mantém compatibilidade. */
+export type ChatAttachmentArg = ChatAttachmentRef | ChatAttachmentRef[] | undefined;
+
 export interface ChatConversationMessage {
   role: "user" | "assistant" | "system";
   text: string;
   image?: string;
   fileLabel?: string;
+  /** Anexos pendentes/enviados (múltiplos). */
+  images?: ChatAttachmentRef[];
 }
 
 export type StudioRunStatus = "running" | "done" | "error" | "cancelled";
@@ -32,7 +42,7 @@ export interface StudioRun {
 }
 
 export type UnifiedChatItem =
-  | { kind: "user"; id: string; text: string; image?: string; fileLabel?: string }
+  | { kind: "user"; id: string; text: string; image?: string; fileLabel?: string; images?: ChatAttachmentRef[] }
   | { kind: "assistant"; id: string; text: string }
   | { kind: "system"; id: string; text: string; tone: "info" | "error" | "success" }
   | {
@@ -127,7 +137,7 @@ export function buildUnifiedChat(input: BuildUnifiedChatInput): UnifiedChatItem[
   for (let i = 0; i < (input.messages ?? []).length; i += 1) {
     const m = input.messages[i];
     if (m.role === "user") {
-      out.push({ kind: "user", id: `u-${i}`, text: m.text, image: m.image, fileLabel: m.fileLabel });
+      out.push({ kind: "user", id: `u-${i}`, text: m.text, image: m.image, fileLabel: m.fileLabel, images: m.images });
       const run = runs[runIdx];
       if (run) {
         out.push(toActivityItem(run));

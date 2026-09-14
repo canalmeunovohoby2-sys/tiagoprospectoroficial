@@ -17,7 +17,7 @@ interface SiteChatProps {
   error: string | null;
   canUndo: boolean;
   dirty: boolean;
-  onApply: (instruction: string, attachment?: { dataUrl: string; label: string }) => void;
+  onApply: (instruction: string, attachment?: { dataUrl: string; label: string } | Array<{ dataUrl: string; label: string }>) => void;
   onRevert: () => void;
   runningLabel?: string;
   onQuickStrategy?: (id: string) => void;

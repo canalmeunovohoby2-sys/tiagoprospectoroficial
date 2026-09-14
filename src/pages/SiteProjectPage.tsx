@@ -45,6 +45,7 @@ export interface ChatMessage {
   text: string;
   image?: string; // dataURL exibido apenas na sessão (sem storage nesta fase)
   fileLabel?: string;
+  images?: Array<{ dataUrl: string; label: string }>; // múltiplos anexos
 }
 
 import { friendlyAiError } from "@/lib/friendlyAiError";
@@ -748,10 +749,13 @@ function buildReactKickoffInstruction(project: {
 
   async function runAiInstruction(
     instruction: string,
-    attachment?: { dataUrl: string; label: string },
+    attachment?: { dataUrl: string; label: string } | Array<{ dataUrl: string; label: string }>,
     opts?: { displayText?: string; acceptReport?: boolean; files?: Record<string, string>; silent?: boolean; media?: boolean },
   ) {
     if (!project) return;
+    // Normaliza anexos: aceita um (legado) ou vários (novo). O envio só acontece
+    // aqui — selecionar imagem no composer NÃO dispara nada.
+    const attachments = (Array.isArray(attachment) ? attachment : attachment ? [attachment] : []).filter((a) => !!a?.dataUrl);
     const displayText = opts?.displayText ?? instruction;
     // Fase 3: o Studio envia o estado ATUAL do editor (rascunhos inclusos). Aqui
     // ele passa a ser a fonte da execução — sem cópia divergente.
@@ -765,9 +769,9 @@ function buildReactKickoffInstruction(project: {
     aiAbortRef.current = controller;
     // C6: retry NÃO duplica a mensagem do usuário (nem no banco).
     if (!opts?.silent) {
-      lastRunRef.current = { instruction, attachment, displayText };
-      setAiMessages((prev) => [...prev, { role: "user", text: displayText, image: attachment?.dataUrl, fileLabel: attachment?.label }]);
-      appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachment?.label, type: attachment?.dataUrl.startsWith("data:image") ? "image" : "file" }], conversationId ?? undefined).catch(() => {});
+      lastRunRef.current = { instruction, attachment: attachments.length ? attachments : undefined, displayText };
+      setAiMessages((prev) => [...prev, { role: "user", text: displayText, image: attachments[0]?.dataUrl, fileLabel: attachments[0]?.label, images: attachments.length ? attachments : undefined }]);
+      appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "user", text: displayText, label: attachments[0]?.label, type: attachments[0]?.dataUrl.startsWith("data:image") ? "image" : "file" }], conversationId ?? undefined).catch(() => {});
     }
     setAiRunning(true);
     setAiError(null);
@@ -834,7 +838,7 @@ function buildReactKickoffInstruction(project: {
               longitude: media?.longitude ?? null,
             },
             memory: designMemory(),
-            attachments: attachment ? [{ name: attachment.label, dataUrl: attachment.dataUrl, mediaType: guessMediaType(attachment.dataUrl), label: attachment.label }] : [],
+            attachments: attachments.map((a) => ({ name: a.label, dataUrl: a.dataUrl, mediaType: guessMediaType(a.dataUrl), label: a.label })),
             conversation: chatConversation(),
             conversationId: conversationId ?? undefined,
           }, (phase, detail) => {
@@ -1159,7 +1163,7 @@ function buildReactKickoffInstruction(project: {
   // C2: controller da execução atual (cancelamento real).
   const aiAbortRef = useRef<AbortController | null>(null);
   // C6: última execução (para retry sem duplicar mensagens).
-  const lastRunRef = useRef<{ instruction: string; attachment?: { dataUrl: string; label: string }; displayText: string } | null>(null);
+  const lastRunRef = useRef<{ instruction: string; attachment?: Array<{ dataUrl: string; label: string }>; displayText: string } | null>(null);
   function cancelAi() {
     aiAbortRef.current?.abort();
   }

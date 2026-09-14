@@ -90,6 +90,14 @@ describe("site-media · fotos reais vs ilustrativas", () => {
     expect(normalizeMapEmbedUrls(code, CANON)).toBe(`<iframe src="${CANON}" />`);
     const noEmbed = `<iframe src="https://maps.google.com/maps?q=Bauru&z=15" />`;
     expect(normalizeMapEmbedUrls(noEmbed, CANON)).toBe(`<iframe src="${CANON}" />`);
+    // forma JSX com expressão (o Coder costuma usar)
+    const jsx = `<iframe src={"https://www.google.com/maps/place/Bauru"} className="h-80" />`;
+    expect(normalizeMapEmbedUrls(jsx, CANON)).toBe(`<iframe src={"${CANON}"} className="h-80" />`);
+    const jsxSingle = `<iframe src={'https://maps.google.com/maps?q=Bauru'} className="h-80" />`;
+    expect(normalizeMapEmbedUrls(jsxSingle, CANON)).toBe(`<iframe src={"${CANON}"} className="h-80" />`);
+    // aspas simples: preserva o estilo de aspas original
+    const singleQ = `<iframe src='https://www.google.com/maps/place/X' />`;
+    expect(normalizeMapEmbedUrls(singleQ, CANON)).toBe(`<iframe src='${CANON}' />`);
   });
 
   it("preserva embeds já válidos (output=embed e /maps/embed?pb=)", () => {

@@ -74,7 +74,7 @@ export function StudioChatPanel({ stream, projectKind = "static", visualMode, on
   const unifiedItems = useMemo(() => {
     if (projectKind !== "react") return [];
     return buildUnifiedChat({
-      messages: (siteChatProps.messages ?? []).map((m) => ({ role: m.role, text: m.text, image: m.image, fileLabel: m.fileLabel })),
+      messages: (siteChatProps.messages ?? []).map((m) => ({ role: m.role, text: m.text, image: m.image, fileLabel: m.fileLabel, images: m.images })),
       runs: stream?.runs ?? [],
       commits: stream?.commits ?? [],
     });
@@ -91,7 +91,7 @@ export function StudioChatPanel({ stream, projectKind = "static", visualMode, on
         error={stream?.error ?? null}
         visualMode={visualMode}
         onToggleVisual={onToggleVisual}
-        onSend={(text, attachment) => siteChatProps.onApply(text, attachment)}
+        onSend={(text, attachments) => siteChatProps.onApply(text, attachments)}
         onCancel={onCancel}
         onRetry={onRetry}
         canUndo={siteChatProps.canUndo}
