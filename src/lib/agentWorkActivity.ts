@@ -75,3 +75,16 @@ export function buildWorkTimeline(activity?: RawWorkActivity[] | null, changedFi
   if (lines.length === 0) return "";
   return `\n\n**Trabalho do agente**\n${lines.join("\n")}`;
 }
+
+/**
+ * Última atividade LEGÍVEL do agente (para o indicador "o que o agente está
+ * fazendo" no rodapé do chat, enquanto executa). Nunca expõe nomes de ferramentas.
+ */
+export function latestWorkLine(activity?: RawWorkActivity[] | null): WorkLine | null {
+  const list = (activity ?? []).filter((a) => a && typeof a.phase === "string" && typeof a.detail === "string");
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const line = toWorkLine(list[i]);
+    if (line) return line;
+  }
+  return null;
+}

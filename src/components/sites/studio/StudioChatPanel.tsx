@@ -94,6 +94,7 @@ export function StudioChatPanel({ stream, projectKind = "static", visualMode, on
         onSend={(text, attachments) => siteChatProps.onApply(text, attachments)}
         onCancel={onCancel}
         onRetry={onRetry}
+        liveActivity={siteChatProps.liveActivity}
         canUndo={siteChatProps.canUndo}
         onRevert={siteChatProps.onRevert}
         onNewConversation={siteChatProps.onNewConversation}
