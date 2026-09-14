@@ -467,6 +467,12 @@ export async function invokeProspectorAgent(input: {
       const decoder = new TextDecoder();
       let buffer = "";
       let final: AgentExecuteResult | null = null;
+      // `complete` traz o MESMO payload do `result` e chega ANTES dele. É o
+      // fallback quando o `result` se perde no fim do stream (rede/close).
+      let complete: AgentExecuteResult | null = null;
+      // Último snapshot de arquivos visto — fallback final se nem result nem
+      // complete chegarem (a entrega real não pode se perder).
+      let lastFiles: Record<string, string> | null = null;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -482,12 +488,25 @@ export async function invokeProspectorAgent(input: {
             onLiveActivity?.(String(event.phase ?? ""), String(event.detail ?? ""));
           } else if (event.type === "result") {
             final = event as unknown as AgentExecuteResult;
+          } else if (event.type === "complete") {
+            complete = event as unknown as AgentExecuteResult;
+            opts?.onStudioEvent?.(event);
           } else {
+            if (event.type === "files_ready") {
+              const f = (event as { files?: Record<string, string> }).files;
+              if (f && Object.keys(f).length > 0) lastFiles = f;
+            }
             opts?.onStudioEvent?.(event);
           }
         }
       }
       if (final) return { ...final, executor: "cline-editor" };
+      if (complete) return { ...complete, executor: "cline-editor" };
+      if (lastFiles) {
+        // O agente ENTREGOU arquivos (files_ready) mesmo sem o evento final:
+        // devolvemos a entrega real em vez de descartá-la como "sem resultado".
+        return { status: "ok", executor: "cline-editor", runtime: "studio-team", changed: true, touched: [], files: lastFiles } as unknown as AgentExecuteResult;
+      }
       return { status: "error", executor: "cline-editor", errors: ["Stream do agente terminou sem resultado."] };
     }
     const data = (await res.json()) as AgentExecuteResult & { error?: string };

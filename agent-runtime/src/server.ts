@@ -1258,10 +1258,26 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             }
           } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            const payload = { status: "error", error: message, errors: [message], changed: false, no_file_changes: true, touched: [], files: readWorkspace(root), runtime: "studio-team" };
+            const safeFiles = (() => { try { return readWorkspace(root); } catch { return {} as Record<string, string>; } })();
+            const payload = { status: "error", error: message, errors: [message], changed: false, no_file_changes: true, touched: [], files: safeFiles, runtime: "studio-team" };
             if (stream) { writeLine({ type: "error", message }); writeLine({ type: "result", ...payload }); res.end(); }
             else send(res, 200, payload);
           }
+          }).catch((e) => {
+            // Falha ANTES/depois do try interno (ex.: materializar o workspace ou
+            // stream já iniciado): o cliente NUNCA pode terminar sem um `result`,
+            // senão o front mostra "Stream terminou sem resultado" e descarta a
+            // entrega real.
+            const message = e instanceof Error ? e.message : String(e);
+            if (stream) {
+              try {
+                const filesNow = (() => { try { return readWorkspace(resolveWorkspaceRoot(projectId)); } catch { return {} as Record<string, string>; } })();
+                res.write(`${JSON.stringify({ type: "result", status: "error", error: message, errors: [message], changed: false, no_file_changes: true, touched: [], files: filesNow, runtime: "studio-team" })}\n`);
+              } catch { /* conexão encerrada */ }
+              try { res.end(); } catch { /* noop */ }
+            } else {
+              send(res, 200, { status: "error", error: message, errors: [message], changed: false, touched: [], files, runtime: "studio-team" });
+            }
           });
           return;
         }
