@@ -33,21 +33,25 @@ const WC_DEVICE_SIZE: Record<StudioDevice, { width: number; height: number }> = 
 };
 
 /**
- * Moldura do dispositivo: proporcional, centralizada e sem deformar. O interno
- * usa a largura/altura REAIS do viewport — é o site real que muda de layout.
+ * Moldura do dispositivo: ocupa a LARGURA disponível (sem sobras laterais) e a
+ * altura visível vai até o fim do painel — o iframe continua com a largura REAL
+ * do viewport (o site reage de verdade) e rola por dentro. Escala pela largura
+ * (permite ampliar tablet/mobile) em vez de encolher pela altura.
  */
 function DeviceFrame({ device, children }: { device: StudioDevice; children: React.ReactNode }) {
   const size = WC_DEVICE_SIZE[device];
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  const [scale, setScale] = useState(1);
+  const [box, setBox] = useState<{ w: number; h: number; scale: number }>({ w: size.width, h: size.height, scale: 1 });
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const measure = () => {
-      const cw = el.clientWidth - 16;
-      const ch = el.clientHeight - 16;
-      const k = Math.min(1, cw / size.width, ch / size.height);
-      setScale(Number.isFinite(k) && k > 0.05 ? k : 1);
+      const cw = Math.max(160, el.clientWidth - 16);
+      const ch = Math.max(160, el.clientHeight - 16);
+      // Escala pela LARGURA (sem cap em 1) → preenche o painel; limita o zoom para
+      // não distorcer demais e corta a altura no que couber (o iframe rola dentro).
+      const scale = Math.min(2.5, Math.max(0.2, cw / size.width));
+      setBox({ w: Math.round(size.width * scale), h: Math.min(Math.round(size.height * scale), ch), scale });
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -56,13 +60,13 @@ function DeviceFrame({ device, children }: { device: StudioDevice; children: Rea
     return () => ro.disconnect();
   }, [size.width, size.height]);
   return (
-    <div ref={wrapRef} className="flex h-full w-full items-center justify-center overflow-hidden p-2">
+    <div ref={wrapRef} className="flex h-full w-full items-start justify-center overflow-hidden p-2">
       <div
         data-preview-device={device}
         className="shrink-0 overflow-hidden rounded-xl border border-border/60 bg-white shadow-sm"
-        style={{ width: Math.round(size.width * scale), height: Math.round(size.height * scale) }}
+        style={{ width: box.w, height: box.h }}
       >
-        <div style={{ width: size.width, height: size.height, transform: `scale(${scale})`, transformOrigin: "top left" }}>
+        <div style={{ width: size.width, height: size.height, transform: `scale(${box.scale})`, transformOrigin: "top left" }}>
           {children}
         </div>
       </div>
