@@ -118,7 +118,44 @@ const DEFAULT_PERSONALITY: Personality = {
 
 const PERSONALITIES: Array<{ match: RegExp; p: Personality }> = [
   {
-    match: /odont|dent|clínic|clinic|medic|saúde|saude|dermat|psic|terap|fono|fisiot|hospital|laborat/i,
+    // Odontologia: editorial/clínico-premium (não "azul hospitalar").
+    match: /odont|dentist|dentária|dentaria|ortodont|implante|prótese|protese/i,
+    p: {
+      label: "odontológico editorial",
+      traits: "elegância, precisão, confiança, sofisticação silenciosa",
+      palette: "base clara (marfim/off-white) + neutros frios + UM acento premium (grafite, verde-sálvia ou dourado discreto); evitar azul-hospital genérico",
+      trust: "fotografia limpa e humana do consultório/equipe, endereço e agendamento visíveis",
+      focus: "tratamentos/tecnologia com hierarquia editorial e CTA de avaliação",
+      avoid: ["azul hospitalar", "ícones de dente repetidos", "cards idênticos de serviços", "caras de SaaS/dashboard", "título gigante + botão + imagem"],
+    },
+  },
+  {
+    // Massoterapia/wellness/spa: sensorial, boutique. (ANTES de "terapia": o termo
+    // "Massoterapia" contém "terapia" — o específico precisa vir primeiro.)
+    match: /massoterap|massagem|wellness|spa|estétic|estetic|relax|bem-estar|bem estar|aromaterap|terapias corporais/i,
+    p: {
+      label: "sensorial e boutique",
+      traits: "atmosfera, textura, calma, cuidado com o corpo",
+      palette: "naturais e quentes (bege, areia, terracota, verde-oliva) com textura sutil; sem cores sintéticas",
+      trust: "fotografia de ambiente e detalhe (toalhas, óleos, mãos), clima acolhedor e localização",
+      focus: "experiência/rituais, atmosfera e agendamento por WhatsApp",
+      avoid: ["estética de clínica fria", "ícones genéricos de folha", "blocos simétricos iguais", "cores neon"],
+    },
+  },
+  {
+    // Psicologia/terapia: humano, acolhedor, silencioso.
+    match: /psic|psicolog|psiquiatr|ansiedade|depress|acolh|terapeuta|terapêut/i,
+    p: {
+      label: "humano e acolhedor",
+      traits: "escuta, confiança, calma, presença humana",
+      palette: "naturais/terrosas e claras (areia, oliva, terracota suave); contraste baixo e confortável",
+      trust: "confiança ANTES de venda: quem atende, como funciona o processo, sigilo e acolhimento",
+      focus: "apresentação humana, como funciona a terapia e um CTA gentil de conversa",
+      avoid: ["venda agressiva", "estética de aplicativo", "ícones de cérebro/lâmpada", "gradientes vibrantes", "excesso de cards"],
+    },
+  },
+  {
+    match: /clínic|clinic|medic|saúde|saude|dermat|fono|fisiot|hospital|laborat/i,
     p: {
       label: "clínico-premium",
       traits: "confiança, precisão, limpeza, cuidado",

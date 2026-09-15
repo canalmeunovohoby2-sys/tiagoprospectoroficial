@@ -63,7 +63,7 @@ describe("site-media · fotos reais vs ilustrativas", () => {
     expect(block).toContain(PHOTO_A);
     expect(block).toContain(PHOTO_B);
     // Mapa por TILES (o iframe do Google é bloqueado sob COEP) + link real do Google.
-    expect(block).toContain("tile.openstreetmap.org");
+    expect(block).toContain("data-pf-map");
     expect(block).toContain("Abrir no Google Maps");
     expect(block).toMatch(/NUNCA use <iframe> do Google Maps/i);
     expect(block).toContain("NUNCA invente");
@@ -80,7 +80,7 @@ describe("site-media · fotos reais vs ilustrativas", () => {
     const block = mediaContextBlock({ name: "Clínica X", address: "Rua A, 1", latitude: -22.31, longitude: -49.06, city: "Bauru", state: "SP" });
     expect(block).toMatch(/COPIE ESTE BLOCO/);
     expect(block).toContain("h-[320px]");
-    expect(block).toContain("tile.openstreetmap.org");
+    expect(block).toContain("data-pf-map");
   });
 
   const CANON = "https://maps.google.com/maps?q=Av.%20Anchieta%2C%2011305%2C%20Bertioga%2FSP&z=16&output=embed";
@@ -124,7 +124,7 @@ describe("site-media · fotos reais vs ilustrativas", () => {
       expect(changed).toEqual(["App.tsx", "ok.tsx"]);
       const app = readFileSync(join(root, "App.tsx"), "utf8");
       expect(app).not.toMatch(/<iframe/i);
-      expect(app).toContain("tile.openstreetmap.org");
+      expect(app).toContain("data-pf-map");
       expect(app).toContain("Abrir no Google Maps");
     } finally {
       rmSync(root, { recursive: true, force: true });

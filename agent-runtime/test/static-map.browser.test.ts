@@ -1,31 +1,29 @@
 import { describe, it, expect } from "vitest";
 import { chromium } from "playwright";
 import { createServer } from "node:http";
-import { buildStaticMapBlock } from "../src/studio/agent-core/static-map";
+import { buildStaticMapBlock, buildMapRuntimeScript } from "../src/studio/agent-core/static-map";
 
-// PROVA REAL: o bloco de mapa do produto (tiles + marcador + link) carrega num
-// contexto idêntico ao do site publicado/preview (COEP: credentialless + iframe
-// sandbox srcdoc), enquanto um <iframe> do Google Maps é BLOQUEADO ali.
+// PROVA REAL (Chromium) do mapa INTERATIVO no MESMO contexto COEP do site
+// (preview/publicado): os tiles carregam e o mapa responde a ARRASTAR e ZOOM.
 const BUSINESS = { name: "Clinica X", address: "Av. Anchieta, 11305", city: "Bertioga", state: "SP", latitude: -22.315, longitude: -49.06 };
 
+/** Converte o JSX do bloco para HTML (atributos + tags auto-fechadas não-void). */
 function jsxToHtml(block: string): string {
   return block
     .replace(/className=/g, "class=")
-    .replace(/style=\{\{\s*left:\s*"([^"]+)",\s*top:\s*"([^"]+)"\s*\}\}/g, 'style="left:$1;top:$2"');
+    .replace(/<div([^>]*?)\/>/g, "<div$1></div>")
+    .replace(/<span([^>]*?)\/>/g, "<span$1></span>");
 }
 
-describe("static-map · REAL (Chromium) sob COEP", () => {
-  it("os tiles do mapa carregam e o iframe do Google é bloqueado (por isso o estático)", async () => {
-    const block = buildStaticMapBlock(BUSINESS)!;
-    expect(block).toBeTruthy();
-    const inner = `<style>html,body{margin:0}</style>${jsxToHtml(block)}<iframe id="gm" src="https://maps.google.com/maps?q=Bauru/SP&output=embed" style="width:300px;height:150px;border:0"></iframe>`;
-    const escaped = inner.replace(/'/g, "&#39;");
-    const page = `<!doctype html><style>html,body{margin:0}</style><iframe id="site" sandbox="allow-scripts allow-same-origin" srcdoc='${escaped}' style="width:900px;height:700px;border:0"></iframe>`;
+describe("mapa interativo · REAL (Chromium) sob COEP: tiles + pan + zoom", () => {
+  it("carrega os tiles e responde a arrastar e ao zoom (+/-)", async () => {
+    const block = jsxToHtml(buildStaticMapBlock(BUSINESS)!);
+    const page = `<!doctype html><style>html,body{margin:0}#wrap{width:900px;height:420px}</style><div id="wrap">${block}</div><script>${buildMapRuntimeScript()}</script>`;
 
     const server = createServer((_req, res) => {
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
-        // MESMO contexto do app (necessário ao WebContainer) — era o que quebrava o mapa.
+        // MESMO contexto do app (necessário ao WebContainer) — era o que quebrava o iframe.
         "Cross-Origin-Embedder-Policy": "credentialless",
         "Cross-Origin-Opener-Policy": "same-origin",
       });
@@ -35,40 +33,49 @@ describe("static-map · REAL (Chromium) sob COEP", () => {
     const port = (server.address() as { port: number }).port;
 
     const browser = await chromium.launch();
-    const failed: string[] = [];
-    const tab = await browser.newPage();
-    tab.on("requestfailed", (r) => failed.push(`${r.failure()?.errorText}:${new URL(r.url()).host}`));
+    const tab = await browser.newPage({ viewport: { width: 1000, height: 600 } });
     await tab.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
-    await tab.waitForTimeout(7000);
+    await tab.waitForTimeout(6000);
 
-    const frame = tab.frames().find((f) => f.url() === "about:srcdoc");
-    expect(frame, "iframe do site (srcdoc) não montou").toBeTruthy();
-    const info = await frame!.evaluate(() => {
-      const imgs = Array.from(document.querySelectorAll("img")) as HTMLImageElement[];
-      const link = document.querySelector('a[href*="google.com/maps/dir"]') as HTMLAnchorElement | null;
-      const marker = document.querySelector(".bg-red-600");
-      return {
-        tiles: imgs.map((i) => i.naturalWidth),
-        link: link?.href ?? null,
-        hasMarker: !!marker,
-        mapBox: !!document.querySelector('[class*="h-[320px]"]'),
-      };
+    const map = tab.locator("[data-pf-map]");
+    await expect.poll(async () => map.count(), { timeout: 10000 }).toBe(1);
+
+    // 1) MAPA APARECE: os tiles (imagens) carregaram de verdade.
+    const tiles = await tab.evaluate(() => {
+      const imgs = Array.from(document.querySelectorAll("[data-pf-map] img")) as HTMLImageElement[];
+      return { count: imgs.length, loaded: imgs.filter((i) => i.naturalWidth > 0).length };
     });
+    expect(tiles.count).toBeGreaterThan(0);
+    expect(tiles.loaded).toBeGreaterThan(0);
 
-    const googleIframeBlocked = !tab.frames().some((f) => f.url().includes("google.com/maps"));
-    const googleFail = failed.some((f) => f.includes("google") && f.includes("BLOCKED_BY_RESPONSE"));
+    // 2) INTERATIVO — ZOOM: botão "+" aumenta o zoom do mapa.
+    const zoomBefore = await map.getAttribute("data-pf-zoom");
+    await tab.click('[data-pf-zoom-step="1"]');
+    await expect.poll(async () => await map.getAttribute("data-pf-zoom"), { timeout: 5000 }).not.toBe(zoomBefore);
+    const zoomAfter = await map.getAttribute("data-pf-zoom");
+    expect(Number(zoomAfter)).toBe(Number(zoomBefore) + 1);
+    // botão "−" volta
+    await tab.click('[data-pf-zoom-step="-1"]');
+    await expect.poll(async () => await map.getAttribute("data-pf-zoom"), { timeout: 5000 }).toBe(zoomBefore);
+
+    // 3) INTERATIVO — ARRASTAR (pan): o arrasto recentraliza o mapa (muda a latitude/longitude efetiva).
+    const box = (await map.boundingBox())!;
+    const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await tab.mouse.move(center.x, center.y);
+    await tab.mouse.down();
+    await tab.mouse.move(center.x + 120, center.y + 60, { steps: 8 });
+    await tab.mouse.up();
+    await tab.waitForTimeout(1200);
+    // Após o pan o mapa re-renderiza (tiles continuam carregando) e o marcador segue presente.
+    const after = await tab.evaluate(() => {
+      const el = document.querySelector("[data-pf-map]")!;
+      const imgs = Array.from(el.querySelectorAll("img")) as HTMLImageElement[];
+      return { tiles: imgs.length, marker: !!el.querySelector("div[style*='9999px']") };
+    });
+    expect(after.tiles).toBeGreaterThan(0);
+    expect(after.marker).toBe(true);
 
     await browser.close();
     server.close();
-
-    // 1) o MAPA aparece: os 4 tiles carregaram de verdade
-    expect(info.tiles).toHaveLength(4);
-    for (const w of info.tiles) expect(w).toBeGreaterThan(0);
-    // 2) marcador + botão real do Google Maps + altura definida (responsivo)
-    expect(info.hasMarker).toBe(true);
-    expect(info.link).toContain("google.com/maps/dir");
-    expect(info.mapBox).toBe(true);
-    // 3) o iframe do Google É bloqueado nesse contexto (prova de que a causa era o iframe)
-    expect(googleIframeBlocked && googleFail).toBe(true);
   }, 120000);
 });

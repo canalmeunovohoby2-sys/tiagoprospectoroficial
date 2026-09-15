@@ -12,7 +12,7 @@
 import type { BusinessContext } from "../../tools.js";
 import { readWorkspace, safeWorkspaceJoin } from "../../workspace.js";
 import { writeFileSync } from "node:fs";
-import { buildStaticMapBlock, mapsDirectionsUrl as staticMapDirectionsUrl, businessPoint } from "./static-map.js";
+import { buildStaticMapBlock, injectMapRuntimeIntoHtml, mapsDirectionsUrl as staticMapDirectionsUrl, businessPoint } from "./static-map.js";
 
 function isHttpUrl(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -131,14 +131,26 @@ export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessCont
   if (!block) return [];
   const changed: string[] = [];
   const IFRAME = /<iframe\b[^>]*\bsrc\s*=\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*'|\{\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*')\s*\})[^>]*(?:\/>|>[\s\S]*?<\/iframe>)/gi;
-  for (const [rel, content] of Object.entries(readWorkspace(root))) {
+  const files = readWorkspace(root);
+  let needsRuntime = false;
+  for (const [rel, content] of Object.entries(files)) {
     if (!/\.(tsx|jsx|ts|js|html?)$/i.test(rel)) continue;
-    if (!/google\./i.test(content) || !/maps/i.test(content)) continue;
-    const next = content.replace(IFRAME, block);
+    let next = content;
+    if (/google\./i.test(content) && /maps/i.test(content)) next = content.replace(IFRAME, block);
+    if (next.includes("data-pf-map")) needsRuntime = true;
     if (next === content) continue;
     const abs = safeWorkspaceJoin(root, rel);
     if (!abs) continue;
     try { writeFileSync(abs, next, "utf8"); changed.push(rel); } catch { /* noop */ }
+  }
+  // O mapa INTERATIVO precisa do runtime (vanilla, sem dependências) no index.html
+  // — funciona no preview E no publicado (tiles são imagens; iframe é bloqueado).
+  const html = readWorkspace(root)["index.html"];
+  if (needsRuntime && typeof html === "string" && !html.includes("prospector-map-runtime")) {
+    const abs = safeWorkspaceJoin(root, "index.html");
+    if (abs) {
+      try { writeFileSync(abs, injectMapRuntimeIntoHtml(html), "utf8"); changed.push("index.html"); } catch { /* noop */ }
+    }
   }
   return changed;
 }

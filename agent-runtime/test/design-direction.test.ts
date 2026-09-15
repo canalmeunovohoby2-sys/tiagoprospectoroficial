@@ -27,12 +27,35 @@ describe("design-direction · direção de arte determinística por negócio", (
   it("a personalidade nasce do SEGMENTO (segmentos diferentes → direções diferentes)", () => {
     expect(personalityFor("Dentistas").label).not.toBe(personalityFor("Pet Shop").label);
     expect(personalityFor("Restaurantes").label).not.toBe(personalityFor("Eletricistas").label);
-    expect(buildDesignDirection(DENTISTA, "x").block).toMatch(/clínico-premium/i);
+    expect(buildDesignDirection(DENTISTA, "x").block).toMatch(/odontológico editorial/i);
     expect(buildDesignDirection(PET, "x").block).toMatch(/acolhedor e energético/i);
     expect(buildDesignDirection(RESTAURANTE, "x").block).toMatch(/gastronômico/i);
     expect(buildDesignDirection(ELETRICISTA, "x").block).toMatch(/técnico e confiável/i);
     // sem segmento conhecido → perfil padrão (nunca vazio)
     expect(personalityFor("").label).toBeTruthy();
+  });
+
+  it("ODONTO/PSICO/MASSO ganham direção própria e proíbem o clichê genérico", () => {
+    // Odontologia: editorial; proíbe azul hospitalar, cards idênticos e cara de SaaS.
+    const odonto = buildDesignDirection({ name: "Clínica Sorriso", segment: "Odontologia" }, "p1").block;
+    expect(odonto).toMatch(/odontológico editorial/i);
+    expect(odonto).toMatch(/azul[-\s]?hospital/i);
+    expect(odonto).toMatch(/cards idênticos/i);
+    expect(odonto).toMatch(/SaaS\/dashboard/i);
+    // Psicologia: humano/acolhedor, confiança antes de venda.
+    const psico = buildDesignDirection({ name: "Consulta", segment: "Psicologia" }, "p2").block;
+    expect(psico).toMatch(/humano e acolhedor/i);
+    expect(psico).toMatch(/confiança antes de venda/i);
+    expect(psico).toMatch(/venda agressiva/i);
+    // Massoterapia: sensorial/boutique, atmosfera e textura.
+    const masso = buildDesignDirection({ name: "Espaço Zen", segment: "Massoterapia" }, "p3").block;
+    expect(masso).toMatch(/sensorial e boutique/i);
+    expect(masso).toMatch(/atmosfera/i);
+    expect(masso).toMatch(/clínica fria/i);
+    // Segmentos que já funcionam NÃO regridem.
+    expect(buildDesignDirection({ name: "Academia X", segment: "Academia" }, "p4").block).toMatch(/atlético e enérgico/i);
+    // Energia Solar NÃO é capturada pelas regras novas (mantém o perfil anterior).
+    expect(buildDesignDirection({ name: "Solar Y", segment: "Energia Solar" }, "p5").block).not.toMatch(/odontológico editorial|sensorial e boutique|humano e acolhedor/i);
   });
 
   it("o briefing proíbe o padrão de blocos e exige autocrítica + marcador", () => {

@@ -73,6 +73,75 @@ export function mapsDirectionsUrl(business: BusinessContext): string | null {
   return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(q)}`;
 }
 
+/**
+ * RUNTIME do mapa INTERATIVO (vanilla JS, SEM dependências e SEM iframe).
+ *
+ * Por que assim: o site roda em contexto COEP (isolamento do WebContainer) e ali
+ * QUALQUER iframe cross-origin é bloqueado — então um embed do Google não é
+ * navegável. Este runtime monta os tiles (imagens, permitidas sob COEP) e dá
+ * interatividade real: arrastar (pan), roda do mouse e botões (+/−) para zoom,
+ * marcador e atribuição. Funciona no preview E no publicado.
+ */
+export function buildMapRuntimeScript(): string {
+  return `/* prospector-map-runtime */
+(function(){
+  var TILE=256, MINZ=3, MAXZ=19;
+  function tileXY(lat,lng,z){ var n=Math.pow(2,z); var x=(lng+180)/360*n; var r=lat*Math.PI/180; var y=(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n; return {x:x,y:y}; }
+  function lngLatFromTile(x,y,z){ var n=Math.pow(2,z); var lng=x/n*360-180; var lat=Math.atan(Math.sinh(Math.PI*(1-2*y/n)))*180/Math.PI; return {lat:lat,lng:lng}; }
+  function init(el){
+    if(el.getAttribute("data-pf-map-ready")==="1") return; el.setAttribute("data-pf-map-ready","1");
+    var lat=parseFloat(el.getAttribute("data-lat")), lng=parseFloat(el.getAttribute("data-lng"));
+    var z=parseInt(el.getAttribute("data-zoom")||"15",10);
+    if(!isFinite(lat)||!isFinite(lng)) return;
+    el.style.position="relative"; el.style.overflow="hidden"; el.style.touchAction="none"; el.style.cursor="grab"; el.style.background="#e5e7eb";
+    var stage=document.createElement("div"); stage.style.cssText="position:absolute;left:0;top:0;will-change:transform"; el.appendChild(stage);
+    var dx=0, dy=0, dragging=false, moved=false, startX=0, startY=0;
+    function render(){
+      stage.innerHTML="";
+      var c=tileXY(lat,lng,z); var n=Math.pow(2,z);
+      var w=el.clientWidth||640, h=el.clientHeight||320;
+      var cols=Math.ceil(w/TILE)+2, rows=Math.ceil(h/TILE)+2;
+      var sx=Math.floor(c.x-cols/2), sy=Math.floor(c.y-rows/2);
+      var baseX=-((c.x-sx)*TILE-w/2), baseY=-((c.y-sy)*TILE-h/2);
+      stage.style.transform="translate("+(baseX+dx)+"px,"+(baseY+dy)+"px)";
+      for(var j=0;j<rows;j++){ for(var i=0;i<cols;i++){
+        var X=sx+i, Y=sy+j; if(X<0||Y<0||X>=n||Y>=n) continue;
+        var img=document.createElement("img"); img.alt=""; img.loading="lazy"; img.draggable=false;
+        img.src="https://tile.openstreetmap.org/"+z+"/"+X+"/"+Y+".png";
+        img.style.cssText="position:absolute;left:"+(i*TILE)+"px;top:"+(j*TILE)+"px;width:"+TILE+"px;height:"+TILE+"px";
+        stage.appendChild(img);
+      }}
+      var m=document.createElement("div");
+      m.style.cssText="position:absolute;left:"+((c.x-sx)*TILE)+"px;top:"+((c.y-sy)*TILE)+"px;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:9999px;background:#dc2626;box-shadow:0 0 0 2px #fff,0 1px 4px rgba(0,0,0,.4)";
+      stage.appendChild(m);
+      el.setAttribute("data-pf-zoom",String(z));
+    }
+    function apply(){ var c=tileXY(lat,lng,z); var sx=c.x-dx/TILE, sy=c.y-dy/TILE; var p=lngLatFromTile(sx,sy,z); lat=p.lat; lng=p.lng; dx=0; dy=0; render(); }
+    el.addEventListener("pointerdown",function(e){ if(e.target&&e.target.getAttribute&&e.target.getAttribute("data-pf-ui")) return; dragging=true; moved=false; startX=e.clientX; startY=e.clientY; try{ el.setPointerCapture(e.pointerId); }catch(_){ } el.style.cursor="grabbing"; });
+    el.addEventListener("pointermove",function(e){ if(!dragging) return; dx=e.clientX-startX; dy=e.clientY-startY; if(Math.abs(dx)+Math.abs(dy)>3) moved=true; stage.style.transform=stage.style.transform.replace(/translate\\([^)]*\\)/,"translate(0px,0px)"); var c=tileXY(lat,lng,z); var w=el.clientWidth||640,h=el.clientHeight||320; var cols=Math.ceil(w/TILE)+2,rows=Math.ceil(h/TILE)+2; var sx=Math.floor(c.x-cols/2),sy=Math.floor(c.y-rows/2); var baseX=-((c.x-sx)*TILE-w/2),baseY=-((c.y-sy)*TILE-h/2); stage.style.transform="translate("+(baseX+dx)+"px,"+(baseY+dy)+"px)"; });
+    function end(){ if(!dragging) return; dragging=false; el.style.cursor="grab"; if(moved) apply(); }
+    el.addEventListener("pointerup",end); el.addEventListener("pointercancel",end); el.addEventListener("pointerleave",end);
+    el.addEventListener("wheel",function(e){ e.preventDefault(); var d=e.deltaY<0?1:-1; z=Math.max(MINZ,Math.min(MAXZ,z+d)); render(); },{passive:false});
+    function controls(){ return el.parentElement?el.parentElement.querySelectorAll("[data-pf-zoom-step]"):[]; }
+    function wire(){ var bs=controls(); for(var i=0;i<bs.length;i++){ (function(b){ if(b.getAttribute("data-pf-wired")==="1") return; b.setAttribute("data-pf-wired","1"); b.addEventListener("click",function(e){ e.preventDefault(); e.stopPropagation(); var s=parseInt(b.getAttribute("data-pf-zoom-step"),10)||1; z=Math.max(MINZ,Math.min(MAXZ,z+s)); render(); }); })(bs[i]); } }
+    render(); wire();
+    new MutationObserver(function(){ if(!el.isConnected) return; render(); wire(); }).observe(el.parentElement||el,{childList:true});
+  }
+  function boot(){ var els=document.querySelectorAll("[data-pf-map]"); for(var i=0;i<els.length;i++){ try{ init(els[i]); }catch(e){} } }
+  if(document.readyState!=="loading") boot(); else document.addEventListener("DOMContentLoaded",boot);
+  window.addEventListener("load",boot);
+  try{ new MutationObserver(function(){ boot(); }).observe(document.documentElement,{childList:true,subtree:true}); }catch(e){}
+})();`;
+}
+
+/** Injeta o runtime do mapa no index.html (idempotente). */
+export function injectMapRuntimeIntoHtml(html: string): string {
+  if (!html || html.includes("prospector-map-runtime")) return html;
+  const tag = `<script>${buildMapRuntimeScript()}</script>`;
+  const idx = html.toLowerCase().lastIndexOf("</body>");
+  return idx >= 0 ? `${html.slice(0, idx)}${tag}\n${html.slice(idx)}` : `${html}\n${tag}`;
+}
+
 export interface StaticMapBlockOptions {
   /** Classe Tailwind do container (altura). Default h-[320px]. */
   heightClass?: string;
@@ -81,8 +150,9 @@ export interface StaticMapBlockOptions {
 }
 
 /**
- * Bloco JSX pronto do mapa (sem iframe): responde em qualquer contexto COEP,
- * no preview e no publicado. Inclui marcador, atribuição e botão do Google Maps.
+ * Bloco JSX do mapa: um contêiner interativo (`data-pf-map`) + controles de zoom,
+ * marcador, atribuição e botão "Abrir no Google Maps". O runtime (script acima)
+ * torna o mapa navegável — sem iframe e sem chave.
  */
 export function buildStaticMapBlock(business: BusinessContext, opts: StaticMapBlockOptions = {}): string | null {
   const directions = mapsDirectionsUrl(business);
@@ -90,7 +160,6 @@ export function buildStaticMapBlock(business: BusinessContext, opts: StaticMapBl
   const heightClass = opts.heightClass ?? "h-[320px]";
   const address = (opts.address ?? (typeof business.address === "string" ? business.address : "")) || "";
 
-  // Sem coordenadas: não inventa mapa — devolve bloco de endereço + rota.
   if (!point) {
     if (!directions) return null;
     return [
@@ -103,19 +172,15 @@ export function buildStaticMapBlock(business: BusinessContext, opts: StaticMapBl
     ].filter(Boolean).join("\n");
   }
 
-  const { tiles, marker } = buildStaticMap(point);
   return [
     `<div className="relative w-full ${heightClass} overflow-hidden rounded-xl border border-black/10 bg-neutral-200">`,
-    `  <div className="absolute left-1/2 top-1/2 h-[512px] w-[512px] -translate-x-1/2 -translate-y-1/2">`,
-    ...tiles.map((t, i) => {
-      const left = (i % 2) * TILE;
-      const top = Math.floor(i / 2) * TILE;
-      return `    <img src="${t}" alt="" loading="lazy" className="absolute h-[256px] w-[256px]" style={{ left: "${left}px", top: "${top}px" }} />`;
-    }),
-    `    <span className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-full rounded-full bg-red-600 ring-2 ring-white" style={{ left: "${marker.x}px", top: "${marker.y}px" }} />`,
+    `  <div data-pf-map data-lat="${point.lat}" data-lng="${point.lng}" data-zoom="15" className="absolute inset-0" />`,
+    `  <div className="absolute right-2 top-2 z-10 flex flex-col overflow-hidden rounded-lg border border-black/10 bg-white/95 shadow">`,
+    `    <button type="button" data-pf-zoom-step="1" data-pf-ui="1" aria-label="Aproximar" className="h-8 w-8 text-lg leading-none text-neutral-800 hover:bg-neutral-100">+</button>`,
+    `    <button type="button" data-pf-zoom-step="-1" data-pf-ui="1" aria-label="Afastar" className="h-8 w-8 border-t border-black/10 text-lg leading-none text-neutral-800 hover:bg-neutral-100">−</button>`,
     `  </div>`,
-    directions ? `  <a href="${esc(directions)}" target="_blank" rel="noreferrer" className="absolute bottom-2 right-2 rounded-lg bg-black/75 px-2.5 py-1.5 text-[11px] font-semibold text-white">Abrir no Google Maps</a>` : "",
-    `  <span className="absolute bottom-1 left-2 text-[9px] text-black/50">© OpenStreetMap</span>`,
+    directions ? `  <a href="${esc(directions)}" target="_blank" rel="noreferrer" data-pf-ui="1" className="absolute bottom-2 right-2 z-10 rounded-lg bg-black/75 px-2.5 py-1.5 text-[11px] font-semibold text-white">Abrir no Google Maps</a>` : "",
+    `  <span className="pointer-events-none absolute bottom-1 left-2 z-10 text-[9px] text-black/60">© OpenStreetMap</span>`,
     `</div>`,
   ].filter(Boolean).join("\n");
 }
