@@ -19,7 +19,7 @@ import { loadProjectState, saveProjectState, type StudioStateMessage } from "./a
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
 import { mediaContextBlock } from "./agent-core/site-media.js";
 import { buildDesignDirection, hasArtDirection, ART_DIRECTION_MARKER } from "./agent-core/design-direction.js";
-import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, colorNotAppliedNudge, uninspectedEdits, UNINSPECTED_NUDGE, VERIFY_NUDGE, FORCE_CHANGE_NUDGE, workspaceSignature, hasPlaceholderCode, placeholderNudge } from "./agent-core/edit-scope.js";
+import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, paletteLeftoverRatio, colorLeftoverNudge, namedColorFamilies, colorFamilyTokens, uninspectedEdits, UNINSPECTED_NUDGE, VERIFY_NUDGE, FORCE_CHANGE_NUDGE, workspaceSignature, hasPlaceholderCode, placeholderNudge } from "./agent-core/edit-scope.js";
 
 export interface StudioAttachment {
   name: string;
@@ -344,20 +344,21 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
       continue;
     }
 
-    // COR/IDENTIDADE NÃO APLICADA: o código AINDA usa a paleta anterior → cobramos
-    // com a evidência exata (bounded, 1 vez). Vale com cor nomeada ("para vermelho")
-    // e sem nome ("deixe mais escuro") — nos dois casos a identidade precisa mudar.
+    // COR/IDENTIDADE PARCIAL: mede a SOBRA da paleta antiga. Mudar o hero e deixar
+    // o resto na cor antiga (ou não aplicar a cor nova) NÃO é concluído.
     const wantsColorChange = globalEdit && mentionsColorChange(input.instruction ?? "");
-    if (wantsColorChange && finishing && !coder.error && colorNudges < 1 && round < maxRounds - 1) {
+    if (wantsColorChange && finishing && !coder.error && colorNudges < 2 && round < maxRounds - 1) {
       const after = colorTokens(input.readWorkspace());
-      const notApplied = paletteTarget
-        ? (!targetApplied(after, paletteTarget) && paletteStillOld(paletteBefore, after))
-        : paletteUnchanged(paletteBefore, after);
-      if (notApplied) {
+      const leftover = paletteLeftoverRatio(paletteBefore, after);
+      const targetOk = paletteTarget ? targetApplied(after, paletteTarget) : true;
+      const familyTokens = colorFamilyTokens(namedColorFamilies(input.instruction ?? ""));
+      // SOBRA ESTRITA da cor ANTIGA pedida: QUALQUER ocorrência restante é sobra.
+      const leftovers = [...paletteBefore].filter((t) => after.has(t) && (familyTokens.size === 0 || familyTokens.has(t)));
+      const bad = paletteTarget ? (leftovers.length > 0 || !targetOk) : (leftover >= 0.5 || !targetOk || paletteUnchanged(paletteBefore, after));
+      if (bad) {
         colorNudges += 1;
-        const kept = [...paletteBefore].filter((t) => after.has(t));
-        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "A identidade visual pedida ainda não está aplicada no site inteiro — vou corrigir as sobras da paleta antiga.", timestamp: Date.now() });
-        messages = [...messages, { role: "user", content: colorNotAppliedNudge(kept) }];
+        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: `A cor ficou parcial (${Math.round(leftover * 100)}% da paleta antiga continua) — vou varrer e trocar TODAS as ocorrências.`, timestamp: Date.now() });
+        messages = [...messages, { role: "user", content: colorLeftoverNudge(leftovers, leftover) }];
         lastSpeaker = "Coder";
         lastSignal = null;
         continue;
@@ -436,6 +437,20 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   if (!error && instructionRequestsChange(input.instruction ?? "") && workspaceSignature(input.readWorkspace()) === sigBefore) {
     error = "nenhuma alteração foi aplicada ao projeto";
     reply = "⚠️ Não apliquei nenhuma alteração — o projeto continua exatamente como estava. O pedido NÃO foi implementado. Descreva novamente o que deve mudar (arquivo/seção/elemento) que eu executo a alteração de verdade.";
+  }
+  // HONESTIDADE FINAL (cor/identidade): se a paleta antiga continuar dominante, a
+  // mudança foi PARCIAL — nunca declarar "pronto" com metade do site na cor antiga.
+  if (!error && mentionsColorChange(input.instruction ?? "")) {
+    const after = colorTokens(input.readWorkspace());
+    const leftover = paletteLeftoverRatio(paletteBefore, after);
+    const targetOk = paletteTarget ? targetApplied(after, paletteTarget) : true;
+    const familyTokens = colorFamilyTokens(namedColorFamilies(input.instruction ?? ""));
+    const leftovers = [...paletteBefore].filter((t) => after.has(t) && (familyTokens.size === 0 || familyTokens.has(t)));
+    const partial = paletteTarget ? (leftovers.length > 0 || !targetOk) : (leftover >= 0.5 || !targetOk);
+    if (partial) {
+      error = "alteração de cor aplicada apenas parcialmente";
+      reply = `⚠️ A troca de cor ficou PARCIAL: ${leftovers.length ? `ainda existe(m) ${leftovers.slice(0, 8).join(", ")} no site` : "a cor pedida não foi aplicada"}${leftover > 0 ? ` (${Math.round(leftover * 100)}% da paleta antiga continua)` : ""}. O pedido NÃO foi concluído em todo o site. Peça novamente que eu varro TODAS as ocorrências e finalizo.`;
+    }
   }
   return { ok: !error, reply, signal: lastSignal, iterations, touched, plan, error };
 }

@@ -345,7 +345,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
       readWorkspace: () => readWorkspace(colorRoot), model: stubborn,
     });
     expect(captured.some((c) => c.includes("Sua alteração parece LOCAL"))).toBe(true);
-    expect(captured.some((c) => c.includes("NÃO aplicou a mudança de cor"))).toBe(true);
+    expect(captured.some((c) => c.includes("ficou PARCIAL"))).toBe(true);
   });
 
   it("INSPEÇÃO: editar arquivo EXISTENTE sem lê-lo recebe nudge; lendo antes, não", async () => {
@@ -421,8 +421,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     expect(capturado.some((x) => x.includes("NÃO possui evidência de conclusão"))).toBe(true);
   });
 
-  it("HONESTIDADE: agente que só diz 'pronto' e NÃO altera nada → não é sucesso", async () => {
-    const model: ModelCaller = async () => ({ ok: true, turn: { text: 'Pronto, corrigi tudo! {"signal":"TERMINATE"}', toolCalls: [] } });
+  it("HONESTIDADE: agente que só diz 'pronto' e NÃO altera nada → não é sucesso", async () => {    const model: ModelCaller = async () => ({ ok: true, turn: { text: 'Pronto, corrigi tudo! {"signal":"TERMINATE"}', toolCalls: [] } });
     const res = await runStudioTeam({
       instruction: "troque a cor do botão principal para vermelho", projectId: "honest-1", workspaceRoot: verifyRoot,
       business: {}, ai: {}, emit: vi.fn(),
@@ -434,5 +433,31 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     expect(res.touched).toEqual([]);
     expect(res.reply).toMatch(/NÃO apliquei nenhuma alteração/i);
     expect(res.reply).not.toContain("Pronto, corrigi tudo");
+  });
+
+  it("COR PARCIAL TEIMOSA: continua parcial → NÃO é sucesso (resposta honesta com sobras)", async () => {
+    const GREEN_APP = '// ART-DIRECTION: x\nexport default function App(){return <main className="bg-green-600 text-green-100">Site</main>}';
+    const GREEN_CSS = ":root{--brand:#16a34a}";
+    let gen = 0;
+    const genModel: ModelCaller = async () => {
+      gen += 1;
+      if (gen === 1) return { ok: true, turn: { text: "criei", toolCalls: [writeCall("src/App.tsx", GREEN_APP), writeCall("src/index.css", GREEN_CSS)] } };
+      return { ok: true, turn: { text: 'ok\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "crie o site", projectId: "partial-2", workspaceRoot: colorRoot,
+      business: {}, ai: {}, emit: vi.fn(), readWorkspace: () => readWorkspace(colorRoot), model: genModel,
+    });
+
+    // Sempre repete o MESMO patch parcial e diz que terminou.
+    const teimoso: ModelCaller = async () => ({ ok: true, turn: { text: 'Pronto, troquei tudo!\n{"signal":"TERMINATE"}', toolCalls: [writeCall("src/App.tsx", GREEN_APP.replace(/green/g, "red"))] } });
+    const res = await runStudioTeam({
+      instruction: "troque toda a cor verde do site para vermelho", projectId: "partial-2", workspaceRoot: colorRoot,
+      business: {}, ai: {}, emit: vi.fn(), readWorkspace: () => readWorkspace(colorRoot), model: teimoso,
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/parcialmente/i);
+    expect(res.reply).toMatch(/PARCIAL/i);
+    expect(res.reply).not.toContain("Pronto, troquei tudo");
   });
 });

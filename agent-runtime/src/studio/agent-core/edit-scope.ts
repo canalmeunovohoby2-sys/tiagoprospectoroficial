@@ -201,3 +201,48 @@ export function placeholderNudge(files: string[]): string {
     "Depois confirme com read_file que o arquivo está completo e só então finalize.",
   ].join("\n");
 }
+
+/**
+ * SOBRA da identidade antiga: proporção dos tokens de cor ANTIGOS que continuam
+ * no código depois da edição. 0 = nada sobrou; 1 = tudo continua igual.
+ * É a métrica que pega "mudou o hero e deixou o resto igual".
+ */
+export function paletteLeftoverRatio(before: Set<string>, after: Set<string>): number {
+  if (before.size === 0) return 0;
+  let kept = 0;
+  for (const t of before) if (after.has(t)) kept += 1;
+  return kept / before.size;
+}
+
+/** Nudge (PT-BR) com a LISTA de sobras da cor antiga (evidência, não achismo). */
+export function colorLeftoverNudge(leftovers: string[], ratio: number): string {
+  const pct = Math.round(ratio * 100);
+  return [
+    `A mudança de cor ficou PARCIAL: ${pct}% da paleta antiga continua no código.`,
+    leftovers.length ? `Sobras encontradas: ${leftovers.slice(0, 16).join(", ")}.` : "",
+    "Isso NÃO é concluído. Faça agora:",
+    "1) grep_search no tom ANTIGO (todas as variações: classe base, hover:, focus:, ring, border, gradient, transparências /10 /20 /80, hex e rgb);",
+    "2) substitua TODAS as ocorrências pelo tom novo (no design system/tokens primeiro, depois nos componentes);",
+    "3) rode grep_search de novo para PROVAR que não sobrou nenhuma ocorrência;",
+    "Só finalize quando a busca do tom antigo voltar VAZIA.",
+  ].filter(Boolean).join("\n");
+}
+
+/**
+ * Famílias de cor NOMEADAS no pedido (ex.: "verde para vermelho" → verde+vermelho).
+ * Serve para checar SOBRA da família antiga: qualquer ocorrência restante é sobra.
+ */
+export function namedColorFamilies(instruction: string): Array<{ hexes: string[]; classes: string[] }> {
+  const t = String(instruction ?? "");
+  return COLOR_FAMILIES.filter((f) => f.re.test(t)).map((f) => ({ hexes: f.hexes, classes: f.classes }));
+}
+
+/** Tokens (hex + classe + variação -9) que pertencem às famílias pedidas. */
+export function colorFamilyTokens(families: Array<{ hexes: string[]; classes: string[] }>): Set<string> {
+  const out = new Set<string>();
+  for (const f of families) {
+    for (const h of f.hexes) out.add(h.toLowerCase());
+    for (const c of f.classes) { const k = c.toLowerCase(); out.add(k); out.add(`${k}-9`); }
+  }
+  return out;
+}
