@@ -19,7 +19,7 @@ import { loadProjectState, saveProjectState, type StudioStateMessage } from "./a
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
 import { mediaContextBlock } from "./agent-core/site-media.js";
 import { buildDesignDirection, hasArtDirection, ART_DIRECTION_MARKER } from "./agent-core/design-direction.js";
-import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, colorNotAppliedNudge, uninspectedEdits, UNINSPECTED_NUDGE, VERIFY_NUDGE, FORCE_CHANGE_NUDGE, workspaceSignature } from "./agent-core/edit-scope.js";
+import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, colorNotAppliedNudge, uninspectedEdits, UNINSPECTED_NUDGE, VERIFY_NUDGE, FORCE_CHANGE_NUDGE, workspaceSignature, hasPlaceholderCode, placeholderNudge } from "./agent-core/edit-scope.js";
 
 export interface StudioAttachment {
   name: string;
@@ -218,6 +218,7 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   let inspectNudges = 0;
   let verifyNudges = 0;
   let forcedNudges = 0;
+  let placeholderNudges = 0;
   // Assinatura do CONTEÚDO inicial: prova se houve alteração REAL no fim.
   const sigBefore = workspaceSignature(input.readWorkspace());
   // Arquivos que JÁ existiam antes desta execução (edição de projeto existente).
@@ -391,6 +392,20 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
       lastSpeaker = "Coder";
       lastSignal = null;
       continue;
+    }
+
+    // CÓDIGO COMPLETO: nunca aceitar arquivo resumido ("..."/"o restante igual"/
+    // TODO de implementação). Reescrever COMPLETO antes de concluir (bounded).
+    if (finishing && !coder.error && placeholderNudges < 1 && round < maxRounds - 1) {
+      const bad = hasPlaceholderCode(input.readWorkspace());
+      if (bad.length > 0) {
+        placeholderNudges += 1;
+        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "Há código resumido/incompleto — vou reescrever os arquivos por inteiro.", timestamp: Date.now() });
+        messages = [...messages, { role: "user", content: placeholderNudge(bad) }];
+        lastSpeaker = "Coder";
+        lastSignal = null;
+        continue;
+      }
     }
 
     if (!coder.signal) break; // sem sinal e sem ferramentas → considera final

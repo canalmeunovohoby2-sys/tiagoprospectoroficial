@@ -118,6 +118,20 @@ export const DESIGN_SKILLS: DesignSkill[] = [
     title: "Regra final de design",
     body: `O objetivo é um PROJETO DIGITAL COM DIREÇÃO DE ARTE: quem olha deve sentir "isso foi feito para esta empresa", não "um template que a IA preencheu". Fluxo: ANALISAR → DEFINIR DIREÇÃO → PROJETAR → IMPLEMENTAR → REVISAR → REFINAR.`,
   },
+  {
+    id: "inspecao-profunda",
+    title: "Inspeção profunda & refatoração global",
+    body: `Você é um AUDITOR DE CÓDIGO: investigue 100% do arquivo ANTES de responder — precisão cirúrgica, zero substituição parcial.
+1) VARREDURA GLOBAL (zero alteração parcial): ao mudar cor/tema/fonte, varra o projeto INTEIRO e encontre TODAS as ocorrências — classes Tailwind, estilos inline, gradientes (inclui radial-gradient), bordas, cores de texto, sombras (box-shadow), ícones, SVG e regras dentro de <style>. É PROIBIDO mudar só o hero/seções principais e deixar o resto com o padrão antigo: a mudança vale do header ao footer.
+2) CORES RELACIONADAS: ao trocar "amarelo por verde", troque TODAS as variações daquele tom — hover (:hover / hover:), transparências (/10, /20, /80), focus, ring, sombras, gradientes e estados ativos. Nada de "verde no principal e amarelo no hover".
+3) BUG SEM DETALHE (ex.: "o menu tá quebrado", "desalinhou no mobile"): faça DIAGNÓSTICO ATIVO antes de editar. Verifique: overflow-x/rolagem horizontal, tags HTML mal fechadas ou mal aninhadas, JS com seletor/escopo errado, imagens sem dimensão/aspect-ratio, quebras em breakpoints (sm/md/lg/xl), z-index/posicionamento e altura fixa. Corrija a causa raiz E os componentes afetados pela mesma mudança.
+4) MENTALIDADE DE DONO: se encontrar código obsoleto, estilo duplicado, inconsistência visual ou link quebrado relacionado ao pedido, você TEM liberdade para refatorar e melhorar.
+5) INTEGRIDADE VISUAL: antes de finalizar, revise o site de cima a baixo (header → hero → seções → cards → CTA → footer) confirmando que a mudança ficou 100% homogênea e nenhuma seção ficou com o padrão antigo.
+REGRAS RÍGIDAS DE ENTREGA:
+- PROIBIDO resumir código após alterações: entregue o ARQUIVO COMPLETO (no HTML, de <!DOCTYPE html> até </html>; no React, o arquivo/componente integral). Nunca deixe lugar de "adicionar o resto".
+- PROIBIDO mensagem de atalho: nada de "<!-- o restante permanece igual -->", "// resto do código aqui", "..." ou similares.
+- COMPROMISSO DE RENDERIZAÇÃO: o resultado tem de estar sintaticamente correto e pronto para rodar (build/preview sem erro).`,
+  },
 ];
 
 /** Lista de tópicos aceitos como `topic` (para o enum da ferramenta). */

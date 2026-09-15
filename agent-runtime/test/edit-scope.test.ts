@@ -3,6 +3,7 @@ import {
   isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE,
   namedColorTarget, colorTokens, targetApplied, paletteStillOld, colorNotAppliedNudge,
   mentionsColorChange, paletteUnchanged, uninspectedEdits, UNINSPECTED_NUDGE,
+  hasPlaceholderCode, placeholderNudge,
 } from "../src/studio/agent-core/edit-scope";
 
 describe("edit-scope · pedido de mudança visual GLOBAL", () => {
@@ -114,5 +115,26 @@ describe("edit-scope · inspeção obrigatória em edição", () => {
     expect(n).toMatch(/read_file/);
     expect(n).toMatch(/grep_search/);
     expect(n).toMatch(/Só finalize/i);
+  });
+});
+
+describe("edit-scope · código RESUMIDO é proibido (arquivo completo)", () => {
+  it("detecta os atalhos clássicos que a skill proíbe", () => {
+    expect(hasPlaceholderCode({ "index.html": "<div>ok</div>\n<!-- o restante permanece igual -->" })).toEqual(["index.html"]);
+    expect(hasPlaceholderCode({ "src/App.tsx": "export default function App(){/* ... */}" })).toEqual(["src/App.tsx"]);
+    expect(hasPlaceholderCode({ "src/a.ts": "// TODO: implementar o resto" })).toEqual(["src/a.ts"]);
+    expect(hasPlaceholderCode({ "src/b.ts": "adicionar o resto do código aqui" })).toEqual(["src/b.ts"]);
+  });
+
+  it("NÃO acusa código completo", () => {
+    expect(hasPlaceholderCode({ "src/App.tsx": "export default function App(){return <main/>}" })).toEqual([]);
+    expect(hasPlaceholderCode(null)).toEqual([]);
+  });
+
+  it("o nudge exige reescrever por inteiro e conferir com read_file", () => {
+    const n = placeholderNudge(["src/App.tsx"]);
+    expect(n).toContain("src/App.tsx");
+    expect(n).toMatch(/COMPLETOS/i);
+    expect(n).toMatch(/read_file/);
   });
 });

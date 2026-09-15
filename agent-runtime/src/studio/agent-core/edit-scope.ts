@@ -170,3 +170,34 @@ export const FORCE_CHANGE_NUDGE = [
   "Não responda dizendo o que faria: EXECUTE agora com as ferramentas (write_file/edit_file/create_file/delete_file).",
   "Depois de editar, confirme com read_file/grep_search que a alteração está REALMENTE no código. Só então finalize.",
 ].join("\n");
+
+// ── Código RESUMIDO/placeholder? (a skill proíbe atalhos no meio do arquivo) ──
+
+/** Detecta marcadores de código resumido/incompleto (nunca entregar assim). */
+export function hasPlaceholderCode(files: Record<string, string> | null | undefined): string[] {
+  if (!files) return [];
+  const hits: string[] = [];
+  const PATTERNS: RegExp[] = [
+    /<!--\s*(o\s+)?restante[^>]*-->/i,
+    /adicion(ar|e)\s+(o\s+)?resto/i,          // (placeholder abaixo)
+    /(resto|rest of|remaining)\s+(do\s+)?(c[óo]digo|code|implementa)/i,
+    /TODO:?\s*(implementar|completar|adicionar)/i,
+    /(\/\/|\/\*|#)\s*(\.\.\.|…)\s*$/m,
+    /\{\s*\/\*\s*\.\.\.\s*\*\/\s*\}/,          // {/* ... */} dentro de JSX
+  ];
+  for (const [path, content] of Object.entries(files)) {
+    if (typeof content !== "string") continue;
+    if (PATTERNS.some((re) => re.test(content))) hits.push(path);
+  }
+  return hits;
+}
+
+/** Nudge (PT-BR): arquivo entregue resumido → reescrever COMPLETO. */
+export function placeholderNudge(files: string[]): string {
+  return [
+    "Você entregou código RESUMIDO/incompleto (proibido):",
+    ...files.map((f) => `- ${f}`),
+    "Reescreva esses arquivos COMPLETOS (sem \"...\", sem \"o restante permanece igual\", sem TODO de implementação), com o código integral e sintaticamente válido.",
+    "Depois confirme com read_file que o arquivo está completo e só então finalize.",
+  ].join("\n");
+}

@@ -37,6 +37,28 @@ describe("design-skills · conhecimento INSTALADO (consultado sob demanda, sem p
     expect(DESIGN_SKILL_TOPICS).toContain("cro");
     expect(DESIGN_SKILL_TOPICS).toContain("mobile");
     expect(DESIGN_SKILL_TOPICS).toContain("performance");
+    // Skill nova instalada SEM remover as 20 anteriores.
+    expect(DESIGN_SKILL_TOPICS).toContain("inspecao-profunda");
+    expect(DESIGN_SKILLS.length).toBeGreaterThanOrEqual(21);
+  });
+
+  it("SKILL inspeção profunda: varredura global, cores relacionadas, bugs e arquivo completo", () => {
+    const s = designSkillsKnowledge("inspecao-profunda");
+    expect(s).toMatch(/VARREDURA GLOBAL/);
+    expect(s).toMatch(/PROIBIDO mudar s[oó] o hero/i);
+    expect(s).toMatch(/hover/);
+    expect(s).toMatch(/transpar/i);
+    expect(s).toMatch(/gradiente/i);
+    expect(s).toMatch(/overflow-x/);
+    expect(s).toMatch(/breakpoints/i);
+    expect(s).toMatch(/DIAGN[ÓO]STICO ATIVO/i);
+    expect(s).toMatch(/ARQUIVO COMPLETO/i);
+    expect(s).toMatch(/<!DOCTYPE html>/);
+    expect(s).toMatch(/PROIBIDO mensagem de atalho/i);
+    expect(s).toMatch(/restante permanece igual/);
+    expect(s).toMatch(/COMPROMISSO DE RENDERIZA[ÇC][ÃA]O/i);
+    // Não traz o guia inteiro (é tópico, economia de tokens).
+    expect(s).not.toContain("LUXURY DARK MODE");
   });
 
   it("sem tópico devolve o guia completo", () => {
