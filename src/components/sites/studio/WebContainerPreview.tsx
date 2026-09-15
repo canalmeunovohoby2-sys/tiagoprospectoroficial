@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Crosshair, Loader2, RefreshCw, ShieldAlert, Terminal } from "lucide-react";
 import { useWebContainerPreview } from "@/hooks/studio/useWebContainerPreview";
 import { injectReactVisualHelper } from "@/lib/studio/reactVisualHelper";
+import { inlineRemoteImagesInFiles } from "@/lib/studio/previewImages";
 import { descriptorFromReactSelection } from "@/lib/studio/reactSource";
 import {
   STUDIO_BRIDGE_CHANNEL, STUDIO_BRIDGE_VERSION, parseStudioBridgeChildMessage, type StudioElementDescriptor,
@@ -93,7 +94,22 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
   const token = useMemo(() => makePreviewBridgeToken(), [projectId]);
   // Projeção enviada ao WebContainer inclui o helper visual (não persiste).
   const wcFiles = useMemo(() => injectReactVisualHelper(files, { token }), [files, token]);
-  const { phase, url, logs, error, reload } = useWebContainerPreview({ files: wcFiles, projectId, enabled: true });
+  // IMAGENS: o preview do WebContainer pode não carregar imagens externas que
+  // funcionam no publicado (isolamento/CORS/hotlink). Baixamos UMA vez e trocamos
+  // por `data:` SOMENTE nesta projeção — o site publicado mantém as URLs originais.
+  const [projected, setProjected] = useState<StudioFileMap>(wcFiles);
+  const sourceRef = useRef<StudioFileMap>(wcFiles);
+  useEffect(() => {
+    sourceRef.current = wcFiles;
+    setProjected(wcFiles);
+    let alive = true;
+    void inlineRemoteImagesInFiles(wcFiles).then((r) => {
+      if (!alive || sourceRef.current !== wcFiles) return;
+      if (r.inlined > 0) setProjected(r.files);
+    }).catch(() => { /* best-effort */ });
+    return () => { alive = false; };
+  }, [wcFiles]);
+  const { phase, url, logs, error, reload } = useWebContainerPreview({ files: projected, projectId, enabled: true });
 
   const onElementRef = useRef(onElementSelected);
   onElementRef.current = onElementSelected;
