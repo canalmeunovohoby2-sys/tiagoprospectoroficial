@@ -1238,7 +1238,15 @@ function buildReactKickoffInstruction(project: {
       return;
     }
     const instruction = buildReactKickoffInstruction(project, projectLeadRef.current);
-    void runAiInstruction(instruction, undefined, { media: true }).then(async () => {
+    // O CHAT mostra só um pedido curto e humano. A instrução completa (dados,
+    // fotos, mapa, regras) fica INTERNA — nunca aparece como mensagem do usuário.
+    const briefPrompt = (() => {
+      const b = (project.briefing && typeof project.briefing === "object" ? project.briefing : {}) as Record<string, unknown>;
+      return typeof b.user_prompt === "string" ? b.user_prompt.trim() : "";
+    })();
+    const kickoffDisplay = briefPrompt
+      || `Gerar o site: ${project.company_name || project.name}${project.segment ? ` · ${project.segment}` : ""}`;
+    void runAiInstruction(instruction, undefined, { media: true, displayText: kickoffDisplay }).then(async () => {
       // Sucesso = o agente aplicou arquivos e o rascunho foi substituído.
       const produced = prevFilesRef.current;
       const applied = !!produced && Object.keys(produced).length > 0 && !isBootstrapFiles(produced);

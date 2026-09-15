@@ -63,6 +63,16 @@ describe("Kickoff — primeira geração de novo projeto React", () => {
     expect(page).toContain("write_file/edit_file");
   });
 
+  it("a 1ª geração NÃO mostra o prompt interno no chat (usa displayText curto)", () => {
+    const page = read("src/pages/SiteProjectPage.tsx");
+    // A instrução completa é interna; o chat recebe um pedido curto e humano.
+    expect(page).toContain("kickoffDisplay");
+    expect(page).toMatch(/displayText:\s*kickoffDisplay/);
+    expect(page).toMatch(/const instruction = buildReactKickoffInstruction\(project/);
+    // O display não pode ser a própria instrução gigante.
+    expect(page).not.toMatch(/displayText:\s*instruction/);
+  });
+
   it("a 1ª geração envia DADOS reais + objetivo (a direção criativa vem da IA, no runtime)", () => {
     const page = read("src/pages/SiteProjectPage.tsx");
     // O prompt do front é DADOS/objetivo — não um briefing criativo fixo.
