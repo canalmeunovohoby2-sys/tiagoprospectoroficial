@@ -33,7 +33,7 @@ import { applyDeterministicVisualEdit } from "./studio/visual-edit.js";
 import { ensureGitRepo, gitCommit, gitDiff, gitLog, gitRestore, gitShow, gitStatus } from "./studio/git.js";
 import { deriveCommitMessage } from "./studio/commit-message.js";
 import { buildReactProject } from "./studio/build.js";
-import { filterWorkingImages, normalizeWorkspaceMapEmbeds } from "./studio/agent-core/site-media.js";
+import { filterWorkingImages, mergeValidatedImages, normalizeWorkspaceMapEmbeds } from "./studio/agent-core/site-media.js";
 import { EDIT_TOOLS } from "./work-evidence.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -504,14 +504,21 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
  * teto de tempo e, em qualquer falha/timeout, devolve o contexto ORIGINAL.
  */
 async function validateBusinessImages(business: BusinessContext): Promise<BusinessContext> {
-  const hasImages = !!business.photos?.length || !!business.stockImages?.length;
-  if (!hasImages) return business;
+  const photos = business.photos ?? [];
+  const stock = business.stockImages ?? [];
+  if (photos.length === 0 && stock.length === 0) return business;
+  // NUNCA devolver menos imagens do que recebemos: as VALIDADAS vêm primeiro e as
+  // demais continuam na lista (o modelo recebe `onError` para esconder se falhar).
+  // Sem isso, uma falha de rede do runtime deixava o site SEM FOTO NENHUMA.
+
   try {
-    const work = (async (): Promise<BusinessContext> => ({
-      ...business,
-      photos: business.photos?.length ? await filterWorkingImages(business.photos) : business.photos,
-      stockImages: business.stockImages?.length ? await filterWorkingImages(business.stockImages) : business.stockImages,
-    }))();
+    const work = (async (): Promise<BusinessContext> => {
+      const [okPhotos, okStock] = await Promise.all([
+        photos.length ? filterWorkingImages(photos) : Promise.resolve([] as string[]),
+        stock.length ? filterWorkingImages(stock) : Promise.resolve([] as string[]),
+      ]);
+      return { ...business, photos: mergeValidatedImages(photos, okPhotos), stockImages: mergeValidatedImages(stock, okStock) };
+    })();
     return await Promise.race([
       work,
       new Promise<BusinessContext>((resolve) => setTimeout(() => resolve(business), 7000)),

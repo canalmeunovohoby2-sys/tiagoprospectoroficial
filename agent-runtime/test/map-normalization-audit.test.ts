@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { createServer } from "node:http";
-import { normalizeWorkspaceMapEmbeds } from "../src/studio/agent-core/site-media";
+import { normalizeWorkspaceMapEmbeds, mergeValidatedImages } from "../src/studio/agent-core/site-media";
 import { buildStaticMapBlock } from "../src/studio/agent-core/static-map";
 
 // AUDITORIA DO MAPA: "DeepSeek output → pós-processamento → resultado final".
@@ -55,8 +55,10 @@ describe("auditoria · normalização do mapa (DeepSeek → runtime → final)",
       writeFileSync(join(root2, "src/App.tsx"), ownMap, "utf8");
       writeFileSync(join(root2, "index.html"), "<div id='root'></div>", "utf8");
       const changed = normalizeWorkspaceMapEmbeds(root2, BUSINESS);
-      expect(readFileSync(join(root2, "src/App.tsx"), "utf8")).toBe(ownMap); // intacto
-      expect(changed).toEqual([]);
+      // O código do modelo (mapa próprio) fica INTACTO; só o runtime do mapa é
+      // garantido no index.html (para o mapa dele continuar interativo).
+      expect(readFileSync(join(root2, "src/App.tsx"), "utf8")).toBe(ownMap);
+      expect(changed).toEqual(["index.html"]);
     } finally { rmSync(root2, { recursive: true, force: true }); }
   });
 
@@ -120,4 +122,28 @@ describe("auditoria · o resultado FINAL é interativo no navegador (COEP real)"
     await browser.close();
     server.close();
   }, 120000);
+});
+
+describe("imagens · a validação NUNCA reduz a lista (site não fica sem foto)", () => {
+  it("validadas primeiro; as demais continuam (nunca descarta)", () => {
+    const orig = ["https://x/a.jpg", "https://x/b.jpg", "https://x/c.jpg"];
+    expect(mergeValidatedImages(orig, ["https://x/b.jpg"])).toEqual(["https://x/b.jpg", "https://x/a.jpg", "https://x/c.jpg"]);
+    // falha total da validação (rede) → lista ORIGINAL intacta
+    expect(mergeValidatedImages(orig, [])).toEqual(orig);
+    // sem duplicatas
+    expect(mergeValidatedImages(["a"], ["a"])).toEqual(["a"]);
+  });
+});
+
+describe("mapa · runtime é injetado sempre que houver coordenadas (mesmo sem troca de iframe)", () => {
+  it("projeto com coordenadas mas sem bloco de mapa ainda recebe o runtime", () => {
+    const root = mkdtempSync(join(tmpdir(), "map-runtime-"));
+    try {
+      mkdirSync(join(root, "src"), { recursive: true });
+      writeFileSync(join(root, "src/App.tsx"), "export default function App(){return <main>ok</main>}", "utf8");
+      writeFileSync(join(root, "index.html"), "<!doctype html><body><div id='root'></div></body>", "utf8");
+      normalizeWorkspaceMapEmbeds(root, { name: "X", latitude: -23.48, longitude: -46.8 });
+      expect(readFileSync(join(root, "index.html"), "utf8")).toContain("prospector-map-runtime");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 });

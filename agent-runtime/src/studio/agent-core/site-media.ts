@@ -133,16 +133,22 @@ export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessCont
   const IFRAME = /<iframe\b[^>]*\bsrc\s*=\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*'|\{\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*')\s*\})[^>]*(?:\/>|>[\s\S]*?<\/iframe>)/gi;
   const files = readWorkspace(root);
   let needsRuntime = false;
+  // O runtime do mapa é necessário SEMPRE que houver um bloco de mapa (escrito pelo
+  // modelo OU trocado por nós) — antes ele só era injetado quando NÓS trocávamos um
+  // iframe, então um mapa escrito pelo modelo ficava sem interatividade.
   for (const [rel, content] of Object.entries(files)) {
     if (!/\.(tsx|jsx|ts|js|html?)$/i.test(rel)) continue;
     let next = content;
     if (/google\./i.test(content) && /maps/i.test(content)) next = content.replace(IFRAME, block);
-    if (next.includes("data-pf-map")) needsRuntime = true;
+    if (next.includes("data-pf-map") || next.includes("data-pf-map-ready")) needsRuntime = true;
     if (next === content) continue;
     const abs = safeWorkspaceJoin(root, rel);
     if (!abs) continue;
     try { writeFileSync(abs, next, "utf8"); changed.push(rel); } catch { /* noop */ }
   }
+  // Se o projeto TEM coordenadas, garante o runtime no index.html (idempotente e
+  // inócuo quando não há mapa na página) — assim o mapa funciona no preview e no publicado.
+  if (!needsRuntime && businessPoint(business)) needsRuntime = true;
   // O mapa INTERATIVO precisa do runtime (vanilla, sem dependências) no index.html
   // — funciona no preview E no publicado (tiles são imagens; iframe é bloqueado).
   const html = readWorkspace(root)["index.html"];
@@ -249,4 +255,15 @@ export async function filterWorkingImages(urls: string[], opts?: { timeoutMs?: n
   }));
   // Preserva a ordem original, sem duplicatas.
   return urls.filter((u, i) => usable.has(u) && urls.indexOf(u) === i);
+}
+
+/**
+ * Junta imagens VALIDADAS (primeiro) com as originais que não validaram.
+ * Garante que a validação HTTP NUNCA reduza a lista — antes, uma falha de rede do
+ * runtime deixava o site SEM FOTO NENHUMA.
+ */
+export function mergeValidatedImages(original: string[], validated: string[]): string[] {
+  const ok = new Set(validated);
+  const rest = (original ?? []).filter((u) => typeof u === "string" && u && !ok.has(u));
+  return [...(validated ?? []), ...rest];
 }
