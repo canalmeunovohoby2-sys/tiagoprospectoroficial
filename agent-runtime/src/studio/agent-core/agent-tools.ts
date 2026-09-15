@@ -45,7 +45,7 @@ const SCHEMAS: Record<string, { description: string; parameters: Record<string, 
 // operação de workspace; implementada abaixo).
 export const CODER_TOOL_NAMES: string[] = [...Object.keys(SCHEMAS), "design_skills", "visual_verify"];
 
-export function buildCoderTools(env: ToolEnv): { list: CoderTool[]; byName: Map<string, CoderTool> } {
+export function buildCoderTools(env: ToolEnv, opts?: { allowVisualVerify?: boolean }): { list: CoderTool[]; byName: Map<string, CoderTool> } {
   const built = buildSiteTools(env) as unknown as UnderlyingTool[];
   const byName = new Map<string, CoderTool>();
   const list: CoderTool[] = [];
@@ -84,6 +84,9 @@ export function buildCoderTools(env: ToolEnv): { list: CoderTool[]; byName: Map<
 
   // VISUAL VERIFIER: OBSERVA o site REAL no Chromium (desktop/tablet/mobile) e
   // RELATA PASS/FAIL. Nunca edita arquivos — quem corrige é o DeepSeek.
+  // Só é oferecida em EDIÇÕES: na 1ª geração o site ainda está nascendo (o build
+  // e a comparação de identidade não fazem sentido e travariam a geração).
+  if (opts?.allowVisualVerify !== false) {
   const visualTool: CoderTool = {
     schema: {
       name: "visual_verify",
@@ -116,6 +119,7 @@ export function buildCoderTools(env: ToolEnv): { list: CoderTool[]; byName: Map<
   };
   byName.set("visual_verify", visualTool);
   list.push(visualTool);
+  }
 
   return { list, byName };
 }

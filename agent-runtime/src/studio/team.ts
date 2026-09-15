@@ -172,7 +172,8 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   const isFirst = state.history.length === 0;
   const files = input.readWorkspace();
   const fileTree = Object.keys(files);
-  const { list: tools } = buildCoderTools({ workspaceRoot: input.workspaceRoot, business: input.business, projectId: input.projectId, mode: "edit", instruction: input.instruction } as never);
+  // `visual_verify` só em EDIÇÕES (na 1ª geração o site está nascendo).
+  const { list: tools } = buildCoderTools({ workspaceRoot: input.workspaceRoot, business: input.business, projectId: input.projectId, mode: "edit", instruction: input.instruction } as never, { allowVisualVerify: !isFirst });
   // Verificação visual: estado zerado a cada execução (o `visual_verify` atualiza).
   resetVisualState(input.workspaceRoot);
 
@@ -416,7 +417,7 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
     // não cumpre o pedido (ex.: sobrou a cor antiga). Devolve o relatório ao
     // modelo e exige correção — nunca deixa concluir com verificação visual FAIL.
     const vstate = visualState(input.workspaceRoot);
-    if (finishing && !coder.error && vstate.last === "FAIL" && vstate.fails < VISUAL_MAX_CYCLES && round < maxRounds - 1) {
+    if (!isFirst && finishing && !coder.error && vstate.last === "FAIL" && vstate.fails < VISUAL_MAX_CYCLES && round < maxRounds - 1) {
       input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "A verificação visual no navegador apontou pendências — vou corrigir e verificar de novo.", timestamp: Date.now() });
       messages = [...messages, { role: "user", content: `${vstate.lastReport}\n\nCorrija o que ficou pendente e rode visual_verify novamente. NÃO conclua enquanto estiver FAIL.` }];
       lastSpeaker = "Coder";
@@ -455,7 +456,7 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   }
   // HONESTIDADE FINAL (cor/identidade): se a paleta antiga continuar dominante, a
   // mudança foi PARCIAL — nunca declarar "pronto" com metade do site na cor antiga.
-  if (!error && mentionsColorChange(input.instruction ?? "")) {
+  if (!error && !isFirst && mentionsColorChange(input.instruction ?? "")) {
     const after = colorTokens(input.readWorkspace());
     const leftover = paletteLeftoverRatio(paletteBefore, after);
     const targetOk = paletteTarget ? targetApplied(after, paletteTarget) : true;
@@ -469,7 +470,7 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   }
   // HONESTIDADE FINAL (verificação visual): o site REAL no Chromium ainda falhou?
   // Então a alteração NÃO está concluída — jamais responder "pronto".
-  if (!error && visualState(input.workspaceRoot).last === "FAIL") {
+  if (!error && !isFirst && visualState(input.workspaceRoot).last === "FAIL") {
     const st = visualState(input.workspaceRoot);
     const pending = st.lastReport.split("\n").filter((l) => l.trim().startsWith("*")).slice(0, 6).join(" ");
     error = "verificação visual ainda não passou";

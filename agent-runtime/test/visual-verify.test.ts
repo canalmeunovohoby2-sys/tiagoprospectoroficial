@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { analyzeViewport, formatVisualReport, parseColorSwap, runVisualVerification, VISUAL_VIEWPORTS } from "../src/studio/agent-core/visual-verify";
+import { buildCoderTools } from "../src/studio/agent-core/agent-tools";
 
 const OBJECTIVE = "troque toda a cor verde do site para vermelho";
 
@@ -82,4 +83,16 @@ describe("visual_verify · REAL (Chromium) — site parcial → FAIL, corrigido 
     expect(pass.cssLeftovers).toEqual([]);
     expect(pass.report).toContain("The task may be concluded");
   }, 180000);
+});
+
+describe("visual_verify · NÃO entra na 1ª geração (regressão do rascunho)", () => {
+  it("a tool só é oferecida em EDIÇÕES (allowVisualVerify=false na 1ª geração)", () => {
+    const env = { workspaceRoot: join(tmpdir(), "v"), business: {}, projectId: "p", mode: "edit" } as never;
+    const comTool = buildCoderTools(env).list.map((t) => t.schema.name);
+    expect(comTool).toContain("visual_verify");
+    const semTool = buildCoderTools(env, { allowVisualVerify: false }).list.map((t) => t.schema.name);
+    expect(semTool).not.toContain("visual_verify");
+    expect(semTool).toContain("design_skills"); // as demais ferramentas continuam
+    expect(semTool).toContain("read_file");
+  });
 });
