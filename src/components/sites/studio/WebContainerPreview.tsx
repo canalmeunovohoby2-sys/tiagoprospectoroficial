@@ -7,13 +7,15 @@ import {
   STUDIO_BRIDGE_CHANNEL, STUDIO_BRIDGE_VERSION, parseStudioBridgeChildMessage, type StudioElementDescriptor,
 } from "@/lib/studio/bridgeProtocol";
 import { makePreviewBridgeToken } from "@/lib/studio/previewHelper";
-import type { StudioFileMap } from "@/lib/studio/types";
+import type { StudioDevice, StudioFileMap } from "@/lib/studio/types";
 
 export interface WebContainerPreviewProps {
   files: StudioFileMap;
   projectId?: string;
   /** Muda quando o projeto é alterado (força reload do iframe após o sync). */
   refreshKey?: string | number;
+  /** Viewport do preview: o MESMO site real renderizado em Desktop/Tablet/Mobile. */
+  device?: StudioDevice;
   /** Modo inspeção/edição visual (C3). */
   visualMode?: boolean;
   /** Seleção de elemento (origem React via `_debugSource`). */
@@ -22,12 +24,59 @@ export interface WebContainerPreviewProps {
 
 const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads";
 
+// Viewports de referência do preview React. O iframe recebe ESSAS dimensões reais
+// (o site reage por media queries); a moldura é reduzida por `scale` para caber.
+const WC_DEVICE_SIZE: Record<StudioDevice, { width: number; height: number }> = {
+  desktop: { width: 1366, height: 768 },
+  tablet: { width: 768, height: 1024 },
+  mobile: { width: 390, height: 844 },
+};
+
+/**
+ * Moldura do dispositivo: proporcional, centralizada e sem deformar. O interno
+ * usa a largura/altura REAIS do viewport — é o site real que muda de layout.
+ */
+function DeviceFrame({ device, children }: { device: StudioDevice; children: React.ReactNode }) {
+  const size = WC_DEVICE_SIZE[device];
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => {
+      const cw = el.clientWidth - 16;
+      const ch = el.clientHeight - 16;
+      const k = Math.min(1, cw / size.width, ch / size.height);
+      setScale(Number.isFinite(k) && k > 0.05 ? k : 1);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [size.width, size.height]);
+  return (
+    <div ref={wrapRef} className="flex h-full w-full items-center justify-center overflow-hidden p-2">
+      <div
+        data-preview-device={device}
+        className="shrink-0 overflow-hidden rounded-xl border border-border/60 bg-white shadow-sm"
+        style={{ width: Math.round(size.width * scale), height: Math.round(size.height * scale) }}
+      >
+        <div style={{ width: size.width, height: size.height, transform: `scale(${scale})`, transformOrigin: "top left" }}>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Preview REAL do projeto React (C0/C3): WebContainer + Vite dev server + iframe.
  * NÃO usa `srcDoc`. Em modo visual, injeta o helper que lê `_debugSource` do
  * fiber React e reporta a seleção — apenas nesta projeção, nunca no código-fonte.
  */
-export function WebContainerPreview({ files, projectId, refreshKey, visualMode = false, onElementSelected }: WebContainerPreviewProps) {
+export function WebContainerPreview({ files, projectId, refreshKey, device = "desktop", visualMode = false, onElementSelected }: WebContainerPreviewProps) {
+  const frameSize = WC_DEVICE_SIZE[device];
   const [showLogs, setShowLogs] = useState(false);
   // Reload GARANTIDO do iframe depois de mudanças do agente. O HMR do Vite costuma
   // aplicar sozinho; quando não aplica (ex.: ordem/timing), remontar o iframe
@@ -150,9 +199,19 @@ export function WebContainerPreview({ files, projectId, refreshKey, visualMode =
         </div>
       )}
 
-      <div className="min-h-0 flex-1 bg-white">
+      <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
         {phase === "ready" && url ? (
-          <iframe key={frameKey} ref={iframeRef} title="Preview do app React" src={url} sandbox={IFRAME_SANDBOX} className="h-full w-full border-0" />
+          <DeviceFrame device={device}>
+            <iframe
+              key={`${frameKey}-${device}`}
+              ref={iframeRef}
+              title="Preview do app React"
+              src={url}
+              sandbox={IFRAME_SANDBOX}
+              className="border-0"
+              style={{ width: frameSize.width, height: frameSize.height }}
+            />
+          </DeviceFrame>
         ) : (
           <div className="flex h-full items-center justify-center bg-muted/20 px-6 text-center text-sm text-muted-foreground">
             {phase === "booting" ? (

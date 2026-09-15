@@ -40,6 +40,23 @@ describe("C0 · StudioPreviewPanel por project_kind", () => {
     expect(screen.queryByTitle("Preview do site")).toBeNull();
   });
 
+  it("REACT: alterna Desktop/Tablet/Mobile mudando o VIEWPORT REAL do iframe", () => {
+    const files = { "package.json": "{}", "index.html": "<div id='root'></div>", "src/main.tsx": "x" };
+    const { rerender } = render(<StudioPreviewPanel files={files} projectKind="react" projectId="p1" />);
+    const size = () => (screen.getByTitle("Preview do app React") as HTMLIFrameElement).style.width;
+    // Desktop (padrão) → Tablet → Mobile → volta Desktop: o iframe usa o tamanho real.
+    expect(size()).toBe("1366px");
+    rerender(<StudioPreviewPanel files={files} projectKind="react" projectId="p1" device="tablet" />);
+    expect(size()).toBe("768px");
+    rerender(<StudioPreviewPanel files={files} projectKind="react" projectId="p1" device="mobile" />);
+    expect(size()).toBe("390px");
+    expect(screen.getByTitle("Preview do app React").closest("[data-preview-device]")?.getAttribute("data-preview-device")).toBe("mobile");
+    rerender(<StudioPreviewPanel files={files} projectKind="react" projectId="p1" device="desktop" />);
+    expect(size()).toBe("1366px");
+    // O seletor está disponível no preview React.
+    expect(screen.getByRole("group", { name: /tamanho do preview/i })).toBeInTheDocument();
+  });
+
   it("react sem isolamento mostra o aviso (não finge preview)", () => {
     mocks.hookState.phase = "unsupported";
     mocks.hookState.url = null;

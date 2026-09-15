@@ -44,6 +44,8 @@ export interface StudioPreviewPanelProps {
   onPreviewError?: (error: StudioPreviewError) => void;
   /** Informa o viewport atual (device) ao Studio (contexto de edição visual). */
   onViewportChange?: (device: StudioDevice) => void;
+  /** Device CONTROLADO (barra do projeto). Sem isso, o painel controla sozinho. */
+  device?: StudioDevice;
 }
 
 const DEVICE_WIDTH: Record<StudioDevice, string> = {
@@ -68,6 +70,31 @@ const DEVICES: Array<{ id: StudioDevice; label: string; icon: typeof Monitor }> 
   { id: "mobile", label: "Mobile", icon: Smartphone },
 ];
 
+/**
+ * Seletor de viewport (Desktop/Tablet/Mobile) — ponto ÚNICO reutilizado pelo
+ * preview (estático e React) e pela barra do projeto. Só troca o viewport: quem
+ * re-renderiza é o preview REAL (WebContainer/iframe).
+ */
+export function StudioDeviceSwitcher({ value, onChange, className = "" }: { value: StudioDevice; onChange: (d: StudioDevice) => void; className?: string }) {
+  return (
+    <div className={`flex items-center gap-0.5 rounded-lg border border-border/60 p-0.5 ${className}`} role="group" aria-label="Tamanho do preview">
+      {DEVICES.map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onChange(id)}
+          title={`${label} — ${DEVICE_WIDTH_PX[id]}px`}
+          aria-pressed={value === id}
+          className={`inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium transition-colors ${value === id ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+        >
+          <Icon className="h-3 w-3" />
+          <span className="hidden sm:inline">{label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // SANDBOX SEM `allow-same-origin` (Fase 4): o preview permanece em origem opaca.
 // O bridge é postMessage com canal+versão+token, validado no Studio.
 const PREVIEW_SANDBOX = "allow-scripts allow-modals allow-forms allow-popups allow-popups-to-escape-sandbox";
@@ -86,8 +113,12 @@ export function StudioPreviewPanel({
   onPreviewReady,
   onPreviewError,
   onViewportChange,
+  device: deviceProp,
 }: StudioPreviewPanelProps) {
-  const [device, setDevice] = useState<StudioDevice>("desktop");
+  const [deviceState, setDeviceState] = useState<StudioDevice>("desktop");
+  // CONTROLADO quando a barra do projeto fornece o device; senão, interno.
+  const device = deviceProp ?? deviceState;
+  const setDevice = setDeviceState;
   const [nonce, setNonce] = useState(0);
   const [bridgeReady, setBridgeReady] = useState(false);
   const [logs, setLogs] = useState<StudioConsoleEntry[]>([]);
@@ -235,13 +266,25 @@ export function StudioPreviewPanel({
   // C0: projeto React → preview REAL via WebContainer + Vite (nunca srcDoc).
   if (projectKind === "react") {
     return (
-      <WebContainerPreview
-        files={files}
-        projectId={projectId}
-        refreshKey={refreshKey}
-        visualMode={inspectMode}
-        onElementSelected={onElementSelected}
-      />
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-card px-3 py-1.5">
+          <p className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
+            <FileCode2 className="h-3.5 w-3.5 text-primary" /> Preview do site
+          </p>
+          {/* MESMO seletor do preview estático: o site real re-renderiza no viewport. */}
+          <StudioDeviceSwitcher value={device} onChange={setDevice} />
+        </div>
+        <div className="min-h-0 flex-1">
+          <WebContainerPreview
+            files={files}
+            projectId={projectId}
+            device={device}
+            refreshKey={refreshKey}
+            visualMode={inspectMode}
+            onElementSelected={onElementSelected}
+          />
+        </div>
+      </div>
     );
   }
 
@@ -264,20 +307,7 @@ export function StudioPreviewPanel({
           )}
         </p>
         <div className="flex items-center gap-1">
-          <div className="flex items-center gap-0.5 rounded-lg border border-border/60 p-0.5">
-            {DEVICES.map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setDevice(id)}
-                title={label}
-                className={`inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium transition-colors ${device === id ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                <Icon className="h-3 w-3" />
-                <span className="hidden sm:inline">{label}</span>
-              </button>
-            ))}
-          </div>
+          <StudioDeviceSwitcher value={device} onChange={setDevice} />
           <button
             type="button"
             onClick={() => setNonce((n) => n + 1)}

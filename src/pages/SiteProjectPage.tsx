@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, Save, X, CircleDot, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon, Code2, Send, Video, Download } from "lucide-react";
+import { ArrowLeft, Globe, Loader2, Sparkles, AlertTriangle, Palette, Type, LayoutTemplate, Pencil, X, Eye, FileText, FolderDown, Rocket, Copy, ExternalLink, History as HistoryIcon, Code2, Send, Video, Download } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf, projectKickoffState } from "@/data/siteProjects";
+import { StudioDeviceSwitcher } from "@/components/sites/studio/StudioPreviewPanel";
+import type { StudioDevice } from "@/lib/studio/types";
 import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
 import {
   fetchSiteProject, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
@@ -112,6 +114,13 @@ export default function SiteProjectPage() {
   const [draftSpec, setDraftSpec] = useState<SiteSpec>(normalizeSpec(null));
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Viewport do preview (Desktop/Tablet/Mobile). Persistido localmente para
+  // manter a escolha entre sessões; o thumbnail da galeria segue Desktop.
+  const [previewDevice, setPreviewDevice] = useState<StudioDevice>(() => {
+    const saved = safeLocalStorage.getItem("prospector.preview.device");
+    return saved === "tablet" || saved === "mobile" ? saved : "desktop";
+  });
+  useEffect(() => { try { safeLocalStorage.setItem("prospector.preview.device", previewDevice); } catch { /* noop */ } }, [previewDevice]);
   const [aiRunning, setAiRunning] = useState(false);
   /** Atividades reais transmitidas ao vivo pelo runtime (5.34). */
   const [liveWork, setLiveWork] = useState<Array<{ phase: string; detail: string }>>([]);
@@ -1137,28 +1146,6 @@ function buildReactKickoffInstruction(project: {
     }
   }
 
-  async function saveEdits() {
-    if (!project) return;
-    setSaving(true);
-    const savedSpec = draftSpec;
-    const summary = pendingSummary;
-    try {
-      // Preserva o código real (draftFiles) quando existir; só materializa da
-      // spec quando não há workspace/código (projeto legado).
-      const hasReal = !!draftFiles && Object.keys(draftFiles).length > 0;
-      const files = hasReal ? draftFiles! : materializeProjectFiles(savedSpec);
-      const res = await persistAutosave(savedSpec, files, summary);
-      if (!res.ok) throw new Error(res.error || "Erro ao salvar");
-      toast.success(res.created ? "✓ Alterações salvas" : "Alterações salvas (sem nova versão — nada mudou desde o último autosave)");
-      setDirty(false);
-      await load();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar alterações");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   const prevFilesRef = useRef<Record<string, string> | null>(null);
   // C2: controller da execução atual (cancelamento real).
   const aiAbortRef = useRef<AbortController | null>(null);
@@ -1396,17 +1383,9 @@ function buildReactKickoffInstruction(project: {
               </Button>
             )}
             {editMode ? (
-              studioEnabled ? null : (
-              <>
-                <span className={`inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border ${dirty ? "border-amber-400/50 text-amber-500 bg-amber-500/10" : "border-border/60 text-muted-foreground"}`}>
-                  <CircleDot className={`h-3 w-3 ${dirty ? "animate-pulse" : ""}`} />
-                  {dirty ? "Alterações não salvas" : "Tudo salvo"}
-                </span>
-                <Button size="sm" onClick={saveEdits} disabled={saving || !dirty}>
-                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Save className="h-3.5 w-3.5 mr-1" />} Salvar
-                </Button>
-              </>
-              )
+              // Espaço liberado pelos botões "Salvar/Tudo salvo": seletor de viewport
+              // do preview (o MESMO site real re-renderiza em Desktop/Tablet/Mobile).
+              <StudioDeviceSwitcher value={previewDevice} onChange={setPreviewDevice} />
             ) : (
               <>
                 {hasSpec && (
@@ -1572,6 +1551,8 @@ function buildReactKickoffInstruction(project: {
             dirty={dirty}
             saving={saving}
             previewRefreshKey={previewNonce}
+            previewDevice={previewDevice}
+            onPreviewDeviceChange={setPreviewDevice}
             previewFallback={isReactProject ? undefined : <SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />}
             chat={{
               messages: aiMessages,

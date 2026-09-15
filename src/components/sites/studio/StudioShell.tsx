@@ -30,6 +30,9 @@ export interface StudioShellProps {
   saving: boolean;
   previewRefreshKey?: string | number;
   previewFallback?: ReactNode;
+  /** Device CONTROLADO do preview (barra do projeto: Desktop/Tablet/Mobile). */
+  previewDevice?: StudioDevice;
+  onPreviewDeviceChange?: (device: StudioDevice) => void;
   /** Projeto (para o preview React/WebContainer — C0). */
   projectId?: string;
   /** `static` (legado, srcDoc) ou `react` (C0, WebContainer). */
@@ -68,6 +71,8 @@ export function StudioShell({
   saving,
   previewRefreshKey,
   previewFallback,
+  previewDevice: previewDeviceProp,
+  onPreviewDeviceChange,
   projectId,
   projectKind,
   openFileRequest,
@@ -88,7 +93,10 @@ export function StudioShell({
   const [cursor, setCursor] = useState<{ line: number; column: number }>({ line: 1, column: 1 });
   const [selection, setSelection] = useState<StudioSelection | null>(null);
   const [localPreviewNonce, setLocalPreviewNonce] = useState(0);
-  const [previewDevice, setPreviewDevice] = useState<StudioDevice>("desktop");
+  const [previewDeviceState, setPreviewDeviceState] = useState<StudioDevice>("desktop");
+  // CONTROLADO pela barra do projeto quando fornecido; senão, interno.
+  const previewDevice = previewDeviceProp ?? previewDeviceState;
+  const setPreviewDevice = (d: StudioDevice) => { setPreviewDeviceState(d); onPreviewDeviceChange?.(d); };
   const [visualOutcome, setVisualOutcome] = useState<VisualEditOutcome | null>(null);
   const [applyingVisual, setApplyingVisual] = useState(false);
 
@@ -420,6 +428,7 @@ export function StudioShell({
                       fallback={previewFallback}
                       projectId={projectId}
                       projectKind={projectKind}
+                      device={previewDevice}
                       bridgeEnabled
                       inspectMode={visualMode}
                       onElementSelected={handleElementSelected}
