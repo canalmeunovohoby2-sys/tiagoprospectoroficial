@@ -170,7 +170,10 @@ export async function createSiteProjectFromPrompt(userId: string, prompt: string
     ...(isReact
       ? {
           settings: { kind: "react", kickoff: "pending" } as unknown as Json,
-          generated_code: buildReactTemplateFiles({ name, tagline: cleaned }) as unknown as Json,
+          // O bootstrap é um rascunho NEUTRO: NUNCA usa o prompt do usuário como
+          // texto visível (senão o preview "mostra o prompt"). O prompt fica em
+          // `briefing.user_prompt` e só alimenta a geração.
+          generated_code: buildReactTemplateFiles({ name }) as unknown as Json,
         }
       : {}),
   };

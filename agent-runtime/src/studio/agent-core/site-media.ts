@@ -215,13 +215,17 @@ export function mediaContextBlock(business: BusinessContext): string {
  */
 export async function filterWorkingImages(urls: string[], opts?: { timeoutMs?: number }): Promise<string[]> {
   const timeoutMs = opts?.timeoutMs ?? 4500;
+  const signal = (): AbortSignal | undefined => {
+    try { return typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(timeoutMs) : undefined; }
+    catch { return undefined; }
+  };
   const usable = new Set<string>();
   await Promise.all((urls ?? []).map(async (raw) => {
     const url = String(raw ?? "").trim();
     if (!/^https?:\/\//i.test(url)) return;
     const attempt = async (init: RequestInit): Promise<boolean> => {
       try {
-        const res = await fetch(url, { ...init, redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+        const res = await fetch(url, { ...init, redirect: "follow", ...(signal() ? { signal: signal() } : {}) });
         if (!res.ok) return false;
         const type = (res.headers.get("content-type") ?? "").toLowerCase();
         // Sem content-type confiável não dá para garantir imagem → exige image/*

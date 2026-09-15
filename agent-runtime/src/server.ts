@@ -499,8 +499,29 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
  * (`npm run build`) e servimos o HTML final (self-contained). Sites estáticos
  * seguem servindo o próprio workspace (comportamento antigo preservado).
  */
-export async function prepareSiteServeDir(root: string): Promise<{ dir: string; temp?: string }> {
-  const isReact = existsSync(join(root, "package.json"))
+/**
+ * Valida as imagens do negócio SEM NUNCA quebrar a geração: roda em paralelo, tem
+ * teto de tempo e, em qualquer falha/timeout, devolve o contexto ORIGINAL.
+ */
+async function validateBusinessImages(business: BusinessContext): Promise<BusinessContext> {
+  const hasImages = !!business.photos?.length || !!business.stockImages?.length;
+  if (!hasImages) return business;
+  try {
+    const work = (async (): Promise<BusinessContext> => ({
+      ...business,
+      photos: business.photos?.length ? await filterWorkingImages(business.photos) : business.photos,
+      stockImages: business.stockImages?.length ? await filterWorkingImages(business.stockImages) : business.stockImages,
+    }))();
+    return await Promise.race([
+      work,
+      new Promise<BusinessContext>((resolve) => setTimeout(() => resolve(business), 7000)),
+    ]);
+  } catch {
+    return business; // imagens são melhoria, nunca bloqueio da geração
+  }
+}
+
+export async function prepareSiteServeDir(root: string): Promise<{ dir: string; temp?: string }> {  const isReact = existsSync(join(root, "package.json"))
     && (existsSync(join(root, "src")) || existsSync(join(root, "vite.config.ts")) || existsSync(join(root, "vite.config.js")));
   if (!isReact) return { dir: root };
   const built = await buildReactProject(root);
@@ -1183,14 +1204,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             send(res, 400, { error: `Provedor "${rExec.provider}" não é suportado pelo runtime (use deepseek, openai, nvidia, openrouter, gemini ou ollama).` });
             return;
           }
-        const rawBusiness = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
-        // IMAGENS REAIS: valida as URLs (HTTP) ANTES de levá-las ao site. URL morta
-        // nunca entra — evita site sem imagem (o onError esconde a imagem quebrada).
-        const business: BusinessContext = {
-          ...rawBusiness,
-          photos: rawBusiness.photos?.length ? await filterWorkingImages(rawBusiness.photos).catch(() => []) : rawBusiness.photos,
-          stockImages: rawBusiness.stockImages?.length ? await filterWorkingImages(rawBusiness.stockImages).catch(() => []) : rawBusiness.stockImages,
-        };
+        const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
         const memory = Array.isArray(body.memory) ? (body.memory as unknown[]).filter((x): x is string => typeof x === "string") : [];
         // CONTEXTO PERSISTENTE do projeto (memória + histórico de alterações).
         // Carregado do banco por projectId → sobrevive a fechar/reabrir a aplicação.
@@ -1249,6 +1263,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             writeLine({ type: "start", runtime: "studio-team" });
           }
           try {
+            // IMAGENS REAIS: valida as URLs (HTTP) antes de levá-las ao site — mas
+            // de forma NÃO-FATAL e com timeout: se demorar/falhar, seguimos com as
+            // imagens originais (a geração NUNCA cai por causa disso).
+            const businessForRun = await validateBusinessImages(business);
             // C6: materializa anexos (imagem vira contexto visual real; PDF/arquivo
             // fica como referência). Nunca embute data URL gigante no chat.
             const attachResult = materializeAttachments(root, (body.attachments ?? []) as ChatAttachment[]);
@@ -1259,7 +1277,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               instruction,
               projectId,
               workspaceRoot: root,
-              business,
+              business: businessForRun,
               memory: mergedMemory,
               conversation: recentConversation,
               attachments: attachResult.attachments,

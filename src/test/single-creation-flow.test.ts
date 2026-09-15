@@ -40,4 +40,13 @@ describe("Fluxo único de criação — React Studio", () => {
     const data = read("src/data/siteProjects.ts");
     expect(data).toMatch(/raw === "react" \? "react" : "static"/);
   });
+
+  it("REGRESSÃO: o rascunho NUNCA recebe o prompt do usuário como texto visível", () => {
+    const api = read("src/lib/siteProjectsApi.ts");
+    // O template é criado SEM tagline (o prompt não pode virar conteúdo do site).
+    expect(api).toMatch(/buildReactTemplateFiles\(\{\s*name\s*\}\)/);
+    expect(api).not.toMatch(/buildReactTemplateFiles\(\{\s*name,\s*tagline:\s*cleaned\s*\}\)/);
+    // O prompt continua guardado no briefing (para a geração), não no HTML.
+    expect(api).toMatch(/briefing\s*=\s*\{\s*user_prompt:\s*cleaned\s*\}/);
+  });
 });
