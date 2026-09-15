@@ -53,8 +53,8 @@ describe("C0 · StudioPreviewPanel por project_kind", () => {
     expect(screen.getByTitle("Preview do app React").closest("[data-preview-device]")?.getAttribute("data-preview-device")).toBe("mobile");
     rerender(<StudioPreviewPanel files={files} projectKind="react" projectId="p1" device="desktop" />);
     expect(size()).toBe("1366px");
-    // O seletor está disponível no preview React.
-    expect(screen.getByRole("group", { name: /tamanho do preview/i })).toBeInTheDocument();
+    // O seletor Desktop/Tablet/Mobile fica no TOPO da página (não duplicado no preview).
+    expect(screen.queryByRole("group", { name: /tamanho do preview/i })).toBeNull();
   });
 
   it("react sem isolamento mostra o aviso (não finge preview)", () => {

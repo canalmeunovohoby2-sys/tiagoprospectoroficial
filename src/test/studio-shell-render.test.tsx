@@ -70,11 +70,13 @@ describe("StudioShell (Fase 1)", () => {
 
     expect(screen.getByText("Construtor com IA")).toBeInTheDocument();
     expect(screen.getByText("Preview · 1 arquivo(s)")).toBeInTheDocument();
-    expect(screen.getByText("Histórico")).toBeInTheDocument();
-    expect(screen.getByText("Baixar")).toBeInTheDocument();
-    expect(screen.getByText("Vídeo")).toBeInTheDocument();
-    expect(screen.getByText("WhatsApp")).toBeInTheDocument();
-    expect(screen.getByText("Publicar")).toBeInTheDocument();
+    // As ações comerciais saíram daqui (agora vivem no TOPO da página).
+    expect(screen.queryByText("Histórico")).toBeNull();
+    expect(screen.queryByText("Baixar")).toBeNull();
+    expect(screen.queryByText("Publicar")).toBeNull();
+    // O que fica no Studio: abas de view + Visual + Run.
+    expect(screen.getByText("Preview")).toBeInTheDocument();
+    expect(screen.getByText("Código")).toBeInTheDocument();
     expect(screen.getAllByText("index.html").length).toBeGreaterThan(0);
   });
 

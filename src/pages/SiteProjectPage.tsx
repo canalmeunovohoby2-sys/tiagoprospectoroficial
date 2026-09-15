@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow, SiteSpec } from "@/data/siteProjects";
 import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf, projectKickoffState } from "@/data/siteProjects";
 import { StudioDeviceSwitcher } from "@/components/sites/studio/StudioPreviewPanel";
+import { StudioCommercialBar } from "@/components/sites/studio/StudioCommercialBar";
 import type { StudioDevice } from "@/lib/studio/types";
 import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
 import {
@@ -1377,26 +1378,54 @@ function buildReactKickoffInstruction(project: {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="outline" className="text-xs">{statusLabel(project.status)}</Badge>
-            {hasSpec && !studioEnabled && (
-              <Button variant="outline" size="sm" onClick={() => setVersionsOpen(true)} title="Histórico de versões">
-                <HistoryIcon className="h-3.5 w-3.5 mr-1" /> Histórico
-              </Button>
-            )}
-            {editMode ? (
-              // Espaço liberado pelos botões "Salvar/Tudo salvo": seletor de viewport
-              // do preview (o MESMO site real re-renderiza em Desktop/Tablet/Mobile).
+            {editMode && (studioEnabled || isReactProject) && (
               <StudioDeviceSwitcher value={previewDevice} onChange={setPreviewDevice} />
+            )}
+            {(studioEnabled || isReactProject) ? (
+              // Ações comerciais no TOPO: libera a área do preview (Sem "Salvar",
+              // sem seletor duplicado embaixo).
+              <StudioCommercialBar
+                commercial={{
+                  onProposalPdf: handlePdf,
+                  onDownloadZip: handleZip,
+                  onGenerateVideo: handleGenerateVideo,
+                  onWhatsApp: () => setProposalOpen(true),
+                  onPublish: handlePublish,
+                  onUnpublish: handleUnpublish,
+                  publishing,
+                  unpublishing,
+                  busyAction,
+                  generatingVideo,
+                  canPublish: isReactProject || hasSpec,
+                  canUnpublish: project.published_status === "published",
+                  canWhatsApp: !!projectLead?.whatsapp,
+                  canVideo: !!draftFiles && Object.keys(draftFiles).some((p) => p.endsWith("index.html")),
+                  onBuild: () => { void handleBuild(); },
+                  building,
+                  canBuild: isReactProject,
+                  publishedUrl: project.published_status === "published" ? publicUrl() : null,
+                  onCopyLink: copyPublicLink,
+                  githubSlot: <StudioGitConfigDialog projectId={project.id} userId={user?.id} />,
+                }}
+                onOpenHistory={() => (studioEnabled || isReactProject ? setGitHistoryOpen(true) : setVersionsOpen(true))}
+              />
             ) : (
               <>
                 {hasSpec && (
+                  <Button variant="outline" size="sm" onClick={() => setVersionsOpen(true)} title="Histórico de versões">
+                    <HistoryIcon className="h-3.5 w-3.5 mr-1" /> Histórico
+                  </Button>
+                )}
+                {editMode ? (
                   <Button variant="outline" size="sm" onClick={startEditing}>
                     <Pencil className="h-3.5 w-3.5 mr-1" /> Editar site
                   </Button>
+                ) : (
+                  <Button onClick={generate} disabled={generating} size="sm">
+                    {generating ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Sparkles className="h-4 w-4 mr-1" />}
+                    {hasSpec ? "Regenerar com IA" : "Gerar site com IA"}
+                  </Button>
                 )}
-                <Button onClick={generate} disabled={generating} size="sm">
-                  {generating ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Sparkles className="h-4 w-4 mr-1" />}
-                  {hasSpec ? "Regenerar com IA" : "Gerar site com IA"}
-                </Button>
               </>
             )}
           </div>
@@ -1570,29 +1599,6 @@ function buildReactKickoffInstruction(project: {
               onCancel: cancelAi,
               onRetry: handleRetry,
             }}
-            commercial={{
-              onProposalPdf: handlePdf,
-              onDownloadZip: handleZip,
-              onGenerateVideo: handleGenerateVideo,
-              onWhatsApp: () => setProposalOpen(true),
-              onPublish: handlePublish,
-              onUnpublish: handleUnpublish,
-              publishing,
-              unpublishing,
-              busyAction,
-              generatingVideo,
-              canPublish: isReactProject || hasSpec,
-              canUnpublish: project.published_status === "published",
-              canWhatsApp: !!projectLead?.whatsapp,
-              canVideo: !!draftFiles && Object.keys(draftFiles).some((p) => p.endsWith("index.html")),
-              onBuild: () => { void handleBuild(); },
-              building,
-              canBuild: isReactProject,
-              publishedUrl: project.published_status === "published" ? publicUrl() : null,
-              onCopyLink: copyPublicLink,
-              githubSlot: <StudioGitConfigDialog projectId={project.id} userId={user?.id} />,
-            }}
-            onOpenHistory={() => ((studioEnabled || isReactProject) ? setGitHistoryOpen(true) : setVersionsOpen(true))}
             openFileRequest={openFileRequest}
             onApplyWithFiles={(instruction, attachment, files) => { void runAiInstruction(instruction, attachment, { files }); }}
             onUnsavedChange={setStudioUnsaved}

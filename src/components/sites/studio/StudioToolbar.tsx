@@ -38,9 +38,7 @@ export interface StudioToolbarProps {
   onViewChange: (view: StudioView) => void;
   visualMode: boolean;
   onToggleVisual: () => void;
-  onOpenHistory: () => void;
   onReloadPreview: () => void;
-  commercial: StudioCommercialActions;
 }
 
 const VIEWS: Array<{ id: StudioView; label: string; icon: typeof Eye }> = [
@@ -67,10 +65,9 @@ function ToolButton({ label, onClick, disabled, active, children }: { label: str
   );
 }
 
-export function StudioToolbar({ activeView, onViewChange, visualMode, onToggleVisual, onOpenHistory, onReloadPreview, commercial }: StudioToolbarProps) {
-  const c = commercial;
+export function StudioToolbar({ activeView, onViewChange, visualMode, onToggleVisual, onReloadPreview }: StudioToolbarProps) {
   return (
-    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-card/60 px-2.5 py-1.5">
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-card/60 px-2.5 py-1">
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-0.5 rounded-lg border border-border/60 p-0.5">
           {VIEWS.map(({ id, label, icon: Icon }) => (
@@ -95,99 +92,11 @@ export function StudioToolbar({ activeView, onViewChange, visualMode, onToggleVi
           <span className="hidden lg:inline">Run</span>
         </ToolButton>
       </div>
-
-      <div className="flex flex-wrap items-center gap-1.5">
-        <ToolButton label="Histórico de versões" onClick={onOpenHistory}>
-          <History className="h-3 w-3" />
-          <span className="hidden lg:inline">Histórico</span>
-        </ToolButton>
-        {c.canBuild && (
-          <ToolButton label="Build de produção (React)" onClick={c.onBuild ?? (() => {})} disabled={!!c.building}>
-            {c.building ? <Loader2 className="h-3 w-3 animate-spin" /> : <Hammer className="h-3 w-3" />}
-            <span className="hidden xl:inline">Build</span>
-          </ToolButton>
-        )}
-        <ToolButton label="Gerar proposta em PDF" onClick={c.onProposalPdf} disabled={!!c.busyAction || !c.canPublish}>
-          {c.busyAction === "pdf" ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-          <span className="hidden xl:inline">Proposta</span>
-        </ToolButton>
-        <ToolButton label="Baixar projeto (ZIP)" onClick={c.onDownloadZip} disabled={!!c.busyAction}>
-          {c.busyAction === "zip" ? <Loader2 className="h-3 w-3 animate-spin" /> : <FolderDown className="h-3 w-3" />}
-          <span className="hidden xl:inline">Baixar</span>
-        </ToolButton>
-        <ToolButton label="Gerar vídeo de apresentação (MP4)" onClick={c.onGenerateVideo} disabled={c.generatingVideo || !c.canVideo}>
-          {c.generatingVideo ? <Loader2 className="h-3 w-3 animate-spin" /> : <Video className="h-3 w-3" />}
-          <span className="hidden xl:inline">Vídeo</span>
-        </ToolButton>
-        <ToolButton
-          label={c.canWhatsApp ? "Enviar proposta pelo WhatsApp" : "Indisponível: lead sem WhatsApp comprovado"}
-          onClick={c.onWhatsApp}
-          disabled={!c.canWhatsApp}
-        >
-          <Send className="h-3 w-3" />
-          <span className="hidden xl:inline">WhatsApp</span>
-        </ToolButton>
-
-        {c.canUnpublish && c.canPublish ? (
-          <>
-            {c.publishing ? (
-              <ToolButton label="Publicando nova versão" onClick={c.onPublish} disabled><Loader2 className="h-3 w-3 animate-spin" /><span className="hidden xl:inline">Publicar</span></ToolButton>
-            ) : (
-              <ToolButton label="Publicar nova versão" onClick={c.onPublish}><Rocket className="h-3 w-3" /><span className="hidden xl:inline">Publicar</span></ToolButton>
-            )}
-            <ToolButton label="Despublicar site" onClick={c.onUnpublish} disabled={c.unpublishing}>
-              {c.unpublishing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Undo2 className="h-3 w-3" />}
-              <span className="hidden xl:inline">Despublicar</span>
-            </ToolButton>
-          </>
-        ) : (
-          <ToolButton label="Publicar site" onClick={c.onPublish} disabled={c.publishing || !c.canPublish}>
-            {c.publishing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Rocket className="h-3 w-3" />}
-            <span className="hidden xl:inline">Publicar</span>
-          </ToolButton>
-        )}
-
-        {c.publishedUrl && (
-          <span className="inline-flex min-w-0 items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/5 px-1.5 py-1 text-[10.5px] text-emerald-700">
-            <Globe className="h-3 w-3 shrink-0" />
-            <span className="hidden min-w-0 max-w-[150px] truncate font-mono text-[10px] sm:inline" title={c.publishedUrl}>{c.publishedUrl}</span>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={c.onCopyLink}
-                  className="inline-flex h-5 items-center gap-1 rounded px-1 hover:bg-emerald-500/10"
-                  title="Copiar link"
-                  aria-label="Copiar link"
-                >
-                  <Copy className="h-3 w-3" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Copiar link</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <a
-                  href={c.publishedUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex h-5 items-center gap-1 rounded px-1 hover:bg-emerald-500/10"
-                  title="Abrir site"
-                  aria-label="Abrir site"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">Abrir site</TooltipContent>
-            </Tooltip>
-          </span>
-        )}
-
-        {c.githubSlot}
-        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-          <Play className="h-3 w-3 text-primary/70" /> Studio
-        </span>
-      </div>
+      {/* As ações comerciais (Histórico/Build/Proposta/Baixar/Vídeo/WhatsApp/
+          Publicar/Despublicar) ficam no TOPO da página, liberando espaço aqui. */}
+      <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+        <Play className="h-3 w-3 text-primary/70" /> Studio
+      </span>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { StudioToolbar, type StudioCommercialActions } from "@/components/sites/studio/StudioToolbar";
+import type { StudioCommercialActions } from "@/components/sites/studio/StudioToolbar";
+import { StudioCommercialBar } from "@/components/sites/studio/StudioCommercialBar";
 
 function commercial(over: Partial<StudioCommercialActions> = {}): StudioCommercialActions {
   return {
@@ -26,15 +27,7 @@ function commercial(over: Partial<StudioCommercialActions> = {}): StudioCommerci
 function renderToolbar(c: StudioCommercialActions) {
   return render(
     <TooltipProvider>
-      <StudioToolbar
-        activeView="preview"
-        onViewChange={vi.fn()}
-        visualMode={false}
-        onToggleVisual={vi.fn()}
-        onOpenHistory={vi.fn()}
-        onReloadPreview={vi.fn()}
-        commercial={c}
-      />
+      <StudioCommercialBar commercial={c} />
     </TooltipProvider>,
   );
 }

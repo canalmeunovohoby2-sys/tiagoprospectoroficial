@@ -1,5 +1,4 @@
-import { Loader2, Save, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { X } from "lucide-react";
 import type { StudioTab } from "@/lib/studio/types";
 
 export interface StudioEditorTabsProps {
@@ -7,12 +6,9 @@ export interface StudioEditorTabsProps {
   activePath: string | null;
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
-  onSave: () => void;
-  saving?: boolean;
-  dirty?: boolean;
 }
 
-export function StudioEditorTabs({ tabs, activePath, onSelect, onClose, onSave, saving = false, dirty = false }: StudioEditorTabsProps) {
+export function StudioEditorTabs({ tabs, activePath, onSelect, onClose }: StudioEditorTabsProps) {
   if (tabs.length === 0) {
     return (
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border/60 bg-card/60 px-3">
@@ -62,10 +58,6 @@ export function StudioEditorTabs({ tabs, activePath, onSelect, onClose, onSave, 
           );
         })}
       </div>
-      <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={onSave} disabled={saving || !dirty}>
-        {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Save className="h-3.5 w-3.5 mr-1" />}
-        Salvar
-      </Button>
     </div>
   );
 }

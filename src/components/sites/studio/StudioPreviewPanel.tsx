@@ -271,8 +271,7 @@ export function StudioPreviewPanel({
           <p className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
             <FileCode2 className="h-3.5 w-3.5 text-primary" /> Preview do site
           </p>
-          {/* MESMO seletor do preview estático: o site real re-renderiza no viewport. */}
-          <StudioDeviceSwitcher value={device} onChange={setDevice} />
+          {/* O seletor Desktop/Tablet/Mobile fica no TOPO da página (só um). */}
         </div>
         <div className="min-h-0 flex-1">
           <WebContainerPreview

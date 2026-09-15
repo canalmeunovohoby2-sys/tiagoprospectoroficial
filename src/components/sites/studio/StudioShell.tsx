@@ -7,7 +7,7 @@ import { StudioCodeEditor } from "./StudioCodeEditor";
 import { StudioEditorTabs } from "./StudioEditorTabs";
 import { StudioFileExplorer } from "./StudioFileExplorer";
 import { StudioPreviewPanel } from "./StudioPreviewPanel";
-import { StudioToolbar, type StudioCommercialActions } from "./StudioToolbar";
+import { StudioToolbar } from "./StudioToolbar";
 import { StudioVisualEditorPanel, type VisualEditOutcome } from "./StudioVisualEditorPanel";
 import { deleteFilePath, createFilePath, renameFilePath, mergeEffectiveFiles, computeDirtyPaths, baseName, languageForPath } from "@/lib/studio/fileTree";
 import { resolveElementSource, buildVisualAgentInstruction } from "@/lib/studio/sourceMap";
@@ -40,8 +40,6 @@ export interface StudioShellProps {
   /** C4: pedido de abrir arquivo/linha no Monaco (histórico/diff). */
   openFileRequest?: { file: string; line?: number; nonce: number } | null;
   chat: StudioChatPanelProps;
-  commercial: StudioCommercialActions;
-  onOpenHistory: () => void;
   /**
    * Envia a instrução ao agente JUNTO com o estado ATUAL do editor (rascunhos
    * não salvos inclusos) — evita que o agente trabalhe sobre uma cópia antiga.
@@ -77,8 +75,6 @@ export function StudioShell({
   projectKind,
   openFileRequest,
   chat,
-  commercial,
-  onOpenHistory,
   onApplyWithFiles,
   onUnsavedChange,
   engineLabel,
@@ -373,9 +369,7 @@ export function StudioShell({
               onViewChange={setActiveView}
               visualMode={visualMode}
               onToggleVisual={() => { setVisualMode((v) => !v); setSelection(null); }}
-              onOpenHistory={onOpenHistory}
               onReloadPreview={() => setLocalPreviewNonce((n) => n + 1)}
-              commercial={{ ...commercial, githubSlot: commercial.githubSlot }}
             />
 
             <StudioEditorTabs
