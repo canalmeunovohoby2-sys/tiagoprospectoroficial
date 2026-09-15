@@ -12,6 +12,7 @@
 import type { BusinessContext } from "../../tools.js";
 import { readWorkspace, safeWorkspaceJoin } from "../../workspace.js";
 import { writeFileSync } from "node:fs";
+import { buildStaticMapBlock, mapsDirectionsUrl as staticMapDirectionsUrl, businessPoint } from "./static-map.js";
 
 function isHttpUrl(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -121,17 +122,20 @@ export function normalizeMapEmbedUrls(text: string, canonicalEmbedUrl: string): 
 }
 
 /**
- * Normaliza os embeds de mapa nos arquivos REAIS do projeto (determinístico).
- * Devolve os caminhos alterados (para o front reaplicar os arquivos).
+ * Substitui qualquer <iframe> de Google Maps pelo MAPA ESTÁTICO (tiles + marcador).
+ * MOTIVO (comprovado em Chromium): o site roda em contexto COEP (necessário ao
+ * WebContainer) e QUALQUER iframe cross-origin sem CORP é bloqueado ali
+ * ("A conexão com maps.google.com foi recusada"). Imagens carregam normalmente.
  */
 export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessContext): string[] {
-  const canonical = buildMapEmbedUrl(business);
-  if (!canonical) return [];
+  const block = buildStaticMapBlock(business);
+  if (!block) return [];
   const changed: string[] = [];
+  const IFRAME = /<iframe\b[^>]*\bsrc\s*=\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*'|\{\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*')\s*\})[^>]*(?:\/>|>[\s\S]*?<\/iframe>)/gi;
   for (const [rel, content] of Object.entries(readWorkspace(root))) {
-    if (!/\.(tsx|jsx|ts|js|html?|css)$/i.test(rel)) continue;
+    if (!/\.(tsx|jsx|ts|js|html?)$/i.test(rel)) continue;
     if (!/google\./i.test(content) || !/maps/i.test(content)) continue;
-    const next = normalizeMapEmbedUrls(content, canonical);
+    const next = content.replace(IFRAME, block);
     if (next === content) continue;
     const abs = safeWorkspaceJoin(root, rel);
     if (!abs) continue;
@@ -180,17 +184,19 @@ export function mediaContextBlock(business: BusinessContext): string {
     );
   }
 
+  const staticBlock = buildStaticMapBlock(business);
+  const directions = staticMapDirectionsUrl(business);
+  const address = cleanText(business.address);
+
   lines.push(
-    "LOCALIZAÇÃO + GOOGLE MAPS (OBRIGATÓRIO nesta entrega):",
-    mapEmbedUrl
-      ? `  - <iframe> de mapa (responsivo, sem api key): ${mapEmbedUrl}`
-      : "  - SEM dados de endereço/cidade confiáveis: NÃO invente endereço nem mapa; omita a seção de mapa.",
-    mapDirectionsUrl ? `  - Botão \"Abrir rota\": ${mapDirectionsUrl}` : "",
-    cleanText(business.address) ? `  - Endereço real: ${cleanText(business.address)}` : "",
-    mapEmbedUrl
-      ? `  - COPIE ESTE SNIPPET (não invente outra URL de mapa; só ajuste classes/estilo se quiser): <iframe title="Localização" src="${mapEmbedUrl}" className="w-full h-[320px] rounded-xl border-0" loading="lazy" referrerPolicy="no-referrer" />`
-      : "",
-    "  - O <iframe> do mapa DEVE ter altura definida (ex.: h-[320px]) para não colapsar. SEMPRE inclua também um link/botão \"Abrir no Google Maps\" (rota) ao lado — a localização funciona mesmo se o iframe for bloqueado.",
+    "LOCALIZAÇÃO + MAPA (OBRIGATÓRIO nesta entrega):",
+    "  - NUNCA use <iframe> do Google Maps: neste site ele é BLOQUEADO (o site roda isolado por COEP e o Google recusa a conexão).",
+    staticBlock
+      ? `  - COPIE ESTE BLOCO de mapa (mosaico de imagens + marcador + botão \"Abrir no Google Maps\"); não invente outra URL de mapa e não troque as imagens:\n${staticBlock}`
+      : "  - SEM coordenadas/endereço confiáveis: NÃO invente localização; omita a seção de mapa.",
+    directions ? `  - Link REAL do Google Maps (rota) para o botão: ${directions}` : "",
+    address ? `  - Endereço real: ${address}` : "",
+    "  - Mantenha o mapa responsivo (o bloco já tem altura definida) e o botão \"Abrir no Google Maps\" sempre visível.",
     "REGRAS DE IMAGEM (evitam foto quebrada):",
     "  - Todo <img> DEVE ter referrerPolicy=\"no-referrer\" (evita bloqueio de hotlink), alt descritivo e loading=\"lazy\" abaixo da primeira dobra.",
     "  - Todo <img> DEVE ter onError que esconde a imagem (ex.: e.currentTarget.style.display=\"none\") ou troca por um bloco de cor — NUNCA deixe aparecer o ícone de imagem quebrada nem caixa vazia.",

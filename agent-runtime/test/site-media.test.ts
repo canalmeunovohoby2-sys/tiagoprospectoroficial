@@ -55,17 +55,18 @@ describe("site-media · fotos reais vs ilustrativas", () => {
     expect(stockImages({ stockImages: [STOCK, STOCK] })).toEqual([STOCK]);
   });
 
-  it("bloco de contexto inclui as URLs reais, o iframe do mapa e as regras", () => {
+  it("bloco de contexto inclui as URLs reais, o mapa (sem iframe) e as regras", () => {
     const block = mediaContextBlock({
       name: "Pet Amigo", photos: [PHOTO_A, PHOTO_B], placeId: "ChIJabc1234567890",
-      address: "Av. Anchieta, 11305", city: "Bertioga", state: "SP",
+      address: "Av. Anchieta, 11305", latitude: -22.3, longitude: -49.06, city: "Bertioga", state: "SP",
     });
     expect(block).toContain(PHOTO_A);
     expect(block).toContain(PHOTO_B);
-    expect(block).toContain("https://maps.google.com/maps?q=");
-    expect(block).toContain("output=embed");
+    // Mapa por TILES (o iframe do Google é bloqueado sob COEP) + link real do Google.
+    expect(block).toContain("tile.openstreetmap.org");
+    expect(block).toContain("Abrir no Google Maps");
+    expect(block).toMatch(/NUNCA use <iframe> do Google Maps/i);
     expect(block).toContain("NUNCA invente");
-    expect(block).toContain("OBRIGATÓRIO");
   });
 
   it("bloco de contexto exige img/mapa resilientes (sem foto quebrada, mapa com fallback)", () => {
@@ -75,12 +76,11 @@ describe("site-media · fotos reais vs ilustrativas", () => {
     expect(block).toContain("Abrir no Google Maps");
   });
 
-  it("o bloco entrega o SNIPPET exato do mapa (com altura) para evitar mapa colapsado", () => {
-    const block = mediaContextBlock({ name: "Clínica X", address: "Rua A, 1", city: "Bauru", state: "SP" });
-    expect(block).toMatch(/COPIE ESTE SNIPPET/);
-    expect(block).toContain("<iframe");
-    expect(block).toContain("output=embed");
+  it("o bloco entrega o BLOCO de mapa pronto (com altura) para não colapsar", () => {
+    const block = mediaContextBlock({ name: "Clínica X", address: "Rua A, 1", latitude: -22.31, longitude: -49.06, city: "Bauru", state: "SP" });
+    expect(block).toMatch(/COPIE ESTE BLOCO/);
     expect(block).toContain("h-[320px]");
+    expect(block).toContain("tile.openstreetmap.org");
   });
 
   const CANON = "https://maps.google.com/maps?q=Av.%20Anchieta%2C%2011305%2C%20Bertioga%2FSP&z=16&output=embed";
@@ -112,15 +112,20 @@ describe("site-media · fotos reais vs ilustrativas", () => {
     expect(normalizeMapEmbedUrls(code, CANON)).toBe(code);
   });
 
-  it("normaliza os arquivos do workspace e devolve os caminhos alterados", () => {
+  it("substitui o <iframe> do Google pelo MAPA estático no workspace (iframe é bloqueado sob COEP)", () => {
     const root = mkdtempSync(join(tmpdir(), "map-fix-"));
     try {
       writeFileSync(join(root, "App.tsx"), `<iframe src="https://maps.google.com/maps?q=Bauru" />`, "utf8");
       writeFileSync(join(root, "ok.tsx"), `<iframe src="https://maps.google.com/maps?q=Bauru&output=embed" />`, "utf8");
-      const changed = normalizeWorkspaceMapEmbeds(root, { address: "Av. Anchieta, 11305", city: "Bertioga", state: "SP" });
-      expect(changed).toEqual(["App.tsx"]);
-      expect(readFileSync(join(root, "App.tsx"), "utf8")).toContain("output=embed");
-      expect(readFileSync(join(root, "ok.tsx"), "utf8")).toContain("output=embed");
+      const changed = normalizeWorkspaceMapEmbeds(root, {
+        address: "Av. Anchieta, 11305", latitude: -22.315, longitude: -49.06, city: "Bertioga", state: "SP",
+      });
+      // Os DOIS são trocados: mesmo com output=embed, iframe cross-origin é bloqueado sob COEP.
+      expect(changed).toEqual(["App.tsx", "ok.tsx"]);
+      const app = readFileSync(join(root, "App.tsx"), "utf8");
+      expect(app).not.toMatch(/<iframe/i);
+      expect(app).toContain("tile.openstreetmap.org");
+      expect(app).toContain("Abrir no Google Maps");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
