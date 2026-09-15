@@ -421,6 +421,63 @@ export class BrowserSession {
     return lines.join("\n");
   }
 
+  /**
+   * Evidência VISUAL/DOM/CSS da página atual (usada pelo `visual_verify`):
+   * cores efetivamente renderizadas (computed styles + classes Tailwind + CSS
+   * variables), imagens quebradas, overflow horizontal, erros de console e
+   * requisições falhas. SOMENTE leitura — não altera o site.
+   */
+  async probePage(): Promise<{
+    colors: string[];
+    brokenImages: string[];
+    overflowX: boolean;
+    consoleErrors: string[];
+    failedRequests: string[];
+  }> {
+    const consoleErrors = this.consoleLogs.filter((l) => l.startsWith("[error]"));
+    const failedRequests = [...this.requestErrors];
+    if (!this.page) return { colors: [], brokenImages: [], overflowX: false, consoleErrors, failedRequests };
+    const data = await this.page.evaluate(() => {
+      const colors = new Set<string>();
+      const hexOf = (v: string): string | null => {
+        const m = String(v).match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+        if (!m) return null;
+        const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
+        return `#${[r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
+      };
+      for (const el of Array.from(document.querySelectorAll("*")).slice(0, 1500)) {
+        try {
+          const cs = getComputedStyle(el);
+          for (const prop of ["color", "backgroundColor", "borderTopColor", "borderBottomColor", "outlineColor"] as const) {
+            const h = hexOf(cs[prop]);
+            if (h) colors.add(h);
+          }
+        } catch { /* noop */ }
+        const cls = el.getAttribute("class") || "";
+        for (const m of cls.matchAll(/\b(?:bg|text|border|from|via|to|ring|fill|stroke)-(green|red|blue|sky|yellow|amber|orange|purple|violet|indigo|pink|rose)-(\d{2,3})\b/g)) {
+          colors.add(`${m[1]}-${m[2]}`);
+        }
+      }
+      try {
+        for (const ss of Array.from(document.styleSheets)) {
+          let rules: CSSRuleList | null = null;
+          try { rules = (ss as CSSStyleSheet).cssRules; } catch { continue; }
+          for (const r of Array.from(rules || [])) {
+            const txt = (r as CSSStyleRule).cssText || "";
+            for (const m of txt.matchAll(/--[\w-]+\s*:\s*(#[0-9a-fA-F]{3,8})/g)) colors.add(m[1].toLowerCase());
+          }
+        }
+      } catch { /* noop */ }
+      const brokenImages: string[] = [];
+      for (const img of Array.from(document.images)) {
+        if (!img.complete || img.naturalWidth === 0) { if (img.currentSrc || img.src) brokenImages.push((img.currentSrc || img.src).slice(0, 120)); }
+      }
+      const overflowX = document.documentElement.scrollWidth > window.innerWidth + 4;
+      return { colors: Array.from(colors), brokenImages, overflowX };
+    }).catch(() => ({ colors: [] as string[], brokenImages: [] as string[], overflowX: false }));
+    return { ...data, consoleErrors, failedRequests };
+  }
+
   async close(): Promise<void> {
     try { await this.page?.close(); } catch { /* noop */ }
     try { await this.browser?.close(); } catch { /* noop */ }

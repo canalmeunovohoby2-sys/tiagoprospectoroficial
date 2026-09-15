@@ -11,6 +11,7 @@ import { buildCoderTools } from "./agent-core/agent-tools.js";
 import { callModelWithTools, type ModelCaller, type ModelMessage } from "./agent-core/model.js";
 import { buildFirstMessage, isBootstrapProject } from "./agent-core/first-message.js";
 import { instructionRequestsChange } from "../completion-guard.js";
+import { resetVisualState, visualState, VISUAL_MAX_CYCLES } from "./agent-core/visual-verify.js";
 import { runCoderTurn } from "./agent-core/coder.js";
 import { runPlanner, type RunPlannerInput, type RunPlannerResult } from "./agent-core/planner.js";
 import { selectNext, type LastSpeaker } from "./agent-core/selector.js";
@@ -171,7 +172,9 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   const isFirst = state.history.length === 0;
   const files = input.readWorkspace();
   const fileTree = Object.keys(files);
-  const { list: tools } = buildCoderTools({ workspaceRoot: input.workspaceRoot, business: input.business, projectId: input.projectId, mode: "edit" });
+  const { list: tools } = buildCoderTools({ workspaceRoot: input.workspaceRoot, business: input.business, projectId: input.projectId, mode: "edit", instruction: input.instruction } as never);
+  // Verificação visual: estado zerado a cada execução (o `visual_verify` atualiza).
+  resetVisualState(input.workspaceRoot);
 
   // C6 — memória do projeto (contexto auxiliar; código prevalece) + anexos.
   let projectMemory = loadMemory(input.workspaceRoot, input.projectId);
@@ -409,6 +412,18 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
       }
     }
 
+    // VISUAL VERIFY FAIL: o agente rodou a verificação visual e o site REAL ainda
+    // não cumpre o pedido (ex.: sobrou a cor antiga). Devolve o relatório ao
+    // modelo e exige correção — nunca deixa concluir com verificação visual FAIL.
+    const vstate = visualState(input.workspaceRoot);
+    if (finishing && !coder.error && vstate.last === "FAIL" && vstate.fails < VISUAL_MAX_CYCLES && round < maxRounds - 1) {
+      input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "A verificação visual no navegador apontou pendências — vou corrigir e verificar de novo.", timestamp: Date.now() });
+      messages = [...messages, { role: "user", content: `${vstate.lastReport}\n\nCorrija o que ficou pendente e rode visual_verify novamente. NÃO conclua enquanto estiver FAIL.` }];
+      lastSpeaker = "Coder";
+      lastSignal = null;
+      continue;
+    }
+
     if (!coder.signal) break; // sem sinal e sem ferramentas → considera final
   }
 
@@ -451,6 +466,14 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
       error = "alteração de cor aplicada apenas parcialmente";
       reply = `⚠️ A troca de cor ficou PARCIAL: ${leftovers.length ? `ainda existe(m) ${leftovers.slice(0, 8).join(", ")} no site` : "a cor pedida não foi aplicada"}${leftover > 0 ? ` (${Math.round(leftover * 100)}% da paleta antiga continua)` : ""}. O pedido NÃO foi concluído em todo o site. Peça novamente que eu varro TODAS as ocorrências e finalizo.`;
     }
+  }
+  // HONESTIDADE FINAL (verificação visual): o site REAL no Chromium ainda falhou?
+  // Então a alteração NÃO está concluída — jamais responder "pronto".
+  if (!error && visualState(input.workspaceRoot).last === "FAIL") {
+    const st = visualState(input.workspaceRoot);
+    const pending = st.lastReport.split("\n").filter((l) => l.trim().startsWith("*")).slice(0, 6).join(" ");
+    error = "verificação visual ainda não passou";
+    reply = `⚠️ A verificação visual no NAVEGADOR REAL continua FAIL após ${st.fails} tentativa(s) — não vou declarar concluído.${pending ? ` Pendências: ${pending}` : ""}`;
   }
   return { ok: !error, reply, signal: lastSignal, iterations, touched, plan, error };
 }

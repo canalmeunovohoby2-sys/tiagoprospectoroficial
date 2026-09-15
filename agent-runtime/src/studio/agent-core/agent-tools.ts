@@ -6,6 +6,8 @@
 
 import { buildSiteTools, type ToolEnv } from "../../tools.js";
 import { designSkillsKnowledge, DESIGN_SKILL_TOPICS } from "./design-skills.js";
+import { runVisualVerification, prepareServeDirForRoot, noteVisualResult, visualState, VISUAL_MAX_CYCLES } from "./visual-verify.js";
+import { buildReactProject } from "../build.js";
 import type { AgentToolSchema } from "./model.js";
 
 export interface CoderTool {
@@ -41,7 +43,7 @@ const SCHEMAS: Record<string, { description: string; parameters: Record<string, 
 
 // Ferramentas de workspace + "design_skills" (conhecimento instalado, não é
 // operação de workspace; implementada abaixo).
-export const CODER_TOOL_NAMES: string[] = [...Object.keys(SCHEMAS), "design_skills"];
+export const CODER_TOOL_NAMES: string[] = [...Object.keys(SCHEMAS), "design_skills", "visual_verify"];
 
 export function buildCoderTools(env: ToolEnv): { list: CoderTool[]; byName: Map<string, CoderTool> } {
   const built = buildSiteTools(env) as unknown as UnderlyingTool[];
@@ -79,6 +81,41 @@ export function buildCoderTools(env: ToolEnv): { list: CoderTool[]; byName: Map<
   };
   byName.set("design_skills", designTool);
   list.push(designTool);
+
+  // VISUAL VERIFIER: OBSERVA o site REAL no Chromium (desktop/tablet/mobile) e
+  // RELATA PASS/FAIL. Nunca edita arquivos — quem corrige é o DeepSeek.
+  const visualTool: CoderTool = {
+    schema: {
+      name: "visual_verify",
+      description: "Verificação VISUAL do site real no Chromium (desktop 1366, tablet 768, mobile 390): renderiza, checa erros de console/imagens quebradas/overflow, coleta cores efetivamente renderizadas e diz se o pedido foi cumprido (PASS/FAIL) — inclusive se sobrou a identidade ANTIGA. Use depois de alterar o visual e antes de concluir. Não edita arquivos.",
+      parameters: { type: "object", properties: { objective: { type: "string", description: "O que deveria ter mudado (opcional; usa o pedido do usuário)." } }, required: [] },
+    },
+    execute: async (args) => {
+      const root = env.workspaceRoot;
+      const objective = (typeof args.objective === "string" && args.objective.trim())
+        ? args.objective.trim()
+        : (env as { instruction?: string }).instruction ?? "";
+      const st = visualState(root);
+      if (st.fails >= VISUAL_MAX_CYCLES) {
+        return `VISUAL VERIFICATION: FAIL\n\nLimite de ${VISUAL_MAX_CYCLES} ciclos de correção atingido.\nRequired action:\nPare de tentar e informe ao usuário o que ainda está incorreto (não declare concluído).`;
+      }
+      let temp: string | undefined;
+      try {
+        const serve = await prepareServeDirForRoot(root, buildReactProject);
+        temp = serve.temp;
+        const result = await runVisualVerification({ serveDir: serve.dir, objective });
+        noteVisualResult(root, result.verdict, result.report);
+        return result.report;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return `VISUAL VERIFICATION: FAIL\n\nNão foi possível verificar visualmente: ${msg}\nRequired action:\nCorrija o build/erro acima e rode visual_verify de novo. Não conclua.`;
+      } finally {
+        if (temp) { try { const { rmSync } = await import("node:fs"); rmSync(temp, { recursive: true, force: true }); } catch { /* noop */ } }
+      }
+    },
+  };
+  byName.set("visual_verify", visualTool);
+  list.push(visualTool);
 
   return { list, byName };
 }
