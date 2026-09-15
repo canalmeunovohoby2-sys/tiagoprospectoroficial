@@ -34,6 +34,7 @@ import { ensureGitRepo, gitCommit, gitDiff, gitLog, gitRestore, gitShow, gitStat
 import { deriveCommitMessage } from "./studio/commit-message.js";
 import { buildReactProject } from "./studio/build.js";
 import { filterWorkingImages, mergeValidatedImages, normalizeWorkspaceMapEmbeds } from "./studio/agent-core/site-media.js";
+import { activityForEvent } from "./studio/agent-core/activity-feed.js";
 import { EDIT_TOOLS } from "./work-evidence.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -1263,7 +1264,17 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           await withWorkspaceLock(projectId, async () => {
           const root = ensureWorkspaceDir(projectId, files);
           const writeLine = (obj: unknown) => { if (!stream) return; try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ } };
-          const emit = (obj: Record<string, unknown>) => writeLine(obj);
+          // ATIVIDADE REAL para o card do chat: cada evento do time (ferramenta
+          // chamada pelo modelo / frase do próprio modelo) vira uma linha
+          // humanizada com a AÇÃO e o ARQUIVO daquele momento — nada de texto
+          // pronto. Nunca expõe nome de ferramenta.
+          const emit = (obj: Record<string, unknown>) => {
+            writeLine(obj);
+            try {
+              const line = activityForEvent(obj as never);
+              if (line) writeLine({ type: "activity", phase: line.phase, detail: line.detail });
+            } catch { /* nunca derruba o stream por causa do indicador */ }
+          };
           const emitFiles = () => { try { writeLine({ type: "files_ready", files: readWorkspace(root) }); } catch { /* noop */ } };
           if (stream) {
             res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });

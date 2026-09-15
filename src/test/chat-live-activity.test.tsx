@@ -11,38 +11,41 @@ const card = () => screen.queryByText("Executando agora");
 
 afterEach(() => cleanup());
 
-describe("Chat do Studio · card de atividade (emoji + ação atual) acima do campo", () => {
-  it("mostra o CARD 'Executando agora' com emoji da ação e o que está fazendo", () => {
-    renderPanel({ running: true, phase: "coding", liveActivity: [{ phase: "editing", detail: "`src/App.tsx`" }] });
-    expect(card()).toBeTruthy();
-    expect(screen.getByText(/✏️ Modificando `src\/App\.tsx`/)).toBeTruthy();
+describe("Chat do Studio · card de atividade (ação REAL do momento, não texto pronto)", () => {
+  it("mostra a FRASE REAL do agente na fase thinking", () => {
+    renderPanel({ running: true, phase: "coding", liveActivity: [{ phase: "thinking", detail: "Vou trocar o verde do header" }] });
+    expect(screen.getByText(/Vou trocar o verde do header/)).toBeTruthy();
+    expect(screen.queryByText(/Analisando a alteração/)).toBeNull();
+    cleanup();
+    // ação real de busca (não o rótulo genérico)
+    renderPanel({ running: true, phase: "coding", liveActivity: [{ phase: "analyzing", detail: "Buscando no código…" }] });
+    expect(screen.getByText(/Buscando no código/)).toBeTruthy();
   });
 
-  it("cobre as ações reais (analisar, abrir, pesquisar, testar, finalizar)", () => {
-    const cases: Array<[string, string, RegExp]> = [
-      ["analyzing", "", /🔎 Analisando o projeto/],
-      ["reading", "`index.html`", /📂 Abrindo `index\.html`/],
-      ["researching", "", /🌐 Pesquisando na web/],
-      ["testing", "", /🧪 Testando a alteração/],
-      ["done", "", /✅ Finalizando/],
-    ];
-    for (const [phase, detail, re] of cases) {
-      renderPanel({ running: true, phase: "tool_running", liveActivity: [{ phase, detail }] });
-      expect(screen.getByText(re), `${phase}:${detail}`).toBeTruthy();
-      cleanup();
-    }
+  it("mostra o ARQUIVO real sendo editado/lido/escrito", () => {
+    renderPanel({ running: true, phase: "coding", liveActivity: [{ phase: "editing", detail: "`src/components/Hero.tsx`" }] });
+    expect(screen.getByText(/Modificando `src\/components\/Hero\.tsx`/)).toBeTruthy();
+    cleanup();
+    renderPanel({ running: true, phase: "coding", liveActivity: [{ phase: "reading", detail: "`src/App.tsx`" }] });
+    expect(screen.getByText(/Abrindo `src\/App\.tsx`/)).toBeTruthy();
   });
 
-  it("o card desaparece quando o agente termina", () => {
+  it("cobre verificação no navegador e finalização", () => {
+    renderPanel({ running: true, phase: "tool_running", liveActivity: [{ phase: "verifying", detail: "Verificando o site no navegador (desktop/tablet/mobile)…" }] });
+    expect(screen.getByText(/Verificando no navegador/)).toBeTruthy();
+    cleanup();
+    renderPanel({ running: true, phase: "tool_running", liveActivity: [{ phase: "done", detail: "Finalizando…" }] });
+    expect(screen.getByText(/Finalizando/)).toBeTruthy();
+  });
+
+  it("o card desaparece quando o agente termina e não expõe nome de ferramenta", () => {
     renderPanel({ running: true, phase: "coding", liveActivity: [{ phase: "editing", detail: "`x.tsx`" }] });
     expect(card()).toBeTruthy();
     cleanup();
     renderPanel({ running: false, phase: "complete" });
     expect(card()).toBeNull();
-  });
-
-  it("NÃO mostra nomes de ferramentas no card", () => {
+    cleanup();
     renderPanel({ running: true, phase: "tool_running", liveActivity: [{ phase: "editing", detail: "write_file src/App.tsx" }] });
-    expect(/"write_file"/.test(document.body.textContent ?? "")).toBe(false);
+    expect(/write_file/.test(document.body.textContent ?? "")).toBe(false);
   });
 });

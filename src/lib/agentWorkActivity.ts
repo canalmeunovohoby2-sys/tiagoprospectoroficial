@@ -111,8 +111,9 @@ export function liveActivityLabel(phase: string, detail: string): string {
   const file = fileRef(detail);
   const loc = file ? `\`${file}\`` : null;
   switch (phase) {
-    case "thinking": return "💭 Analisando a alteração…";
-    case "analyzing": return loc ? `📂 Abrindo ${loc}` : "🔎 Analisando o projeto";
+    // "thinking" traz a PRÓPRIA frase do agente naquele passo (nada de texto pronto).
+    case "thinking": return detail ? `💭 ${detail}` : "💭 Analisando a alteração…";
+    case "analyzing": return loc ? `📂 Abrindo ${loc}` : (detail ? `🔎 ${detail}` : "🔎 Analisando o projeto");
     case "reading": return loc ? `📂 Abrindo ${loc}` : "📂 Lendo arquivos";
     case "editing": return loc ? `✏️ Modificando ${loc}` : "🛠️ Editando arquivos";
     case "writing": return loc ? `✏️ Escrevendo ${loc}` : "🛠️ Criando arquivos";
