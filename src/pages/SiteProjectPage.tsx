@@ -223,11 +223,9 @@ function buildReactKickoffInstruction(project: {
     services ? `Serviços: ${services}` : null,
   ].filter(Boolean).join("\n");
   return [
-    "Gere AGORA o site profissional COMPLETO deste cliente, substituindo o template inicial. Use SOMENTE os dados reais abaixo — NÃO invente telefone, endereço, serviços, depoimentos, números ou fatos comerciais.",
+    "Gere AGORA o site REAL deste cliente, substituindo o template inicial. Use SOMENTE os dados reais abaixo — NÃO invente telefone, endereço, serviços, depoimentos, números ou fatos comerciais.",
     userPrompt ? `Pedido original: ${userPrompt}` : "",
     facts,
-    "Isto NÃO é um protótipo: entregue um site comercial premium, com várias seções quando o contexto permitir (cabeçalho/navegação, hero de alto impacto, apresentação, serviços/produtos, diferenciais, galeria com as fotos reais, processo, localização com Google Maps, contato/CTA e rodapé completo).",
-    "OBRIGATÓRIO: seção de Localização com endereço real, <iframe> responsivo do Google Maps e botão \"Abrir rota\". Use a URL de mapa indicada no contexto (sem chave de API).",
     "Use as fotos reais fornecidas quando existirem; se não houver, não use imagens quebradas nem ícones no lugar de fotos. Responsivo em mobile (~390px) e desktop (~1366px).",
     "Use write_file/edit_file para alterar os arquivos reais do projeto e só finalize quando o site do cliente estiver aplicado.",
   ].filter(Boolean).join("\n\n");

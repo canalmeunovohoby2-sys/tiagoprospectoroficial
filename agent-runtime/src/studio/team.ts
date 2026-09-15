@@ -20,6 +20,7 @@ import { loadProjectState, saveProjectState, type StudioStateMessage } from "./a
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
 import { mediaContextBlock } from "./agent-core/site-media.js";
 import { buildDesignDirection, hasArtDirection, ART_DIRECTION_MARKER } from "./agent-core/design-direction.js";
+import { generateCreativeBrief } from "./agent-core/creative-brief.js";
 import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, paletteLeftoverRatio, colorLeftoverNudge, namedColorFamilies, colorFamilyTokens, uninspectedEdits, UNINSPECTED_NUDGE, VERIFY_NUDGE, FORCE_CHANGE_NUDGE, workspaceSignature, hasPlaceholderCode, placeholderNudge } from "./agent-core/edit-scope.js";
 
 export interface StudioAttachment {
@@ -186,18 +187,38 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
     .map((a) => ({ mime: a.mediaType, dataUrl: a.dataUrl }));
 
   const mediaBlock = mediaContextBlock(input.business);
-  // Direção de arte DETERMINÍSTICA por negócio (mesmo projeto → estável; projetos
-  // diferentes → direções diferentes). Impede o "site de blocos" repetido.
+  // Direção DETERMINÍSTICA = BASE TÉCNICA de variação (não é mais o briefing
+  // criativo principal). O briefing individual é decidido pela IA (abaixo).
   const direction = buildDesignDirection(input.business, input.projectId);
-  const directionBlock = `\n\n${direction.block}`;
+  const directionBlock = `\n\nBASE TÉCNICA DE VARIAÇÃO (referência secundária/opcional — NÃO é a direção final; combine/refine/rejeite conforme os dados reais do cliente):\n${direction.block}`;
+  // BRIEFING CRIATIVO INDIVIDUAL: na 1ª geração a própria IA analisa os dados
+  // reais do cliente e decide a direção DAQUELE site. Fica interno (não vai para
+  // o chat) e é persistido na memória do projeto para as edições seguirem a
+  // mesma identidade.
+  let creativeBrief = "";
+  const hasAiConfig = !!(input.ai?.apiKey || input.ai?.providerId || input.ai?.modelId);
+  if (isFirst && hasAiConfig) {
+    creativeBrief = await generateCreativeBrief({
+      model, ai: input.ai, business: input.business,
+      baseDirectionBlock: direction.block,
+      extraFacts: input.business?.about ?? "",
+    });
+    if (creativeBrief) {
+      try { input.emit({ type: "agent_interaction", agent_name: "Planner", message_type: "thought", content: "Direção criativa definida para este cliente.", timestamp: Date.now() }); } catch { /* noop */ }
+    }
+  }
+  const briefBlock = creativeBrief
+    ? `\n\nBRIEFING CRIATIVO DESTE CLIENTE (decisão da IA a partir dos dados reais — é a DIREÇÃO PRINCIPAL; implemente isto):\n${creativeBrief}`
+    : "";
   const userContent = isFirst
-    ? `${buildFirstMessage({ instruction: input.instruction, files, business: input.business })}${attachBlock}${memoryBlock}${mediaBlock}${directionBlock}`
+    ? `${buildFirstMessage({ instruction: input.instruction, files, business: input.business })}${attachBlock}${memoryBlock}${mediaBlock}${briefBlock}${directionBlock}`
     : [
         input.memory?.length ? `Memória do projeto:\n${input.memory.slice(0, 10).map((m) => `- ${m}`).join("\n")}` : null,
         input.conversation?.length ? `Conversa recente:\n${input.conversation.slice(-6).map((c) => `- ${c}`).join("\n")}` : null,
         attachBlock,
         memoryBlock,
         mediaBlock,
+        briefBlock,
         directionBlock,
         `Pedido do usuário: ${input.instruction}`,
       ].filter((x): x is string => !!x).join("\n\n");

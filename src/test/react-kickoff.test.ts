@@ -63,12 +63,15 @@ describe("Kickoff — primeira geração de novo projeto React", () => {
     expect(page).toContain("write_file/edit_file");
   });
 
-  it("a 1ª geração exige fotos reais + estrutura premium + Google Maps obrigatório", () => {
+  it("a 1ª geração envia DADOS reais + objetivo (a direção criativa vem da IA, no runtime)", () => {
     const page = read("src/pages/SiteProjectPage.tsx");
-    expect(page).toMatch(/site comercial premium/i);
-    expect(page).toMatch(/Google Maps/i);
-    expect(page).toMatch(/Abrir rota/);
+    // O prompt do front é DADOS/objetivo — não um briefing criativo fixo.
+    expect(page).toMatch(/Gere AGORA o site REAL deste cliente/i);
     expect(page).toMatch(/Fotos reais/);
+    expect(page).not.toMatch(/site comercial premium/i); // criatividade saiu daqui
+    expect(page).not.toMatch(/OBRIGATÓRIO: seção de Localização/i);
+    // E continua proibindo inventar fatos.
+    expect(page).toMatch(/NÃO invente telefone, endereço, serviços/i);
   });
 
   it("o gerador recebe fotos e localização REAIS do lead (foto/place/geo)", () => {
