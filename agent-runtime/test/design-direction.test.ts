@@ -89,3 +89,47 @@ describe("design-direction · CODER_SYSTEM recebe a metodologia", () => {
     expect(CODER_SYSTEM).toContain(ART_DIRECTION_MARKER);
   });
 });
+
+describe("auditoria · direção de arte é CONTEXTO (não template disfarçado)", () => {
+  const ODONTO = { name: "Clinica Sorriso", segment: "Odontologia", city: "Bauru", state: "SP" };
+  const ACADEMIA = { name: "Iron Gym", segment: "Academia", city: "Bauru", state: "SP" };
+
+  it("o briefing se declara GUIA e pede decisão própria (não impõe layout)", () => {
+    const b = buildDesignDirection(ODONTO, "proj-a").block;
+    expect(b).toMatch(/N[ÃO]O é layout pronto/i);
+    expect(b).toMatch(/decida a partir do negócio/i);
+    expect(b).toMatch(/ANTES de codar/i);
+    expect(b).toMatch(/AUTOCR[ÍI]TICA/i);       // o modelo julga e reestrutura
+    // NÃO contém estrutura pronta (nenhum código/JSX nem ordem fixa obrigatória)
+    expect(b).not.toMatch(/<section|<div|className|import /);
+    expect(b).not.toMatch(/use exatamente esta estrutura|ordem obrigat[óo]ria/i);
+    // E o system prompt confirma a liberdade do modelo sobre o briefing.
+    expect(CODER_SYSTEM).toMatch(/Siga-o e refine com decisões próprias/i);
+    expect(CODER_SYSTEM).toMatch(/ele existe para você N[ÃA]O repetir/i);
+  });
+
+  it("odonto × academia → direções DIFERENTES (não é o mesmo template recolorido)", () => {
+    const od = buildDesignDirection(ODONTO, "proj-a");
+    const ac = buildDesignDirection(ACADEMIA, "proj-b");
+    expect(od.personality).not.toBe(ac.personality);
+    expect(od.block).toMatch(/odontológico editorial/i);
+    expect(ac.block).toMatch(/atlético e enérgico/i);
+    // paletas/apoios distintos no texto do briefing
+    expect(od.block).toMatch(/marfim|neutros frios/i);
+    expect(ac.block).toMatch(/alto contraste|escuro \+ acento/i);
+  });
+
+  it("MESMO segmento em 2 execuções: mesma direção é estável, mas projetos DIFERENTES variam", () => {
+    // estabilidade por projeto (mesmo projectId ⇒ idêntico)
+    expect(buildDesignDirection(ODONTO, "proj-a")).toEqual(buildDesignDirection(ODONTO, "proj-a"));
+    // projetos diferentes ⇒ combinação diferente (arquétipo/hero/grid variam)
+    const seeds = ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8"];
+    const archetypes = new Set(seeds.map((s) => buildDesignDirection(ODONTO, s).archetype));
+    const heroes = new Set(seeds.map((s) => buildDesignDirection(ODONTO, s).heroComposition));
+    expect(archetypes.size).toBeGreaterThan(1);
+    expect(heroes.size).toBeGreaterThan(1);
+    // mas a PERSONALIDADE (segmento) não muda com o seed — é o negócio que manda
+    const personas = new Set(seeds.map((s) => buildDesignDirection(ODONTO, s).personality));
+    expect(personas.size).toBe(1);
+  });
+});
