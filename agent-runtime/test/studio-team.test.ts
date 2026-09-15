@@ -199,10 +199,12 @@ describe("C1 · StudioTeam (vertical slice)", () => {
       instruction: "crie o site", projectId: "pb2", workspaceRoot: bootRoot2, business: {}, ai: {},
       emit: vi.fn(), readWorkspace: () => readWorkspace(bootRoot2), model,
     });
-    // Limitado: no máximo 2 nudges do guard × (nudge interno do Coder), nunca infinito.
-    expect(calls).toBeLessThanOrEqual(9);
+    // Limitado: guards do time (bootstrap/inspeção/verificação/força) × nudge
+    // interno do Coder — nunca infinito.
+    expect(calls).toBeLessThanOrEqual(12);
     expect(calls).toBeGreaterThanOrEqual(3);
-    expect(result.reply).toMatch(/rascunho inicial/i);
+    // Nada foi aplicado → resposta HONESTA (nunca "pronto"): o rascunho continua.
+    expect(result.reply).toMatch(/NÃO apliquei nenhuma alteração|rascunho inicial/i);
     expect(readFileSync(join(bootRoot2, "src/App.tsx"), "utf8")).toContain("prospector-bootstrap");
   });
 
@@ -417,5 +419,20 @@ describe("C1 · StudioTeam (vertical slice)", () => {
       readWorkspace: () => readWorkspace(verifyRoot), model: semVerificar,
     });
     expect(capturado.some((x) => x.includes("NÃO possui evidência de conclusão"))).toBe(true);
+  });
+
+  it("HONESTIDADE: agente que só diz 'pronto' e NÃO altera nada → não é sucesso", async () => {
+    const model: ModelCaller = async () => ({ ok: true, turn: { text: 'Pronto, corrigi tudo! {"signal":"TERMINATE"}', toolCalls: [] } });
+    const res = await runStudioTeam({
+      instruction: "troque a cor do botão principal para vermelho", projectId: "honest-1", workspaceRoot: verifyRoot,
+      business: {}, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(verifyRoot), model,
+    });
+    // Nada foi alterado → NUNCA sucesso, e a alegação do modelo não é exibida.
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/nenhuma alteração/i);
+    expect(res.touched).toEqual([]);
+    expect(res.reply).toMatch(/NÃO apliquei nenhuma alteração/i);
+    expect(res.reply).not.toContain("Pronto, corrigi tudo");
   });
 });

@@ -152,3 +152,21 @@ export const VERIFY_NUDGE = [
   "4) se a validação falhar, corrija novamente — não finalize.",
   "Só responda concluído quando houver evidência real de que o pedido foi cumprido. Nunca declare sucesso sem verificar.",
 ].join("\n");
+
+// ── Alteração REAL? (o agente não pode "dizer que fez" sem tocar o código) ──
+
+/** Assinatura do CONTEÚDO do workspace — detecta alteração real (não só tamanho). */
+export function workspaceSignature(files: Record<string, string> | null | undefined): string {
+  const entries = Object.entries(files ?? {}).filter(([, v]) => typeof v === "string").sort(([a], [b]) => a.localeCompare(b));
+  let h = 2166136261;
+  const feed = (s: string) => { for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } };
+  for (const [p, v] of entries) { feed(p); feed("\u0000"); feed(String(v)); feed("\u0001"); }
+  return `${entries.length}-${h.toString(36)}`;
+}
+
+/** Nudge quando o pedido exige alteração e NENHUM arquivo mudou. */
+export const FORCE_CHANGE_NUDGE = [
+  "Você NÃO alterou NENHUM arquivo do projeto — o pedido exige uma alteração real.",
+  "Não responda dizendo o que faria: EXECUTE agora com as ferramentas (write_file/edit_file/create_file/delete_file).",
+  "Depois de editar, confirme com read_file/grep_search que a alteração está REALMENTE no código. Só então finalize.",
+].join("\n");

@@ -10,6 +10,7 @@ import type { BusinessContext } from "../tools.js";
 import { buildCoderTools } from "./agent-core/agent-tools.js";
 import { callModelWithTools, type ModelCaller, type ModelMessage } from "./agent-core/model.js";
 import { buildFirstMessage, isBootstrapProject } from "./agent-core/first-message.js";
+import { instructionRequestsChange } from "../completion-guard.js";
 import { runCoderTurn } from "./agent-core/coder.js";
 import { runPlanner, type RunPlannerInput, type RunPlannerResult } from "./agent-core/planner.js";
 import { selectNext, type LastSpeaker } from "./agent-core/selector.js";
@@ -18,7 +19,7 @@ import { loadProjectState, saveProjectState, type StudioStateMessage } from "./a
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
 import { mediaContextBlock } from "./agent-core/site-media.js";
 import { buildDesignDirection, hasArtDirection, ART_DIRECTION_MARKER } from "./agent-core/design-direction.js";
-import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, colorNotAppliedNudge, uninspectedEdits, UNINSPECTED_NUDGE, VERIFY_NUDGE } from "./agent-core/edit-scope.js";
+import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, colorNotAppliedNudge, uninspectedEdits, UNINSPECTED_NUDGE, VERIFY_NUDGE, FORCE_CHANGE_NUDGE, workspaceSignature } from "./agent-core/edit-scope.js";
 
 export interface StudioAttachment {
   name: string;
@@ -216,6 +217,9 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   let colorNudges = 0;
   let inspectNudges = 0;
   let verifyNudges = 0;
+  let forcedNudges = 0;
+  // Assinatura do CONTEÚDO inicial: prova se houve alteração REAL no fim.
+  const sigBefore = workspaceSignature(input.readWorkspace());
   // Arquivos que JÁ existiam antes desta execução (edição de projeto existente).
   // Alterar um arquivo existente sem lê-lo é a causa nº1 de alteração parcial.
   const existingBefore = isFirst ? new Set<string>() : new Set(Object.keys(input.readWorkspace()));
@@ -376,6 +380,19 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
       }
     }
 
+    // ALTERAÇÃO REAL OBRIGATÓRIA: o pedido exige mudança e NADA foi alterado ainda.
+    // O agente não pode "dizer que fez" — forçamos a edição de verdade (bounded).
+    const requiresChange = instructionRequestsChange(input.instruction ?? "");
+    if (requiresChange && finishing && !coder.error && forcedNudges < 1 && round < maxRounds - 1
+      && workspaceSignature(input.readWorkspace()) === sigBefore) {
+      forcedNudges += 1;
+      input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "Nenhum arquivo foi alterado — vou aplicar a mudança de verdade agora.", timestamp: Date.now() });
+      messages = [...messages, { role: "user", content: FORCE_CHANGE_NUDGE }];
+      lastSpeaker = "Coder";
+      lastSignal = null;
+      continue;
+    }
+
     if (!coder.signal) break; // sem sinal e sem ferramentas → considera final
   }
 
@@ -398,6 +415,12 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   // Honestidade: se o rascunho ainda está lá, NÃO declarar identidade final.
   if (isFirst && !error && isBootstrapProject(input.readWorkspace())) {
     reply = `${reply}\n\n⚠ O site ainda contém o rascunho inicial (bootstrap) — pode não refletir o design final do negócio.`;
+  }
+  // HONESTIDADE FINAL: o pedido exige alteração e NENHUM arquivo mudou? Então o
+  // agente NÃO fez nada — nunca devolvemos a resposta "pronto" dele como sucesso.
+  if (!error && instructionRequestsChange(input.instruction ?? "") && workspaceSignature(input.readWorkspace()) === sigBefore) {
+    error = "nenhuma alteração foi aplicada ao projeto";
+    reply = "⚠️ Não apliquei nenhuma alteração — o projeto continua exatamente como estava. O pedido NÃO foi implementado. Descreva novamente o que deve mudar (arquivo/seção/elemento) que eu executo a alteração de verdade.";
   }
   return { ok: !error, reply, signal: lastSignal, iterations, touched, plan, error };
 }
