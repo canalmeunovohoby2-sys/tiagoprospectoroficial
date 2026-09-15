@@ -38,8 +38,7 @@ export function realPhotos(business: BusinessContext): string[] {
   return out;
 }
 
-/** Imagens ilustrativas/stock válidas (dedup), nunca confundidas com fotos reais. */
-export function stockImages(business: BusinessContext): string[] {
+/** Imagens ilustrativas/stock válidas (dedup), nunca confundidas com fotos reais. */export function stockImages(business: BusinessContext): string[] {
   const real = new Set(realPhotos(business));
   const out: string[] = [];
   const seen = new Set<string>();
@@ -203,4 +202,35 @@ export function mediaContextBlock(business: BusinessContext): string {
   );
 
   return `\n\n${lines.filter(Boolean).join("\n")}`;
+}
+
+/**
+ * VALIDA as imagens de verdade (HTTP) ANTES de entrarem no site.
+ *
+ * Motivo (regressão de imagens): fotos de lead podem ser URLs mortas (proxy do
+ * Google Places sem resposta, og:image com hotlink bloqueado, thumbnail expirada).
+ * O Coder recebia a URL e, com o onError que esconde imagem quebrada, o site ficava
+ * SEM imagem nenhuma. Aqui o runtime testa cada URL (HEAD → GET com Range) e só
+ * entrega ao Coder as que REALMENTE respondem imagem. URL morta nunca entra.
+ */
+export async function filterWorkingImages(urls: string[], opts?: { timeoutMs?: number }): Promise<string[]> {
+  const timeoutMs = opts?.timeoutMs ?? 4500;
+  const usable = new Set<string>();
+  await Promise.all((urls ?? []).map(async (raw) => {
+    const url = String(raw ?? "").trim();
+    if (!/^https?:\/\//i.test(url)) return;
+    const attempt = async (init: RequestInit): Promise<boolean> => {
+      try {
+        const res = await fetch(url, { ...init, redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+        if (!res.ok) return false;
+        const type = (res.headers.get("content-type") ?? "").toLowerCase();
+        // Sem content-type confiável não dá para garantir imagem → exige image/*
+        return type.startsWith("image/");
+      } catch { return false; }
+    };
+    if (await attempt({ method: "HEAD" })) { usable.add(url); return; }
+    if (await attempt({ method: "GET", headers: { Range: "bytes=0-0" } })) { usable.add(url); return; }
+  }));
+  // Preserva a ordem original, sem duplicatas.
+  return urls.filter((u, i) => usable.has(u) && urls.indexOf(u) === i);
 }

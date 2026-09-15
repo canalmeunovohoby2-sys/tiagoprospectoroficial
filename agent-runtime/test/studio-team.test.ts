@@ -48,6 +48,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
   let editRoot = "";
   let colorRoot = "";
   let inspectRoot = "";
+  let verifyRoot = "";
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "prospector-team-"));
     rootA = mkdtempSync(join(tmpdir(), "prospector-team-a-"));
@@ -60,6 +61,7 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     editRoot = mkdtempSync(join(tmpdir(), "prospector-edit-"));
     colorRoot = mkdtempSync(join(tmpdir(), "prospector-color-"));
     inspectRoot = mkdtempSync(join(tmpdir(), "prospector-inspect-"));
+    verifyRoot = mkdtempSync(join(tmpdir(), "prospector-verify-"));
     materializeWorkspace(root, TEMPLATE);
     materializeWorkspace(rootA, TEMPLATE);
     materializeWorkspace(rootB, TEMPLATE);
@@ -71,9 +73,10 @@ describe("C1 · StudioTeam (vertical slice)", () => {
     materializeWorkspace(editRoot, BOOTSTRAP);
     materializeWorkspace(colorRoot, BOOTSTRAP);
     materializeWorkspace(inspectRoot, BOOTSTRAP);
+    materializeWorkspace(verifyRoot, BOOTSTRAP);
   });
   afterAll(() => {
-    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2, skillsRoot, editRoot, colorRoot, inspectRoot]) {
+    for (const r of [root, rootA, rootB, bootRoot, bootRoot2, dirRoot, dirRoot2, skillsRoot, editRoot, colorRoot, inspectRoot, verifyRoot]) {
       rmSync(r, { recursive: true, force: true });
       try { rmSync(stateFilePath(r), { force: true }); } catch { /* noop */ }
     }
@@ -388,5 +391,31 @@ describe("C1 · StudioTeam (vertical slice)", () => {
       readWorkspace: () => readWorkspace(inspectRoot), model: careful,
     });
     expect(comLeitura.some((c) => c.includes("sem tê-los inspecionado"))).toBe(false);
+  });
+
+  it("VERIFICAÇÃO: pedido de correção sem observar o estado real → nudge de verificação", async () => {
+    const app = "// ART-DIRECTION: x\nexport default function App(){return <main><img src=\"https://x/a.jpg\" alt=\"\" /></main>}";
+    const gen: ModelCaller = async () => ({ ok: true, turn: { text: "ok", toolCalls: [writeCall("src/App.tsx", app)] } });
+    await runStudioTeam({
+      instruction: "crie o site", projectId: "verify-1", workspaceRoot: verifyRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(verifyRoot), model: gen,
+    });
+
+    // "Corrija as imagens" sem NENHUMA verificação (só escreveu) → cobra verificação.
+    const capturado: string[] = [];
+    let c = 0;
+    const semVerificar: ModelCaller = async (input) => {
+      c += 1;
+      for (const m of input.messages) if (typeof m.content === "string") capturado.push(m.content);
+      if (c === 1) return { ok: true, turn: { text: "corrigi", toolCalls: [writeCall("src/App.tsx", app.replace("a.jpg", "b.jpg"))] } };
+      return { ok: true, turn: { text: 'Pronto, corrigi.\n{"signal":"TERMINATE"}', toolCalls: [] } };
+    };
+    await runStudioTeam({
+      instruction: "corrija as imagens que estão quebradas", projectId: "verify-1", workspaceRoot: verifyRoot,
+      business: { name: "Pet Amigo", segment: "Pet Shop" }, ai: {}, emit: vi.fn(),
+      readWorkspace: () => readWorkspace(verifyRoot), model: semVerificar,
+    });
+    expect(capturado.some((x) => x.includes("NÃO possui evidência de conclusão"))).toBe(true);
   });
 });

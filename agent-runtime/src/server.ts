@@ -33,7 +33,7 @@ import { applyDeterministicVisualEdit } from "./studio/visual-edit.js";
 import { ensureGitRepo, gitCommit, gitDiff, gitLog, gitRestore, gitShow, gitStatus } from "./studio/git.js";
 import { deriveCommitMessage } from "./studio/commit-message.js";
 import { buildReactProject } from "./studio/build.js";
-import { normalizeWorkspaceMapEmbeds } from "./studio/agent-core/site-media.js";
+import { filterWorkingImages, normalizeWorkspaceMapEmbeds } from "./studio/agent-core/site-media.js";
 import { EDIT_TOOLS } from "./work-evidence.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -1183,7 +1183,14 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             send(res, 400, { error: `Provedor "${rExec.provider}" não é suportado pelo runtime (use deepseek, openai, nvidia, openrouter, gemini ou ollama).` });
             return;
           }
-        const business = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
+        const rawBusiness = (body.context && typeof body.context === "object" ? body.context : {}) as BusinessContext;
+        // IMAGENS REAIS: valida as URLs (HTTP) ANTES de levá-las ao site. URL morta
+        // nunca entra — evita site sem imagem (o onError esconde a imagem quebrada).
+        const business: BusinessContext = {
+          ...rawBusiness,
+          photos: rawBusiness.photos?.length ? await filterWorkingImages(rawBusiness.photos).catch(() => []) : rawBusiness.photos,
+          stockImages: rawBusiness.stockImages?.length ? await filterWorkingImages(rawBusiness.stockImages).catch(() => []) : rawBusiness.stockImages,
+        };
         const memory = Array.isArray(body.memory) ? (body.memory as unknown[]).filter((x): x is string => typeof x === "string") : [];
         // CONTEXTO PERSISTENTE do projeto (memória + histórico de alterações).
         // Carregado do banco por projectId → sobrevive a fechar/reabrir a aplicação.

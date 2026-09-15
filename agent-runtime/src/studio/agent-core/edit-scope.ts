@@ -136,3 +136,19 @@ export function UNINSPECTED_NUDGE(files: string[]): string {
     "Só finalize quando o resultado refletir exatamente o que o usuário pediu.",
   ].join("\n");
 }
+
+/**
+ * Nudge de VERIFICAÇÃO: o pedido é de correção e o Coder vai concluir sem ter
+ * observado o estado real (nenhuma leitura/busca/execução). Não aceitamos
+ * "concluído" baseado só na própria resposta textual.
+ */
+export const VERIFY_NUDGE = [
+  "A tarefa ainda NÃO possui evidência de conclusão (você não inspecionou o estado real do projeto).",
+  "Raciocínio esperado: ENTENDER → INVESTIGAR → EDITAR → OBSERVAR → VALIDAR → (corrigir de novo se falhar) → CONCLUIR.",
+  "Faça agora, com ferramentas:",
+  "1) read_file/grep_search para localizar a causa REAL (o que está de fato no código e o que está quebrado);",
+  "2) aplique a correção completa (todos os arquivos/refêrencias afetados);",
+  "3) VALIDE o resultado com evidência compatível: run_command (build) quando for código; grep_search para provar que não sobrou o estado antigo/quebrado;",
+  "4) se a validação falhar, corrija novamente — não finalize.",
+  "Só responda concluído quando houver evidência real de que o pedido foi cumprido. Nunca declare sucesso sem verificar.",
+].join("\n");

@@ -18,7 +18,7 @@ import { loadProjectState, saveProjectState, type StudioStateMessage } from "./a
 import { extractMemoryUpdates, loadMemory, memoryContextBlock, recordMemory, saveMemory } from "./memory.js";
 import { mediaContextBlock } from "./agent-core/site-media.js";
 import { buildDesignDirection, hasArtDirection, ART_DIRECTION_MARKER } from "./agent-core/design-direction.js";
-import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, colorNotAppliedNudge, uninspectedEdits, UNINSPECTED_NUDGE } from "./agent-core/edit-scope.js";
+import { isGlobalVisualEdit, wasProjectSwept, EDIT_SWEEP_NUDGE, namedColorTarget, colorTokens, targetApplied, paletteStillOld, mentionsColorChange, paletteUnchanged, colorNotAppliedNudge, uninspectedEdits, UNINSPECTED_NUDGE, VERIFY_NUDGE } from "./agent-core/edit-scope.js";
 
 export interface StudioAttachment {
   name: string;
@@ -215,6 +215,7 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
   let sweepNudges = 0;
   let colorNudges = 0;
   let inspectNudges = 0;
+  let verifyNudges = 0;
   // Arquivos que JÁ existiam antes desta execução (edição de projeto existente).
   // Alterar um arquivo existente sem lê-lo é a causa nº1 de alteração parcial.
   const existingBefore = isFirst ? new Set<string>() : new Set(Object.keys(input.readWorkspace()));
@@ -352,6 +353,23 @@ export async function runStudioTeam(input: StudioTeamInput): Promise<StudioTeamR
         const kept = [...paletteBefore].filter((t) => after.has(t));
         input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "A identidade visual pedida ainda não está aplicada no site inteiro — vou corrigir as sobras da paleta antiga.", timestamp: Date.now() });
         messages = [...messages, { role: "user", content: colorNotAppliedNudge(kept) }];
+        lastSpeaker = "Coder";
+        lastSignal = null;
+        continue;
+      }
+    }
+
+    // VERIFICAÇÃO OBRIGATÓRIA: o pedido é de CORREÇÃO e o Coder não usou NENHUMA
+    // ferramenta de verificação (ler/buscar/build)? Não aceitamos "concluído" sem
+    // evidência — nudge determinístico antes de finalizar (bounded, 1 vez).
+    const asksFix = /(corrij|consert|arrum|n[ãa]o funciona|quebrad|bug|erro|falha|problema|n[ãa]o aparece|sumiu|parou de funcionar)/i.test(input.instruction ?? "");
+    if (!isFirst && asksFix && finishing && !coder.error && verifyNudges < 1 && round < maxRounds - 1) {
+      const names = coder.toolUses.map((u) => u.name);
+      const verified = names.some((n) => n === "read_file" || n === "grep_search" || n === "glob_search" || n === "run_command" || n === "list_files");
+      if (!verified) {
+        verifyNudges += 1;
+        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "A tarefa ainda não tem evidência de verificação — vou inspecionar o estado real antes de concluir.", timestamp: Date.now() });
+        messages = [...messages, { role: "user", content: VERIFY_NUDGE }];
         lastSpeaker = "Coder";
         lastSignal = null;
         continue;
