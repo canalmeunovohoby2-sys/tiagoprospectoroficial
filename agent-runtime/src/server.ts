@@ -12,7 +12,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { ProspectorSiteAgent, isSurgicalEditTask, type AgentRunOutcome } from "./prospector-site-agent.js";
 import { BrowserSession } from "./browser-session.js";
 import { auditSiteInteractions } from "./interaction-audit.js";
-import { isBugReport } from "./completion-guard.js";
+import { isBugReport, instructionRequestsChange } from "./completion-guard.js";
 import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace, materializeWorkspace, withWorkspaceLock } from "./workspace.js";
 import type { BusinessContext } from "./tools.js";
 import { assertGenerationQuality } from "./generation-gate.js";
@@ -1304,6 +1304,59 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // seguem disponíveis como FERRAMENTAS para o agente decidir quando usar.
             const currentFiles = readWorkspace(root);
             const firstGen = isBootstrapProject(currentFiles) || Object.keys(currentFiles).length === 0;
+            // ===== CONVERSA PURA ("oi, boa noite", "tudo bem?") =====
+            // Se a mensagem NÃO pede alteração e o projeto já existe, o agente apenas
+            // RESPONDE: nenhuma ferramenta, nenhuma edição, nenhuma automação. Se a
+            // conversa falhar no provider, seguimos o fluxo normal (nunca travamos).
+            if (!firstGen && !instructionRequestsChange(instruction)) {
+              const chatSystem = [
+                "Você é o parceiro de conversa do usuário dentro do Studio de sites.",
+                "- Responda SEMPRE em português do Brasil, curto e natural (2 a 4 frases).",
+                "- Agora é só conversa: NÃO edite arquivos, não cite ferramentas nem etapas internas.",
+                businessForRun.name ? `- Projeto do cliente: ${businessForRun.name}${businessForRun.segment ? ` (${businessForRun.segment})` : ""}${businessForRun.city ? ` — ${businessForRun.city}${businessForRun.state ? `/${businessForRun.state}` : ""}` : ""}.` : "",
+                "- Se o usuário quiser mudar algo no site, diga que pode fazer e pergunte o que ele quer alterar.",
+              ].filter(Boolean).join("\n");
+              const chatUser = recentConversation.length
+                ? `CONVERSA RECENTE:\n${recentConversation.slice(-6).join("\n")}\n\nMENSAGEM ATUAL DO USUÁRIO:\n${instruction}`
+                : instruction;
+              const chat = await callModelWithTools({
+                providerId: exec.providerId,
+                modelId: exec.modelId,
+                apiKey: exec.apiKey,
+                baseUrl: exec.baseUrl,
+                system: chatSystem,
+                messages: [{ role: "user", content: chatUser }],
+                tools: [],
+                maxTokens: 800,
+                temperature: 0.6,
+              }).catch(() => null);
+              const chatReply = chat?.ok ? (chat.turn?.text ?? "").trim() : "";
+              if (chatReply) {
+                const payload = {
+                  status: "ok",
+                  reply: chatReply,
+                  changed: false,
+                  no_file_changes: true,
+                  touched: [],
+                  files: currentFiles,
+                  plan: null,
+                  iterations: 0,
+                  model: exec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
+                  provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
+                  config_source: exec.source,
+                  runtime: "conversation",
+                  orchestrated: false,
+                };
+                if (stream) {
+                  writeLine({ type: "complete", ...payload, timestamp: Date.now() });
+                  writeLine({ type: "result", ...payload });
+                  res.end();
+                } else {
+                  send(res, 200, payload);
+                }
+                return;
+              }
+            }
             writeLine({ type: "activity", phase: "analyzing", detail: firstGen ? "Analisando o negócio e montando o site…" : "Analisando o projeto para aplicar o pedido…" });
             const mediaBlockForRun = mediaContextBlock(businessForRun);
             const creativeBrief = (firstGen && (exec.apiKey || exec.providerId))
@@ -1475,10 +1528,13 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             } else if (e.type === "turn-started") {
               activity.push({ phase: "thinking", detail: "Analisando a alteração…" });
               writeLine({ type: "activity", phase: "thinking", detail: activity[activity.length - 1].detail });
-              if (orchestrate) writeLine({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "Analisando a alteração…", iteration: e.iteration, timestamp: Date.now() });
+              // RACIOCÍNIO visível no chat em TODOS os caminhos (React inclusive):
+              // o painel unificado mostra isso enquanto o agente pensa e recolhe
+              // quando a resposta final chega.
+              writeLine({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: "Analisando a alteração…", iteration: e.iteration, timestamp: Date.now() });
             } else if (e.type === "assistant-message") {
               const text = messageText(e.message);
-              if (orchestrate && text) writeLine({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: truncateText(text), iteration: e.iteration, timestamp: Date.now() });
+              if (text) writeLine({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: truncateText(text), iteration: e.iteration, timestamp: Date.now() });
             } else if (e.type === "turn-finished") {
               if (orchestrate) emitFilesReady(true);
             }

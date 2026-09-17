@@ -795,10 +795,12 @@ function buildReactKickoffInstruction(project: {
       appendSiteChatMessages(project.id, user?.id ?? "", [{ role: "assistant", text: msg }], conversationId ?? undefined).catch(() => {});
     };
     try {
+      // Resultado do agente: declarado FORA do bloco de workspace porque também é
+      // usado no caminho React (conversa sem alteração de arquivo).
+      let agentRes: Awaited<ReturnType<typeof invokeProspectorAgent>> | null = null;
       // ===== CAMINHO PRINCIPAL: Cline Agent no workspace (código real) =====
       if (hasWorkspace) {
         let agentErr: unknown = null;
-        let agentRes: Awaited<ReturnType<typeof invokeProspectorAgent>> | null = null;
         try {
           const cContent = (draftSpec.content ?? {}) as Record<string, unknown>;
           const cContact = (cContent.contact ?? {}) as Record<string, unknown>;
@@ -863,7 +865,10 @@ function buildReactKickoffInstruction(project: {
           agentErr = e;
         }
 
-        if (!agentErr && agentRes && agentRes.files && Object.keys(agentRes.files).length > 0 && (agentRes.changed || JSON.stringify(agentRes.files) !== JSON.stringify(runFiles))) {
+        // CONVERSA (runtime "conversation"): a IA só respondeu — nada foi tocado no
+        // projeto. Nunca tratar como alteração de arquivos (nada de salvar/versionar).
+        const conversationReply = (agentRes as { runtime?: string } | null)?.runtime === "conversation";
+        if (!agentErr && !conversationReply && agentRes && agentRes.files && Object.keys(agentRes.files).length > 0 && (agentRes.changed || JSON.stringify(agentRes.files) !== JSON.stringify(runFiles))) {
           // Trava de entrega do runtime: auditoria de interação não passou
           // (clique deixa tela preta) → NÃO salvar/entregar como concluído.
           const agentAny = agentRes as { interaction_blocked?: boolean; errors?: string[] };

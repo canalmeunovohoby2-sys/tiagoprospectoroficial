@@ -23,6 +23,26 @@ describe("C8 · React nunca usa o fluxo legado (spec/HTML)", () => {
     expect(app).toMatch(/element=\{<SiteProjectPageRoute \/>\}/);
   });
 
+  it("agentRes está no escopo do caminho React de conversa (evita ReferenceError)", () => {
+    const page = read("src/pages/SiteProjectPage.tsx");
+    const decl = page.indexOf("let agentRes:");
+    const workspace = page.indexOf("if (hasWorkspace) {");
+    const reactReply = page.indexOf("const agentReply = agentRes?.reply?.trim();");
+    expect(decl).toBeGreaterThan(-1);
+    expect(workspace).toBeGreaterThan(-1);
+    expect(reactReply).toBeGreaterThan(-1);
+    // A declaração precisa vir ANTES do bloco de workspace: o uso no caminho React
+    // (conversa sem alteração) fica FORA dele — declarar dentro quebrava em runtime.
+    expect(decl).toBeLessThan(workspace);
+  });
+
+  it("conversa pura NÃO passa pelo motor de edição (responde sem tocar em arquivos)", () => {
+    const server = read("agent-runtime/src/server.ts");
+    expect(server).toContain("!instructionRequestsChange(instruction)");
+    expect(server).toContain('runtime: "conversation"');
+    expect(server).toContain("tools: []");
+  });
+
   it("o /run React expõe mudança real (changed) e a ausência explícita (no_file_changes)", () => {
     const server = read("agent-runtime/src/server.ts");
     // `touched` = arquivos do agente + normalizações determinísticas (ex.: mapa).
