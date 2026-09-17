@@ -41,6 +41,35 @@ export interface RunCoderResult {
 
 const EDIT_TOOLS = new Set(["write_file", "edit_file", "create_file", "delete_file", "rename_file", "move_file"]);
 
+/** Limita o raciocínio exibido (evita despejar um chain-of-thought gigante no chat). */
+function clip(text: string, limit = 1_500): string {
+  const t = (text ?? "").trim();
+  return t.length <= limit ? t : `${t.slice(0, limit).trimEnd()}…`;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function joinFiles(paths: string[]): string {
+  const head = paths.slice(0, 3).join(", ");
+  return paths.length > 3 ? `${head} (+${paths.length - 3})` : head;
+}
+
+/**
+ * Pensamento HUMANIZADO quando o modelo não narrou a rodada: usa apenas o alvo
+ * REAL das ferramentas (nunca o nome interno delas, que não deve aparecer no chat).
+ */
+function describeWork(calls: ModelToolCall[]): string {
+  const paths = (filter: (c: ModelToolCall) => boolean) =>
+    unique(calls.filter(filter).map((c) => pathOf(c.arguments ?? {}) ?? "").filter(Boolean));
+  const writes = paths((c) => EDIT_TOOLS.has(c.name));
+  const reads = paths((c) => !EDIT_TOOLS.has(c.name));
+  if (writes.length) return `Aplicando a alteração em ${joinFiles(writes)}.`;
+  if (reads.length) return `Inspecionando ${joinFiles(reads)} antes de alterar.`;
+  return "Analisando o projeto antes de aplicar a alteração.";
+}
+
 function pathOf(args: Record<string, unknown>): string | null {
   for (const key of ["path", "from", "target_file", "filepath"]) {
     const v = args[key];
@@ -94,17 +123,33 @@ export async function runCoderTurn(input: RunCoderInput): Promise<RunCoderResult
     }
 
     const turn = result.turn;
-    if (turn.text) {
-      // O texto do modelo pode terminar com o objeto de controle
-      // ({"signal":"TERMINATE"}). Ele NUNCA deve aparecer no chat do usuário.
-      const visible = stripAgentSignal(turn.text);
-      if (visible) {
-        input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: visible, timestamp: Date.now() });
-      }
+    const turnSignal = parseAgentSignal(turn.text);
+    // Raciocínio exposto pelo provider (quando houver) → pensamento AO VIVO no chat.
+    // É temporário: a UI o recolhe quando a resposta final chega.
+    const reasoning = clip(turn.reasoning ?? "");
+    if (reasoning) {
+      input.emit({
+        type: "agent_interaction", agent_name: "Coder", message_type: "thought",
+        content: reasoning, timestamp: Date.now(),
+      });
+    }
+    // O texto do modelo pode terminar com o objeto de controle
+    // ({"signal":"TERMINATE"}). Ele NUNCA deve aparecer no chat do usuário.
+    const visibleText = turn.text ? stripAgentSignal(turn.text) : "";
+    // Texto que ACOMPANHA ferramentas é RACIOCÍNIO (o modelo explica o que vai
+    // fazer e continua trabalhando). O texto final — sem ferramentas ou com sinal
+    // de término — é a RESPOSTA e por isso NÃO entra no bloco de pensamento.
+    if (visibleText && turn.toolCalls.length > 0 && !turnSignal) {
+      input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: clip(visibleText), timestamp: Date.now() });
+    }
+    // Rodada sem narração do modelo: mostra o pensamento a partir do trabalho REAL
+    // que ele decidiu fazer (arquivos reais; sem expor nomes de ferramentas).
+    if (turn.toolCalls.length > 0 && !turnSignal && !reasoning && !visibleText) {
+      input.emit({ type: "agent_interaction", agent_name: "Coder", message_type: "thought", content: describeWork(turn.toolCalls), timestamp: Date.now() });
     }
     const assistantMessage: ModelMessage = { role: "assistant", content: turn.text, toolCalls: turn.toolCalls };
 
-    signal = parseAgentSignal(turn.text);
+    signal = turnSignal;
     const noTools = turn.toolCalls.length === 0;
     const prematureTerminate = signal?.type === "TERMINATE";
     const canNudge = requiresChange && touched.size === 0 && nudges < 2 && round < maxRounds - 1;

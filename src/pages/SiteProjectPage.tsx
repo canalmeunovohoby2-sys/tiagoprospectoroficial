@@ -935,12 +935,13 @@ function buildReactKickoffInstruction(project: {
         }
       }
 
-      // REACT NUNCA usa o editor de spec / fluxo legado (editSiteWithAI / /generate
-      // / ProspectorSiteAgent). Se o StudioTeam terminou sem alterar arquivo
-      // (changed=false), a resposta é HONESTA: nada foi aplicado.
+      // REACT NUNCA usa o editor de spec (editSiteWithAI): o agente é o
+      // ProspectorSiteAgent e ELE decide se conversa ou executa.
+      // Se nada mudou, a RESPOSTA DA IA é o que o usuário deve ver (conversa, dúvida,
+      // opinião…). Só usamos o aviso de "nada aplicado" quando o agente NÃO respondeu.
       if (isReactProject) {
         const agentReply = agentRes?.reply?.trim();
-        pushReply(`A instrução foi processada, mas nenhuma alteração de arquivo foi aplicada no projeto.${agentReply ? `\n\n${agentReply}` : ""}`);
+        pushReply(agentReply || "A instrução foi processada, mas nenhuma alteração de arquivo foi aplicada no projeto.");
         stopProgress();
         setAgentStep(null);
         setAiRunning(false);

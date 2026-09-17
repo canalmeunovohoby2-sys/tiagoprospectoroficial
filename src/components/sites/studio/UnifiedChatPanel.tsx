@@ -5,9 +5,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MarkdownMessage } from "./MarkdownMessage";
+import { ReasoningBlock } from "./ReasoningBlock";
 import { VoiceRecordingBar } from "./VoiceRecordingBar";
 import { useVoiceRecorder } from "@/hooks/studio/useVoiceRecorder";
 import { PHASE_LABEL, type ChatAttachmentRef, type StudioPhase, type UnifiedChatItem } from "@/lib/studio/chatModel";
+import { thoughtsOf } from "@/lib/studio/reasoning";
 import { latestLiveLabel } from "@/lib/agentWorkActivity";
 
 export interface UnifiedChatPanelProps {
@@ -213,7 +215,18 @@ export function UnifiedChatPanel({
               </div>
             );
           }
-          if (item.kind === "activity") return <ProgressBlock key={item.id} item={item} />;
+          if (item.kind === "activity") {
+            // Raciocínio do agente AO VIVO: aparece enquanto ele pensa e se recolhe
+            // quando a resposta final chega (o pensamento é temporário; a resposta fica).
+            const thoughts = thoughtsOf(item.items);
+            const thinking = running && item.status === "running";
+            return (
+              <div key={item.id} className="space-y-2">
+                {thoughts.length > 0 && <ReasoningBlock thoughts={thoughts} streaming={thinking} />}
+                <ProgressBlock item={item} />
+              </div>
+            );
+          }
           if (item.kind === "commit") {
             return (
               <p key={item.id} className="flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">

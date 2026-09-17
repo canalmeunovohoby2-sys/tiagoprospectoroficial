@@ -43,6 +43,34 @@ export const MAX_VISUAL_ITERATIONS_DEFAULT = 3;
 // aparecessem conforme eu rolo") armam os guards de evidência/verificação — quem
 // decide a IMPLEMENTAÇÃO é o modelo, não uma palavra-chave.
 const PURE_CHATTER = /^(ok(ay)?|beleza|blz|valeu|vlw|obrigad[oa]|brigad[oa]|muito obrigad[oa]|de nada|legal|bacana|show|perfeito|muito bom|ótimo|otimo|top|boa|certo|entendi|entendido|combinado|isso mesmo|isso|sim|não|nao|nada|tudo bem|bom dia|boa tarde|boa noite)[\s!.,?]*$/i;
+
+// Conversa fiada COMPOSTA: "oi, boa noite", "e aí, tudo bem?", "olá! tudo bom?".
+// Regra: se TODAS as palavras da mensagem forem de saudação/cortesia, não é pedido
+// de alteração. Qualquer palavra "de trabalho" (verbo/ação/assunto) desarma isto —
+// ou seja, "oi, troca a cor do header" continua sendo pedido de alteração.
+const CHATTER_WORDS = new Set([
+  "oi", "ola", "olá", "ei", "eai", "e", "ai", "aí", "opa", "hey", "hello", "hi",
+  "bom", "boa", "dia", "tarde", "noite", "madrugada",
+  "tudo", "bem", "bom", "como", "vai", "voce", "você", "vc", "esta", "está", "ta", "tá",
+  "ok", "okay", "okey", "beleza", "blz", "tranquilo", "suave", "certo",
+  "valeu", "vlw", "obrigado", "obrigada", "brigado", "brigada", "agradeco", "agradeço",
+  "muito", "de", "nada", "por", "favor", "porfavor", "legal", "bacana", "show", "perfeito",
+  "otimo", "ótimo", "top", "entendi", "entendido", "combinado", "isso", "mesmo", "sim", "nao", "não",
+  "prazer", "bem-vindo", "tamo", "junto", "entao", "então", "so", "só", "aqui", "e", "eh", "é",
+]);
+
+function isPureChatter(text: string): boolean {
+  if (PURE_CHATTER.test(text)) return true;
+  const words = text
+    .toLowerCase()
+    .replace(/[!?.,;:…()"']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+  if (!words.length) return false;
+  return words.every((w) => CHATTER_WORDS.has(w));
+}
 const EXPLAIN_ASK = /^(me\s+)?(explica|explique|explicar|resuma|resume|resumir|liste|lista|listar|diga|dizer|conte|contar|fale|falar|descreva|descrever|mostre|mostrar|ensina|ensine|ensinar)\b/i;
 // Sinal de AÇÃO/DESEJO: usado só para decidir se uma pergunta é, na verdade, um
 // pedido ("pode colocar animações?"). NÃO é uma whitelist de tarefas.
@@ -55,7 +83,7 @@ export function instructionRequestsChange(instruction: string): boolean {
   const text = String(instruction ?? "").trim();
   if (!text) return false;
   // Conversa fiada / agradecimento puro → não é pedido de alteração.
-  if (PURE_CHATTER.test(text)) return false;
+  if (isPureChatter(text)) return false;
   // Análise/relatório SOMENTE LEITURA → não é pedido de alteração.
   if (READ_ONLY.test(text)) return false;
   if (ANALYZE_LEAD.test(text) && !ACTION_HINT.test(text)) return false;

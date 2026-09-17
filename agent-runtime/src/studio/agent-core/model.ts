@@ -30,6 +30,13 @@ export interface ModelMessage {
 export interface ModelTurn {
   text: string;
   toolCalls: ModelToolCall[];
+  /**
+   * Raciocínio exposto pelo provider (chain-of-thought), quando existir:
+   * DeepSeek/OpenRouter/NVIDIA retornam `reasoning_content`/`reasoning`;
+   * Gemini retorna parts com `thought: true`. É exibido ao usuário como
+   * "pensando" temporário no chat — nunca substitui a resposta final.
+   */
+  reasoning?: string;
 }
 
 export interface ModelCallInput {
@@ -137,14 +144,20 @@ function openAiMessages(system: string, messages: ModelMessage[]) {
 }
 
 function parseOpenAiTurn(json: unknown): ModelTurn {
-  const j = (json ?? {}) as { choices?: Array<{ message?: { content?: unknown; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> };
+  const j = (json ?? {}) as { choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }> } }> };
   const message = j.choices?.[0]?.message ?? {};
   const text = typeof message.content === "string" ? message.content.trim() : "";
+  // Raciocínio exposto pelo provider (nomes variam entre implementações).
+  const reasoning = [message.reasoning_content, message.reasoning]
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter(Boolean)
+    .join("\n")
+    .trim();
   const toolCalls: ModelToolCall[] = (message.tool_calls ?? []).map((tc, i) => {
     const raw = typeof tc.function?.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function?.arguments ?? {});
     return { id: tc.id ?? `call_${i}`, name: String(tc.function?.name ?? ""), arguments: safeJsonParse(raw), rawArguments: raw };
   }).filter((tc) => tc.name);
-  return { text, toolCalls };
+  return { text, toolCalls, ...(reasoning ? { reasoning } : {}) };
 }
 
 function geminiContents(system: string, messages: ModelMessage[]) {
@@ -172,17 +185,23 @@ function geminiContents(system: string, messages: ModelMessage[]) {
 }
 
 function parseGeminiTurn(json: unknown): ModelTurn {
-  const j = (json ?? {}) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; functionCall?: { name?: string; args?: unknown } }> } }> };
+  const j = (json ?? {}) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean; functionCall?: { name?: string; args?: unknown } }> } }> };
   const parts = j.candidates?.[0]?.content?.parts ?? [];
   const texts: string[] = [];
+  const thoughts: string[] = [];
   const toolCalls: ModelToolCall[] = [];
   parts.forEach((p, i) => {
-    if (typeof p.text === "string" && p.text.trim()) texts.push(p.text.trim());
+    if (typeof p.text === "string" && p.text.trim()) {
+      // `thought: true` = raciocínio interno (thinking), não é a resposta.
+      if (p.thought === true) thoughts.push(p.text.trim());
+      else texts.push(p.text.trim());
+    }
     if (p.functionCall?.name) {
       toolCalls.push({ id: `gemini_${i}`, name: p.functionCall.name, arguments: safeJsonParse(p.functionCall.args), rawArguments: JSON.stringify(p.functionCall.args ?? {}) });
     }
   });
-  return { text: texts.join("\n").trim(), toolCalls };
+  const reasoning = thoughts.join("\n").trim();
+  return { text: texts.join("\n").trim(), toolCalls, ...(reasoning ? { reasoning } : {}) };
 }
 
 /** Chama o modelo com ferramentas. NUNCA troca de provider. */

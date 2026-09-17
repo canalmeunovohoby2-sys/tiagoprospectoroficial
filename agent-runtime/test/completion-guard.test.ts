@@ -80,6 +80,16 @@ describe("Guard de evidência (5.24) — não afirmar que alterou sem ter altera
     expect(instructionRequestsChange("qual classe controla o título?")).toBe(false);
     expect(instructionRequestsChange("obrigado")).toBe(false);
   });
+
+  it("saudação/conversa composta NÃO é pedido de alteração (a IA apenas conversa)", () => {
+    for (const q of ["oi, boa noite", "e aí, tudo bem?", "olá! tudo bom?", "bom dia, tudo certo?", "oi"]) {
+      expect(instructionRequestsChange(q), q).toBe(false);
+    }
+    // …mas uma saudação JUNTO com pedido real continua sendo pedido de alteração.
+    for (const q of ["oi, troca a cor do header", "boa noite, adiciona um FAQ", "e aí, deixa o site mais dinâmico"]) {
+      expect(instructionRequestsChange(q), q).toBe(true);
+    }
+  });
 });
 
 describe("Depth Guard (5.28) — pedidos amplos não finalizam com mínimo esforço", () => {
