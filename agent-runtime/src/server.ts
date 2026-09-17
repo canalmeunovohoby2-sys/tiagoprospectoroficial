@@ -35,6 +35,10 @@ import { deriveCommitMessage } from "./studio/commit-message.js";
 import { buildReactProject } from "./studio/build.js";
 import { filterWorkingImages, mergeValidatedImages, normalizeWorkspaceMapEmbeds } from "./studio/agent-core/site-media.js";
 import { activityForEvent } from "./studio/agent-core/activity-feed.js";
+import { mediaContextBlock } from "./studio/agent-core/site-media.js";
+import { generateCreativeBrief } from "./studio/agent-core/creative-brief.js";
+import { callModelWithTools } from "./studio/agent-core/model.js";
+import { isBootstrapProject } from "./studio/agent-core/first-message.js";
 import { EDIT_TOOLS } from "./work-evidence.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -1291,43 +1295,63 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             const attachBlock = attachResult.attachments.length || attachResult.errors.length
               ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nImagens estão no seu contexto visual; PDFs/binários são referência de arquivo (se não puder interpretar, diga isso — nunca invente).\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
               : "";
-            const team = await runStudioTeam({
+            // ===== MOTOR ANTIGO (ProspectorSiteAgent) NO COMANDO DO CAMINHO REACT =====
+            // Recuperado do commit 652dd1d: UM único agente, loop próprio, até
+            // `maxIterations` (padrão 40), tool calling real e conclusão decidida
+            // pelo PRÓPRIO motor (decideFinishBlock/classifyCompletion/isBugReport/
+            // replyAsksForCode). O StudioTeam (Coder/Planner/selector) e os guards de
+            // conclusão deixam de controlar este fluxo; `design_skills`/`visual_verify`
+            // seguem disponíveis como FERRAMENTAS para o agente decidir quando usar.
+            const currentFiles = readWorkspace(root);
+            const firstGen = isBootstrapProject(currentFiles) || Object.keys(currentFiles).length === 0;
+            writeLine({ type: "activity", phase: "analyzing", detail: firstGen ? "Analisando o negócio e montando o site…" : "Analisando o projeto para aplicar o pedido…" });
+            const mediaBlockForRun = mediaContextBlock(businessForRun);
+            const creativeBrief = (firstGen && (exec.apiKey || exec.providerId))
+              ? await generateCreativeBrief({
+                  model: callModelWithTools,
+                  ai: { providerId: exec.providerId, modelId: exec.modelId, apiKey: exec.apiKey, baseUrl: exec.baseUrl },
+                  business: businessForRun,
+                }).catch(() => "")
+              : "";
+            const mission = [
               instruction,
+              creativeBrief ? `BRIEFING CRIATIVO DESTE CLIENTE (decisão da IA — direção principal; implemente isto):\n${creativeBrief}` : "",
+              mediaBlockForRun,
+            ].filter(Boolean).join("\n\n");
+            const oldAgent = await makeAgent(
+              `react:${identity.uid}:${projectId}:${conversationId ?? "default"}`,
               projectId,
-              workspaceRoot: root,
-              business: businessForRun,
-              memory: mergedMemory,
-              conversation: recentConversation,
-              attachments: attachResult.attachments,
-              attachBlock,
-              ai: { providerId: exec.providerId, modelId: exec.modelId, apiKey: exec.apiKey, baseUrl: exec.baseUrl },
-              emit,
-              readWorkspace: () => readWorkspace(root),
-              onFilesChanged: () => { emitFiles(); writeLine({ type: "reload_preview", reason: "files_changed", timestamp: Date.now() }); },
-            });
-            // Google Maps SEMPRE embutível: o modelo às vezes escreve a URL do Maps
-            // sem `output=embed` (o Google bloqueia em iframe: "recusou a conexão").
-            // Normalização determinística nos arquivos REAIS do projeto.
+              currentFiles,
+              businessForRun,
+              { ...body, mode: firstGen ? "generate" : "edit" },
+              exec,
+              { hasBase: !firstGen },
+            );
+        let outcome = await oldAgent.runTask(mission, { continueSession: !firstGen });
+            // Atividade REAL do agente antigo (traço da missão) para o card do chat.
+            if (Array.isArray(outcome.activity)) {
+              for (const a of outcome.activity.slice(-20)) { try { writeLine({ type: "activity", phase: a.phase, detail: a.detail }); } catch { /* noop */ } }
+            }
             const mapFixed = (() => { try { return normalizeWorkspaceMapEmbeds(root, business); } catch { return [] as string[]; } })();
             const finalFiles = readWorkspace(root);
             if (mapFixed.length > 0) emitFiles();
-            const touched = [...new Set([...team.touched, ...mapFixed])];
+            const touched = [...new Set([...(outcome.touched ?? []), ...mapFixed])];
             const payload = {
-              status: team.ok ? "ok" : "error",
-              reply: team.reply,
-              error: team.error,
-              errors: team.error ? [team.error] : undefined,
+              status: outcome.ok ? "ok" : "error",
+              reply: outcome.reply,
+              error: outcome.error,
+              errors: outcome.error ? [outcome.error] : undefined,
               changed: touched.length > 0,
               no_file_changes: touched.length === 0,
               touched,
               files: finalFiles,
-              plan: team.plan ?? null,
-              iterations: team.iterations,
+              plan: null,
+              iterations: outcome.iterations ?? 0,
               model: exec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
               provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
               config_source: exec.source,
-              runtime: "studio-team",
-              orchestrated: true,
+              runtime: "prospector-site-agent",
+              orchestrated: false,
             };
             if (stream) {
               writeLine({ type: "files_ready", files: finalFiles });

@@ -15,7 +15,10 @@ import { hasImageReferenceChange, requestsImageSwap, requestsFramingFix, editReg
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
 import { computeWorkEvidence, verificationToolsAfterLastEdit, EDIT_TOOLS, INSPECT_TOOLS, VERIFY_TOOLS, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
-import { readFileSync } from "node:fs";
+import { designSkillsKnowledge } from "./studio/agent-core/design-skills.js";
+import { runVisualVerification, prepareServeDirForRoot } from "./studio/agent-core/visual-verify.js";
+import { buildReactProject } from "./studio/build.js";
+import { readFileSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 
 // Detector de tarefa CIRÚRGICA (uma alteração pontual — cor, texto, botão, logo,
@@ -289,6 +292,45 @@ export class ProspectorSiteAgent {
       });
     }
 
+    // ===== FERRAMENTAS DO STUDIO (mesmas capacidades do Coder, agora DENTRO do
+    // loop do ProspectorSiteAgent) =====
+    // `design_skills`: conhecimento de design instalado, consultável sob demanda
+    // (o agente decide quando usar; não consome prompt quando não é usada).
+    const designSkillsTool = createTool({
+      name: "design_skills",
+      description:
+        "Consulta o guia INSTALADO de design premium (direção de arte, paleta/tipografia, CRO, copy, componentes, motion, mobile, performance, mídia, mapas, inspeção profunda). Use quando precisar da técnica ao criar/reformular o visual. Sem `topic` devolve o guia completo; com `topic`, só a seção.",
+      inputSchema: z.object({ topic: z.string().optional().describe("tópico específico (opcional)") }),
+      execute: async (input: { topic?: string }) => designSkillsKnowledge(input?.topic ?? null),
+    });
+
+    // `visual_verify`: abre o SITE REAL no Chromium (desktop/tablet/mobile), coleta
+    // render/DOM/CSS + screenshots e devolve PASS/FAIL ao agente. NÃO edita arquivos
+    // e NÃO obriga nada: o agente decide chamar e o que fazer com o resultado.
+    const visualVerifyTool = createTool({
+      name: "visual_verify",
+      description:
+        "Verificação VISUAL do site real no Chromium (desktop 1366, tablet 768, mobile 390): renderiza, checa erros de console/imagens quebradas/overflow, lê as cores realmente renderizadas e diz se o pedido foi cumprido (PASS/FAIL) — inclusive se sobrou a identidade ANTIGA. Use depois de alterar o visual, quando quiser evidência real. Não edita arquivos.",
+      inputSchema: z.object({ objective: z.string().optional().describe("o que deveria ter mudado (opcional)") }),
+      execute: async (input: { objective?: string }) => {
+        let temp: string | undefined;
+        try {
+          const serve = await prepareServeDirForRoot(options.workspaceRoot, buildReactProject);
+          temp = serve.temp;
+          const outcome = await runVisualVerification({
+            serveDir: serve.dir,
+            objective: (input?.objective && input.objective.trim()) || this.currentInstruction,
+          });
+          return outcome.report;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return `VISUAL VERIFICATION: FAIL\n\nNão foi possível verificar visualmente: ${msg}\nRequired action:\nCorrija o build/erro acima e rode visual_verify de novo se quiser evidência.`;
+        } finally {
+          if (temp) { try { rmSync(temp, { recursive: true, force: true }); } catch { /* noop */ } }
+        }
+      },
+    });
+
     // web_search (5.26): pesquisa externa de referência/tendências — opcional e
     // disponível apenas quando há chave configurada (nunca bloqueia o trabalho).
     const researchTools: unknown[] = [];
@@ -412,7 +454,7 @@ export class ProspectorSiteAgent {
       apiKey: options.apiKey ?? process.env.DEEPSEEK_API_KEY ?? process.env.PROSPECTOR_API_KEY,
       baseUrl: options.baseUrl ?? process.env.PROSPECTOR_BASE_URL ?? "https://api.deepseek.com",
       systemPrompt,
-      tools: [...tools, ...browserTools, ...researchTools, complete],
+      tools: [...tools, ...browserTools, ...researchTools, designSkillsTool, visualVerifyTool, complete],
       maxIterations: options.maxIterations ?? 40,
       hooks: { beforeModel, beforeTool },
       initialMessages: options.initialMessages,
