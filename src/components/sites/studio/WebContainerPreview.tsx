@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Crosshair, Loader2, RefreshCw, ShieldAlert
 import { useWebContainerPreview } from "@/hooks/studio/useWebContainerPreview";
 import { injectReactVisualHelper } from "@/lib/studio/reactVisualHelper";
 import { inlineRemoteImagesInFiles } from "@/lib/studio/previewImages";
+import { fitDeviceScale } from "@/lib/studio/deviceFrame";
 import { descriptorFromReactSelection } from "@/lib/studio/reactSource";
 import {
   STUDIO_BRIDGE_CHANNEL, STUDIO_BRIDGE_VERSION, parseStudioBridgeChildMessage, type StudioElementDescriptor,
@@ -49,9 +50,9 @@ function DeviceFrame({ device, children }: { device: StudioDevice; children: Rea
     const measure = () => {
       const cw = Math.max(160, el.clientWidth - 16);
       const ch = Math.max(160, el.clientHeight - 16);
-      // Escala pela LARGURA (sem cap em 1) → preenche o painel; limita o zoom para
-      // não distorcer demais e corta a altura no que couber (o iframe rola dentro).
-      const scale = Math.min(2.5, Math.max(0.2, cw / size.width));
+      // MOSTRA O DISPOSITIVO NO TAMANHO REAL e só REDUZ quando não couber (desktop
+      // em painel estreito). Nunca amplia (o Mobile/Tablet ficavam gigantes).
+      const scale = fitDeviceScale(cw + 16, ch + 16, size);
       setBox({ w: Math.round(size.width * scale), h: Math.min(Math.round(size.height * scale), ch), scale });
     };
     measure();
