@@ -93,10 +93,10 @@ describe("FASE 5 · layout do Studio (Preview dominante)", () => {
   const shell = read("src/components/sites/studio/StudioShell.tsx");
   const chat = read("src/components/sites/studio/UnifiedChatPanel.tsx");
 
-  it("P) o painel principal (Preview) é maior que o chat", () => {
-    expect(shell).toMatch(/id="studio-chat" order=\{1\} defaultSize=\{26\}/);
+  it("P) o painel principal (Preview) é maior que o chat (sidebar enxuta 22%)", () => {
+    expect(shell).toMatch(/id="studio-chat" order=\{1\} defaultSize=\{22\}/);
     expect(shell).toMatch(/id="studio-main" order=\{2\} defaultSize=\{showChat \? 68 : 100\}/);
-    expect(shell).toMatch(/id="studio-chat"[^>]*maxSize=\{40\}/);
+    expect(shell).toMatch(/id="studio-chat"[^>]*maxSize=\{30\}/);
   });
 
   it("V) controles essenciais continuam presentes (device/view/resizable)", () => {

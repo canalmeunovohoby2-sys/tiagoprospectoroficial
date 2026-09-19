@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PERF, markPerf } from "@/lib/studio/perf";
 import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
-import { AlertTriangle, CheckCircle2, Crosshair, Loader2, RefreshCw, ShieldAlert, Terminal } from "lucide-react";
+import { AlertTriangle, Crosshair, Loader2, RefreshCw, ShieldAlert, Terminal } from "lucide-react";
 import { useWebContainerPreview } from "@/hooks/studio/useWebContainerPreview";
 import { injectReactVisualHelper } from "@/lib/studio/reactVisualHelper";
 import { inlineRemoteImagesInFiles } from "@/lib/studio/previewImages";
@@ -215,13 +215,25 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
           )}
         </div>
       )}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-card px-3 py-1.5">
-        <p className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
-          <span className="text-primary">WebContainer</span>
-          {phase === "ready" && <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 className="h-3 w-3" /> Vite rodando</span>}
-          {phase === "booting" && <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> iniciando…</span>}
-          {phase === "unsupported" && <span className="inline-flex items-center gap-1 text-amber-600"><ShieldAlert className="h-3 w-3" /> sem isolamento</span>}
-          {phase === "error" && <span className="inline-flex items-center gap-1 text-destructive"><AlertTriangle className="h-3 w-3" /> erro</span>}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-card px-3 py-1">
+        <p className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
+          {/* Status discreto estilo "Live Preview": ponto pulsante + rótulo curto. */}
+          {phase === "ready" && (
+            <span className="inline-flex items-center gap-1.5 text-emerald-600">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/60" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              </span>
+              Vite ativo
+            </span>
+          )}
+          {phase === "booting" && (
+            <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />iniciando…</span>
+          )}
+          {phase === "unsupported" && <span className="inline-flex items-center gap-1.5 text-amber-600"><ShieldAlert className="h-3 w-3" />sem isolamento</span>}
+          {phase === "error" && <span className="inline-flex items-center gap-1.5 text-destructive"><AlertTriangle className="h-3 w-3" />erro</span>}
+          <span className="text-border">·</span>
+          <span className="text-foreground/70">Preview</span>
           {visualMode && phase === "ready" && (
             <span className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
               <Crosshair className="h-2.5 w-2.5" /> modo visual
@@ -275,14 +287,23 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
             />
           </DeviceFrame>
         ) : (
-          <div className="flex h-full items-center justify-center bg-muted/20 px-6 text-center text-sm text-muted-foreground">
-            {phase === "booting" ? (
-              <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> montando o projeto e iniciando o Vite…</span>
-            ) : phase === "unsupported" ? (
-              "Ative o isolamento cross-origin (COOP/COEP) para usar o preview React."
-            ) : (
-              "Preview indisponível."
+          // Boot: barra de progresso indeterminada no TOPO + linha discreta (sem
+          // spinner gigante no centro). O status real fica no cabeçalho.
+          <div className="flex h-full flex-col bg-muted/10">
+            {phase === "booting" && (
+              <div className="h-0.5 w-full overflow-hidden bg-border/50">
+                <div className="h-full w-1/3 animate-[pulse_1.4s_ease-in-out_infinite] rounded-full bg-primary/70" style={{ animation: "pulse 1.4s ease-in-out infinite" }} />
+              </div>
             )}
+            <div className="flex flex-1 items-center justify-center px-6 text-center text-[12px] text-muted-foreground">
+              {phase === "booting" ? (
+                <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> preparando o preview…</span>
+              ) : phase === "unsupported" ? (
+                "Ative o isolamento cross-origin (COOP/COEP) para usar o preview React."
+              ) : (
+                "Preview indisponível."
+              )}
+            </div>
           </div>
         )}
       </div>

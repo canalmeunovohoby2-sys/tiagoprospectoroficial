@@ -330,7 +330,7 @@ export function StudioShell({
       <ResizablePanelGroup id="studio-main" direction="horizontal" autoSaveId="studio-main-layout" className="min-h-0 flex-1">
         {showChat && (
           <>
-            <ResizablePanel id="studio-chat" order={1} defaultSize={26} minSize={18} maxSize={40} className="min-w-0">
+            <ResizablePanel id="studio-chat" order={1} defaultSize={22} minSize={16} maxSize={30} className="min-w-0">
               <div className="relative h-full min-h-0 p-1.5">
                 <StudioChatPanel
                   {...chatWithFiles}

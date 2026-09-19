@@ -347,9 +347,9 @@ export function StudioPreviewPanel({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto bg-[#ececec] p-2">
+      <div className="min-h-0 flex-1 overflow-auto bg-[#f4f5f7] p-2 dark:bg-[#0b1220]">
         <div
-          className="mx-auto overflow-hidden rounded-lg bg-white shadow-[0_8px_30px_-12px_rgba(16,24,40,.25)] transition-all duration-300"
+          className="mx-auto overflow-hidden rounded-xl border border-black/5 bg-white shadow-[0_10px_34px_-18px_rgba(15,23,42,.35)] transition-all duration-200"
           style={{ maxWidth: device === "desktop" ? "100%" : DEVICE_WIDTH[device] }}
         >
           {srcDoc ? (

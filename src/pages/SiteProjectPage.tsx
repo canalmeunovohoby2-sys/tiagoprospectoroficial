@@ -1337,15 +1337,15 @@ export default function SiteProjectPage() {
         />
       )}
       <div>
-        <Link to="/sites" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-2">
+        <Link to="/sites" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1 mb-1 transition-colors duration-150">
           <ArrowLeft className="h-3 w-3" /> Sites
         </Link>
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
-            <h1 className="font-display text-2xl font-bold tracking-tight flex items-center gap-2 flex-wrap">
-              <Globe className="h-6 w-6 text-primary" /> {project.name}
+            <h1 className="font-display text-xl font-semibold leading-tight tracking-tight flex items-center gap-2 flex-wrap">
+              <Globe className="h-5 w-5 text-primary" /> {project.name}
             </h1>
-            <p className="text-sm text-muted-foreground mt-1">
+            <p className="text-[12px] text-muted-foreground mt-0.5">
               {project.company_name || project.name}
               {[project.segment, project.city && project.state ? `${project.city}/${project.state}` : project.city].filter(Boolean).length > 0 && (
                 <> · {[project.segment, project.city && project.state ? `${project.city}/${project.state}` : project.city].filter(Boolean).join(" · ")}</>

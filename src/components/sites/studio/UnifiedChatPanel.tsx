@@ -185,7 +185,8 @@ export function UnifiedChatPanel({
           if (item.kind === "user") {
             return (
               <div key={item.id} className="flex justify-end gap-2">
-                <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-[13px] text-primary-foreground">
+                {/* Feed clean: sem balão volumoso — bloco discreto com acento de 2px. */}
+                <div className="max-w-[88%] rounded-lg border-l-2 border-primary/60 bg-muted/40 px-2.5 py-1.5 text-[13px] leading-relaxed text-foreground">
                   {(() => {
                     const atts = item.images?.length ? item.images : (item.image ? [{ dataUrl: item.image, label: item.fileLabel ?? "anexo" }] : []);
                     if (atts.length === 0) return null;
@@ -193,23 +194,24 @@ export function UnifiedChatPanel({
                       <div className="mb-1.5 flex flex-wrap gap-1.5">
                         {atts.map((a, i) => (
                           a.dataUrl.startsWith("data:image")
-                            ? <img key={i} src={a.dataUrl} alt={a.label} className="max-h-40 rounded-lg" />
-                            : <span key={i} className="rounded bg-primary-foreground/15 px-1.5 py-0.5 text-[11px]">📎 {a.label}</span>
+                            ? <img key={i} src={a.dataUrl} alt={a.label} className="max-h-40 rounded-md border border-border/60" />
+                            : <span key={i} className="rounded border border-border/60 px-1.5 py-0.5 text-[11px] text-muted-foreground">📎 {a.label}</span>
                         ))}
                       </div>
                     );
                   })()}
                   <p className="whitespace-pre-wrap break-words">{item.text}</p>
                 </div>
-                <span className="mt-1 hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted sm:flex"><User className="h-3.5 w-3.5" /></span>
+                <span className="mt-1 hidden h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border/60 text-muted-foreground sm:flex"><User className="h-3 w-3" /></span>
               </div>
             );
           }
           if (item.kind === "assistant") {
             return (
-              <div key={item.id} className="flex gap-2">
-                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Bot className="h-3.5 w-3.5" /></span>
-                <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-border/60 bg-background px-3 py-2">
+              // Feed clean: conteúdo integrado à interface, separado por divisor fino.
+              <div key={item.id} className="flex gap-2 border-t border-border/50 pt-2.5 first:border-t-0 first:pt-0">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Bot className="h-3 w-3" /></span>
+                <div className="min-w-0 flex-1 text-[13px] leading-relaxed">
                   <MarkdownMessage text={item.text} />
                 </div>
               </div>
