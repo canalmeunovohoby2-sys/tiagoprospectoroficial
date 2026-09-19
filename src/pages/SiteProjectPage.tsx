@@ -35,6 +35,7 @@ import { invokeStudioGit } from "@/lib/studio/gitApi";
 import { isStudioUiEnabled } from "@/lib/studio/featureFlag";
 import { PERF, markPerf } from "@/lib/studio/perf";
 import { recordRuntimeChange, detectStaleSnapshot, type RuntimeChangeMap } from "@/lib/studio/autosaveGuard";
+import { isConversationResult, type RunResultLike } from "@/lib/studio/runOutcome";
 import { useStudioChat } from "@/hooks/studio/useStudioChat";
 import type { StudioStreamEvent, StudioFilesReadyEvent } from "@/lib/studio/streamEvents";
 import { GitHubProjectButton } from "@/components/app/GitHubProjectButton";
@@ -843,8 +844,19 @@ export default function SiteProjectPage() {
         }
 
         // CONVERSA (runtime "conversation"): a IA só respondeu — nada foi tocado no
-        // projeto. Nunca tratar como alteração de arquivos (nada de salvar/versionar).
-        const conversationReply = (agentRes as { runtime?: string } | null)?.runtime === "conversation";
+        // projeto. Nunca tratar como alteração de arquivos (nada de salvar/versionar)
+        // e NUNCA cair no aviso de "IA indisponível" (Fase 7.3): a resposta É o resultado.
+        const conversationReply = isConversationResult(agentRes as RunResultLike | null | undefined);
+        if (!agentErr && conversationReply) {
+          const reply = String((agentRes as { reply?: string }).reply ?? "").trim();
+          if (reply) {
+            pushReply(reply);
+            stopProgress();
+            setAgentStep(null);
+            setAiRunning(false);
+            return;
+          }
+        }
         if (!agentErr && !conversationReply && agentRes && agentRes.files && Object.keys(agentRes.files).length > 0 && (agentRes.changed || JSON.stringify(agentRes.files) !== JSON.stringify(runFiles))) {
           // Trava de entrega do runtime: auditoria de interação não passou
           // (clique deixa tela preta) → NÃO salvar/entregar como concluído.
@@ -904,13 +916,16 @@ export default function SiteProjectPage() {
           setAiRunning(false);
           return;
         }
-        if (agentErr || !agentRes || !agentRes.files || !Object.keys(agentRes.files).length) {
+        if (agentErr || !agentRes || !agentRes.files || (!Object.keys(agentRes.files).length && !String((agentRes as { reply?: string }).reply ?? "").trim())) {
           // PRINCÍPIO ABSOLUTO: sem IA validada comprovada → NÃO executa, e NÃO
           // há fallback para uma IA "padrão" (o fallback legado foi removido).
           const blocked = (agentRes as { blocked_reason?: string; blocked_code?: string } | undefined)?.blocked_reason;
           const reason = blocked
             ? blocked
-            : "Não foi possível executar com a IA validada (Agent Runtime indisponível ou falhou). Nenhuma IA padrão é usada — configure e valide a IA em Configurações e tente de novo.";
+            : agentErr
+              // Erro REAL de rede/runtime: mensagem acionável (o que fazer agora).
+              ? `O Agent Runtime não respondeu (${agentErr instanceof Error ? agentErr.message : "falha de rede"}). Verifique se o runtime está no ar e atualizado (local: npm run local · produção: redeploy no Railway) e tente de novo. Nada do seu site foi alterado.`
+              : "Não foi possível executar com a IA validada (Agent Runtime indisponível ou falhou). Nenhuma IA padrão é usada — configure e valide a IA em Configurações e tente de novo.";
           pushReply(`⚠ ${reason}`);
           stopProgress();
           setAgentStep(null);
