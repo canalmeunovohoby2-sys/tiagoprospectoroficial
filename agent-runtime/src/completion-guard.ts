@@ -79,7 +79,7 @@ function isPureChatter(text: string): boolean {
  * autorização/ação explícita ("pode melhorar", "ajuste isso") NÃO é pergunta de
  * processo — continua sendo trabalho.
  */
-const PROCESS_QUESTION = /^(me\s+(explica|explique|diga|conte|conta|mostra|mostre|descreva|fala))|^(como\s+voc[êe]\s+(fez|faz|est[áa]))|^(por\s+que\s+voc[êe])|^(pq\s+voc[êe])|(o\s+que\s+voc[êe]\s+(est[áa]|fez|faz|achou|acha|consegue|pode|sabe))|(no\s+que\s+voc[êe]\s+(pode|consegue))|(quais\s+(s[ãa]o\s+)?(as\s+)?(suas\s+)?(capacidades|fun[çc][õo]es))/i;
+const PROCESS_QUESTION = /^(me\s+(explica|explique|diga|conte|conta|mostra|mostre|descreva|fala))|^(como\s+voc[êe]\s+(fez|faz|est[áa]|ger[ae]|gerar|cria|criar|monta|montou))|^(por\s+que\s+voc[êe])|^(pq\s+voc[êe])|(o\s+que\s+voc[êe]\s+(est[áa]|fez|faz|achou|acha|consegue|pode|sabe))|(no\s+que\s+voc[êe]\s+(pode|consegue))|(quais\s+(s[ãa]o\s+)?(as\s+)?(suas\s+)?(capacidades|fun[çc][õo]es))/i;
 
 /** Autorização/ordem EXPLÍCITA de alterar (pedido misto deixa de ser conversa). */
 const CHANGE_IMPERATIVE = /\b(pode|poderia|consegue)\s+(melhorar|mudar|alterar|ajustar|mexer|deixar|refazer|arrumar|corrigir|substituir|trocar)|^(fa[çc]a|mude|troque|altere|ajuste|deixe|coloque|adicione|crie|remova|arrume|corrija)\b/i;
@@ -91,7 +91,7 @@ function isProcessQuestion(text: string): boolean {
 const EXPLAIN_ASK = /^(me\s+)?(explica|explique|explicar|resuma|resume|resumir|liste|lista|listar|diga|dizer|conte|contar|fale|falar|descreva|descrever|mostre|mostrar|ensina|ensine|ensinar)\b/i;
 // Sinal de AÇÃO/DESEJO: usado só para decidir se uma pergunta é, na verdade, um
 // pedido ("pode colocar animações?"). NÃO é uma whitelist de tarefas.
-const ACTION_HINT = /coloc|adicion|inclu|cria|criar|faz|fazer|fa[çc]a|muda|mudar|mude|troc|altera|ajust|deixa|deixar|deixe|remov|apaga|aument|diminu|reduz|move|moviment|anim|efeito|transi[çc]|hover|fade|reveal|scroll|\brol|desliz|aparec|surgi|entrar|entrando|din[aâ]mic|quero|queria|gostaria|preciso|implementa|aplica/i;
+const ACTION_HINT = /ger[ae]|gerar|coloc|adicion|inclu|cria|criar|faz|fazer|fa[çc]a|muda|mudar|mude|troc|altera|ajust|deixa|deixar|deixe|remov|apaga|aument|diminu|reduz|move|moviment|anim|efeito|transi[çc]|hover|fade|reveal|scroll|\brol|desliz|aparec|surgi|entrar|entrando|din[aâ]mic|quero|queria|gostaria|preciso|implementa|aplica/i;
 // Instruções de SOMENTE LEITURA (análise/relatório) NÃO são pedido de mudança.
 const READ_ONLY = /somente\s+leitura|s[oó]\s+leitura|n[aã]o\s+altere\s+nenhum|n[aã]o\s+alterar\s+nenhum|n[aã]o\s+modifique\s+nenhum|n[aã]o\s+edite\s+nenhum|n[aã]o\s+use\s+(?:write_file|edit_file|delete_file|write|edit|delete)|apenas\s+(?:analis|relat|leitura)|somente\s+(?:analis|relat|leitura)/i;
 const ANALYZE_LEAD = /^(?:fa[çc]a\s+uma\s+)?(?:an[aá]lise|analise|analisa|avalie|avalia|revise|revisa|audite|audita|diagnostique|inspecione)\b/i;

@@ -307,21 +307,86 @@ export function buildReactMission(input: {
   ].filter(Boolean).join("\n\n");
 }
 
+/** FASE 7.1 — payload do turno de conversa (mesmo contrato do /run). */
+export function conversationPayload(input: {
+  reply: string;
+  files: Record<string, string>;
+  model?: string | null;
+  provider?: string | null;
+  configSource?: string;
+}): Record<string, unknown> {
+  return {
+    status: "ok",
+    reply: input.reply,
+    changed: false,
+    no_file_changes: true,
+    touched: [],
+    files: input.files,
+    plan: null,
+    iterations: 0,
+    model: input.model ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
+    provider: input.provider ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
+    config_source: input.configSource,
+    runtime: "conversation",
+    result_state: "conversation",
+    orchestrated: false,
+  };
+}
+
+/**
+ * FASE 7.1 — resposta de conversa pura: SEM workspace, SEM imagens, SEM anexos,
+ * SEM ferramentas. Uma única chamada ao modelo com `tools: []` e o contexto do
+ * negócio no system prompt. É o caminho rápido para "Quem descobriu o Brasil?".
+ */
+export async function answerConversation(input: {
+  instruction: string;
+  business: { name?: string | null; segment?: string | null; category?: string | null; city?: string | null; state?: string | null };
+  recent: string[];
+  exec: { providerId?: string; modelId?: string; apiKey?: string; baseUrl?: string };
+  /** FASE 7.2 — estado real da execução (eventos ao vivo do front). */
+  liveStatus?: string;
+}): Promise<string> {
+  const chatUser = input.recent.length
+    ? `CONVERSA RECENTE:\n${input.recent.slice(-6).join("\n")}\n\nMENSAGEM ATUAL DO USUÁRIO:\n${input.instruction}`
+    : input.instruction;
+  const chat = await callModelWithTools({
+    providerId: input.exec.providerId,
+    modelId: input.exec.modelId,
+    apiKey: input.exec.apiKey,
+    baseUrl: input.exec.baseUrl,
+    system: buildConversationSystemPrompt(input.business, input.liveStatus),
+    messages: [{ role: "user", content: chatUser }],
+    tools: [],
+    maxTokens: 800,
+    temperature: 0.6,
+  }).catch(() => null);
+  return chat?.ok ? (chat.turn?.text ?? "").trim() : "";
+}
+
 /** FASE 5 — prompt da conversa pura: a IA conhece o projeto e responde como assistente. */
-export function buildConversationSystemPrompt(business: { name?: string | null; segment?: string | null; category?: string | null; city?: string | null; state?: string | null } | null | undefined): string {
+export function buildConversationSystemPrompt(
+  business: { name?: string | null; segment?: string | null; category?: string | null; city?: string | null; state?: string | null } | null | undefined,
+  liveStatus?: string | null,
+): string {
   const b = business ?? {};
+  const live = String(liveStatus ?? "").trim();
   return [
     "Você é o parceiro de conversa do usuário dentro do Studio de sites (você TAMBÉM programa este projeto quando ele pede).",
     "- Responda SEMPRE em português do Brasil, curto e natural (2 a 4 frases).",
     "- Agora é só conversa: NÃO edite arquivos, não cite ferramentas nem etapas internas.",
     b.name ? `- Projeto do cliente: ${b.name}${b.segment ?? b.category ? ` (${b.segment ?? b.category})` : ""}${b.city ? ` — ${b.city}${b.state ? `/${b.state}` : ""}` : ""}.` : "",
+    // FASE 7.2 — estado REAL da execução (vem dos eventos ao vivo do runtime). Se o
+    // usuário perguntar "o que você está fazendo agora?", responda com ISTO e nunca
+    // inicie outra edição.
+    live
+      ? `- AGORA MESMO (estado real da execução, reportado ao vivo): ${live}. Se o usuário perguntar o que está acontecendo, explique exatamente isso.`
+      : "- Nenhuma alteração está em andamento neste momento.",
     "- Você conhece o projeto: pode explicar a estrutura, as escolhas visuais e o que foi feito recentemente com base no contexto acima.",
     "- Se o usuário quiser mudar algo no site, diga que pode fazer e pergunte o que ele quer alterar.",
   ].filter(Boolean).join("\n");
 }
 
-/** A direção criativa foi APLICADA no código final? (evidência, não promessa) */
-export function directionApplied(files: Record<string, string> | null | undefined, brandColors: string[]): boolean {
+/** A direção criativa foi APLICADA no código final? (evidência, não promessa) */export function directionApplied(files: Record<string, string> | null | undefined, brandColors: string[]): boolean {
   if (!files) return false;
   if (hasArtDirection(files)) return true;
   const colors = (brandColors ?? []).map((c) => c.toLowerCase());
@@ -1448,6 +1513,45 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         // NÃO usa o Router heurístico nem o ProspectorSiteAgent. O fluxo static
         // segue exatamente igual logo abaixo. =====
         if (String(body.projectKind ?? "") === "react") {
+          // ===== FASE 7.1 · CAMINHO RÁPIDO DE CONVERSA (antes de QUALQUER trabalho) =====
+          // "Quem descobriu o Brasil?" NÃO materializa workspace, NÃO valida imagens,
+          // NÃO escreve anexos, NÃO pega o lock e NÃO usa ferramentas: vai direto ao
+          // modelo com `tools: []` e responde. Só o que pede alteração segue abaixo.
+          if (!instructionRequestsChange(instruction)) {
+            const convWriteLine = (obj: unknown) => { if (!stream) return; try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* noop */ } };
+            try {
+              if (stream) {
+                res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
+                convWriteLine({ type: "start", runtime: "prospector-site-agent", kind: "conversation" });
+              }
+              // Estado HONESTO do que está acontecendo: o modelo está respondendo agora.
+              convWriteLine({ type: "activity", phase: "replying", detail: "Respondendo…" });
+              const reply = await answerConversation({
+                instruction,
+                business,
+                recent: recentConversation,
+                exec,
+                // FASE 7.2 — a resposta usa o estado REAL da execução em andamento.
+                liveStatus: typeof body.liveStatus === "string" ? body.liveStatus : "",
+              });
+              if (reply) {
+                void saveConversation(
+                  identity.uid, projectId, conversationId ?? "default",
+                  [{ role: "user", content: instruction }, { role: "assistant", content: reply }],
+                  [], exec.modelId, exec.providerId, identity,
+                );
+                const payload = conversationPayload({ reply, files: {}, model: exec.modelId, provider: exec.providerId, configSource: exec.source });
+                if (stream) {
+                  convWriteLine({ type: "complete", ...payload, timestamp: Date.now() });
+                  convWriteLine({ type: "result", ...payload });
+                  res.end();
+                } else {
+                  send(res, 200, payload);
+                }
+                return;
+              }
+            } catch { /* conversa nunca derruba: segue o fluxo normal abaixo */ }
+          }
           // Serializa por projeto: /build, /git, /visual-edit e autosave não
           // materializam o workspace enquanto o Coder está escrevendo nele.
           await withWorkspaceLock(projectId, async () => {
@@ -1472,9 +1576,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             } catch { /* nunca derruba o stream por causa do indicador */ }
           };
           const emitFiles = () => { try { writeLine({ type: "files_ready", files: readWorkspace(root) }); } catch { /* noop */ } };
-          if (stream) {
+          if (stream && !res.headersSent) {
             res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
-            writeLine({ type: "start", runtime: "studio-team" });
+            // Nome REAL do motor (era "studio-team", que não roda neste caminho).
+            writeLine({ type: "start", runtime: "prospector-site-agent" });
           }
           try {
             // IMAGENS REAIS: valida as URLs (HTTP) antes de levá-las ao site — mas
@@ -1502,46 +1607,18 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // O agente apenas RESPONDE (sem ferramentas, sem edição, sem automação).
             // Se a conversa falhar no provider, seguimos o fluxo normal (nunca travamos).
             if (runKind === "conversation") {
-              const chatSystem = buildConversationSystemPrompt(businessForRun);
-              const chatUser = recentConversation.length
-                ? `CONVERSA RECENTE:\n${recentConversation.slice(-6).join("\n")}\n\nMENSAGEM ATUAL DO USUÁRIO:\n${instruction}`
-                : instruction;
-              const chat = await callModelWithTools({
-                providerId: exec.providerId,
-                modelId: exec.modelId,
-                apiKey: exec.apiKey,
-                baseUrl: exec.baseUrl,
-                system: chatSystem,
-                messages: [{ role: "user", content: chatUser }],
-                tools: [],
-                maxTokens: 800,
-                temperature: 0.6,
-              }).catch(() => null);
-              const chatReply = chat?.ok ? (chat.turn?.text ?? "").trim() : "";
-              if (chatReply) {
-                // Persiste o turno de conversa na MESMA infra do caminho legado
-                // (agent_conversation_memory) → o próximo turno tem continuidade.
-                void saveConversation(
-                  identity.uid, projectId, conversationId ?? "default",
-                  [{ role: "user", content: instruction }, { role: "assistant", content: chatReply }],
-                  [], exec.modelId, exec.providerId, identity,
-                );
-                const payload = {
-                  status: "ok",
-                  reply: chatReply,
-                  changed: false,
-                  no_file_changes: true,
-                  touched: [],
-                  files: currentFiles,
-                  plan: null,
-                  iterations: 0,
-                  model: exec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
-                  provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
-                  config_source: exec.source,
-                  runtime: "conversation",
-                  result_state: "conversation",
-                  orchestrated: false,
-                };
+              // FALLBACK (não esperado): a conversa é respondida no caminho rápido
+              // ACIMA, antes de tocar no workspace. Se por algum motivo chegamos
+              // aqui, respondemos direto — sem ferramentas e sem editar nada.
+              const reply = await answerConversation({
+                instruction,
+                business: businessForRun,
+                recent: recentConversation,
+                exec,
+                liveStatus: typeof body.liveStatus === "string" ? body.liveStatus : "",
+              });
+              if (reply) {
+                const payload = conversationPayload({ reply, files: currentFiles, model: exec.modelId, provider: exec.providerId, configSource: exec.source });
                 if (stream) {
                   writeLine({ type: "complete", ...payload, timestamp: Date.now() });
                   writeLine({ type: "result", ...payload });
