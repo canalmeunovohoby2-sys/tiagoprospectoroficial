@@ -343,10 +343,10 @@ export function StudioPreviewPanel({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto bg-[#ececec] p-3 sm:p-4">
+      <div className="min-h-0 flex-1 overflow-auto bg-[#ececec] p-2">
         <div
           className="mx-auto overflow-hidden rounded-lg bg-white shadow-[0_8px_30px_-12px_rgba(16,24,40,.25)] transition-all duration-300"
-          style={{ maxWidth: DEVICE_WIDTH[device] }}
+          style={{ maxWidth: device === "desktop" ? "100%" : DEVICE_WIDTH[device] }}
         >
           {srcDoc ? (
             <iframe

@@ -49,10 +49,17 @@ function DeviceFrame({ device, children }: { device: StudioDevice; children: Rea
     const el = wrapRef.current;
     if (!el) return;
     const measure = () => {
-      const cw = Math.max(160, el.clientWidth - 16);
-      const ch = Math.max(160, el.clientHeight - 16);
-      // MOSTRA O DISPOSITIVO NO TAMANHO REAL e só REDUZ quando não couber (desktop
-      // em painel estreito). Nunca amplia (o Mobile/Tablet ficavam gigantes).
+      const cw = Math.max(160, el.clientWidth - (device === "desktop" ? 0 : 16));
+      const ch = Math.max(160, el.clientHeight - (device === "desktop" ? 0 : 16));
+      // DESKTOP: o site ocupa TODO o painel (largura/altura reais do container,
+      // escala 1) — sem sobra lateral e sem borrão de upscale; o site reage de
+      // verdade às media queries na largura disponível.
+      if (device === "desktop") {
+        setBox({ w: cw, h: ch, scale: 1 });
+        return;
+      }
+      // TABLET/MOBILE: mantém o tamanho REAL do dispositivo (simula o aparelho) e
+      // só reduz se não couber.
       const scale = fitDeviceScale(cw + 16, ch + 16, size);
       setBox({ w: Math.round(size.width * scale), h: Math.min(Math.round(size.height * scale), ch), scale });
     };
@@ -61,15 +68,21 @@ function DeviceFrame({ device, children }: { device: StudioDevice; children: Rea
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [size.width, size.height]);
+  }, [size.width, size.height, device]);
   return (
-    <div ref={wrapRef} className="flex h-full w-full items-start justify-center overflow-hidden p-2">
+    <div ref={wrapRef} className={`flex h-full w-full items-start justify-center overflow-hidden ${device === "desktop" ? "" : "p-2"}`}>
       <div
         data-preview-device={device}
-        className="shrink-0 overflow-hidden rounded-xl border border-border/60 bg-white shadow-sm"
+        className={`shrink-0 overflow-hidden bg-white ${device === "desktop" ? "" : "rounded-xl border border-border/60 shadow-sm"}`}
         style={{ width: box.w, height: box.h }}
       >
-        <div style={{ width: size.width, height: size.height, transform: `scale(${box.scale})`, transformOrigin: "top left" }}>
+        <div
+          style={
+            device === "desktop"
+              ? { width: box.w, height: box.h }
+              : { width: size.width, height: size.height, transform: `scale(${box.scale})`, transformOrigin: "top left" }
+          }
+        >
           {children}
         </div>
       </div>

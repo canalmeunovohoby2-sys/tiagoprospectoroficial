@@ -144,4 +144,18 @@ describe("FASE 5.1 · WebContainer: reuso e dependências", () => {
     expect(api).not.toMatch(/from\("site_projects"\)\s*\.select\("\*"\)/);
     expect(api).not.toContain('"published_code"');
   });
+
+  it("desktop usa TODO o painel (sem sobra lateral e sem upscale borrado)", () => {
+    const preview = read("src/components/sites/studio/WebContainerPreview.tsx");
+    const panel = read("src/components/sites/studio/StudioPreviewPanel.tsx");
+    // Desktop: largura/altura do container real, escala 1 (sem borrão)
+    expect(preview).toContain('if (device === "desktop")');
+    expect(preview).toMatch(/setBox\(\{ w: cw, h: ch, scale: 1 \}\)/);
+    // O conteúdo interno acompanha o frame no desktop (iframe preenche a largura)
+    expect(preview).toMatch(/device === "desktop"\s*\n?\s*\? \{ width: box\.w, height: box\.h \}/);
+    // Mobile/tablet continuam com o tamanho REAL do aparelho
+    expect(preview).toMatch(/fitDeviceScale\(cw \+ 16, ch \+ 16, size\)/);
+    // Preview estático (legado): desktop também ocupa 100% da largura
+    expect(panel).toMatch(/maxWidth: device === "desktop" \? "100%" : DEVICE_WIDTH\[device\]/);
+  });
 });
