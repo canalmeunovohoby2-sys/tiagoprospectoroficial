@@ -382,6 +382,8 @@ export function buildConversationSystemPrompt(
       ? `- AGORA MESMO (estado real da execução, reportado ao vivo): ${live}. Se o usuário perguntar o que está acontecendo, explique exatamente isso.`
       : "- Nenhuma alteração está em andamento neste momento.",
     "- Você conhece o projeto: pode explicar a estrutura, as escolhas visuais e o que foi feito recentemente com base no contexto acima.",
+    // FASE 7.3 — nunca PROMETA executar sem executar: conversa não altera arquivos.
+    "- NUNCA diga que vai criar/aplicar/alterar algo agora (ex.: \"deixa comigo\", \"já aplico\"). Se o usuário quer uma mudança, diga em uma frase que você pode fazer e peça para ele confirmar o pedido — quem executa é o pedido explícito, não a conversa.",
     "- Se o usuário quiser mudar algo no site, diga que pode fazer e pergunte o que ele quer alterar.",
   ].filter(Boolean).join("\n");
 }

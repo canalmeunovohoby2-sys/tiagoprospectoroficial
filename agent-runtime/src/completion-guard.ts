@@ -79,7 +79,7 @@ function isPureChatter(text: string): boolean {
  * autorização/ação explícita ("pode melhorar", "ajuste isso") NÃO é pergunta de
  * processo — continua sendo trabalho.
  */
-const PROCESS_QUESTION = /^(me\s+(explica|explique|diga|conte|conta|mostra|mostre|descreva|fala))|^(como\s+voc[êe]\s+(fez|faz|est[áa]|ger[ae]|gerar|cria|criar|monta|montou))|^(por\s+que\s+voc[êe])|^(pq\s+voc[êe])|(o\s+que\s+voc[êe]\s+(est[áa]|fez|faz|achou|acha|consegue|pode|sabe))|(no\s+que\s+voc[êe]\s+(pode|consegue))|(quais\s+(s[ãa]o\s+)?(as\s+)?(suas\s+)?(capacidades|fun[çc][õo]es))/i;
+const PROCESS_QUESTION = /^(me\s+(explica|explique|diga|conte|conta|mostra|mostre|descreva|fala))|^(como\s+voc[êe]\s+(fez|faz|est[áa]|ger[ae]|gerar|cria|criar|monta|montou))|^(por\s+que\s+voc[êe])|^(pq\s+voc[êe])|\b(o\s+que\s+voc[êe]\s+(est[áa]|fez|faz|achou|acha|consegue|pode|sabe))|\b(no\s+que\s+voc[êe]\s+(pode|consegue))|(quais\s+(s[ãa]o\s+)?(as\s+)?(suas\s+)?(capacidades|fun[çc][õo]es))/i;
 
 /** Autorização/ordem EXPLÍCITA de alterar (pedido misto deixa de ser conversa). */
 const CHANGE_IMPERATIVE = /\b(pode|poderia|consegue)\s+(melhorar|mudar|alterar|ajustar|mexer|deixar|refazer|arrumar|corrigir|substituir|trocar)|^(fa[çc]a|mude|troque|altere|ajuste|deixe|coloque|adicione|crie|remova|arrume|corrija)\b/i;
@@ -91,7 +91,28 @@ function isProcessQuestion(text: string): boolean {
 const EXPLAIN_ASK = /^(me\s+)?(explica|explique|explicar|resuma|resume|resumir|liste|lista|listar|diga|dizer|conte|contar|fale|falar|descreva|descrever|mostre|mostrar|ensina|ensine|ensinar)\b/i;
 // Sinal de AÇÃO/DESEJO: usado só para decidir se uma pergunta é, na verdade, um
 // pedido ("pode colocar animações?"). NÃO é uma whitelist de tarefas.
+// FASE 7.3 — pedidos IMPLÍCITOS de alteração (o usuário descreve a mudança e dá
+// autonomia, sem usar verbo de ação explícito): "tem uma logomarca diferente aí,
+// pode seguir o mesmo padrão", "do jeito que você achar melhor", "no lugar da
+// atual". Sem isto, o agente respondia como CONVERSA e não executava nada.
 const ACTION_HINT = /ger[ae]|gerar|coloc|adicion|inclu|cria|criar|faz|fazer|fa[çc]a|muda|mudar|mude|troc|altera|ajust|deixa|deixar|deixe|remov|apaga|aument|diminu|reduz|move|moviment|anim|efeito|transi[çc]|hover|fade|reveal|scroll|\brol|desliz|aparec|surgi|entrar|entrando|din[aâ]mic|quero|queria|gostaria|preciso|implementa|aplica/i;
+
+/**
+ * FASE 7.3 — PEDIDO IMPLÍCITO COM AUTONOMIA: o usuário descreve a mudança e diz
+ * "pode seguir", "do jeito que você achar melhor", "no lugar da atual", ou cita
+ * um ativo a trocar (logomarca/logotipo). Isso é TRABALHO mesmo contendo palavras
+ * de opinião ("achar") que antes jogavam a mensagem no caminho de conversa — o
+ * agente respondia bonito e NÃO executava. Perguntas puras continuam conversa.
+ */
+const IMPLICIT_WORK = /pode\s+(seguir|aplicar|mexer|mandar)|(do|da)\s+jeito\s+que\s+voc[êe]\s+(achar|quiser|preferir)|(no\s+lugar\s+d[ao]|em\s+vez\s+d[ao])|logomarca|logotipo|\blogo\b|mesmo\s+padr[ãa]o/i;
+const PURE_QUESTION = /^(o\s+que|como|qual|quais|quando|onde|por\s+que|porque|quem|quanto|explique|me\s+(explica|explicar|diga|conte|mostra|descreva)|voc[êe]\s+(acha|sabe|pode\s+me))/i;
+
+function isImplicitWorkRequest(text: string): boolean {
+  const t = String(text ?? "").trim();
+  if (!t) return false;
+  if (PURE_QUESTION.test(t)) return false; // "O que é uma logomarca?" continua conversa
+  return IMPLICIT_WORK.test(t);
+}
 // Instruções de SOMENTE LEITURA (análise/relatório) NÃO são pedido de mudança.
 const READ_ONLY = /somente\s+leitura|s[oó]\s+leitura|n[aã]o\s+altere\s+nenhum|n[aã]o\s+alterar\s+nenhum|n[aã]o\s+modifique\s+nenhum|n[aã]o\s+edite\s+nenhum|n[aã]o\s+use\s+(?:write_file|edit_file|delete_file|write|edit|delete)|apenas\s+(?:analis|relat|leitura)|somente\s+(?:analis|relat|leitura)/i;
 const ANALYZE_LEAD = /^(?:fa[çc]a\s+uma\s+)?(?:an[aá]lise|analise|analisa|avalie|avalia|revise|revisa|audite|audita|diagnostique|inspecione)\b/i;
@@ -104,6 +125,9 @@ export function instructionRequestsChange(instruction: string): boolean {
   // FASE 5 — pergunta sobre o trabalho/processo do agente → conversa (o usuário
   // quer entender; perguntar não autoriza alteração).
   if (isProcessQuestion(text)) return false;
+  // FASE 7.3 — pedido implícito com autonomia ("logomarca diferente, pode seguir o
+  // mesmo padrão") → TRABALHO, antes das guardas de opinião/pergunta.
+  if (isImplicitWorkRequest(text)) return true;
   // Análise/relatório SOMENTE LEITURA → não é pedido de alteração.
   if (READ_ONLY.test(text)) return false;
   if (ANALYZE_LEAD.test(text) && !ACTION_HINT.test(text)) return false;
