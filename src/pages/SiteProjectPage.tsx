@@ -1400,6 +1400,10 @@ export default function SiteProjectPage() {
                   githubSlot: <StudioGitConfigDialog projectId={project.id} userId={user?.id} />,
                 }}
                 onOpenHistory={() => (studioEnabled || isReactProject ? setGitHistoryOpen(true) : setVersionsOpen(true))}
+                // FASE 7.9 — "Gerar site" no TOPO para projeto React em rascunho:
+                // mesmo fluxo do botão do preview (agente, modo generate).
+                onGenerateSite={isReactProject && isBootstrapFiles(draftFiles) ? handleGenerateSite : undefined}
+                generatingSite={isReactProject ? aiRunning : generating}
               />
             ) : (
               <>

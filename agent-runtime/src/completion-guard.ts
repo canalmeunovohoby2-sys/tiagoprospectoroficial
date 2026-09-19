@@ -568,9 +568,15 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
     return { ok: true, reply: null, error: null, unverified: false, states };
   }
 
-  // 4) GERAÇÃO sem finish_task: comportamento ATUAL preservado (o server decide).
+  // 4) GERAÇÃO sem finish_task:
+  //    - com arquivos APLICADOS → NÃO é falha: o estado fica "não verificado" e a
+  //      resposta é escrita pela IA com os fatos (nada de "revise ou refaça").
+  //    - sem nenhum arquivo aplicado → aí sim é falha real (mensagem acionável).
   if (unverified) {
-    const msg = "Não concluí a VERIFICAÇÃO FINAL desta alteração (finish_task não foi executado com os gates aprovados). Por segurança, NÃO declaro a tarefa como concluída — revise ou refaça a alteração.";
+    if (s.changeApplied) {
+      return { ok: true, reply: null, error: null, unverified: true, states };
+    }
+    const msg = "Não consegui aplicar a geração nesta execução (nenhum arquivo foi alterado). Foi um problema do provedor de IA ou a execução foi interrompida. Diga \"continue\" que eu tento de novo a partir daqui.";
     return { ok: false, reply: msg, error: msg, unverified, states };
   }
 

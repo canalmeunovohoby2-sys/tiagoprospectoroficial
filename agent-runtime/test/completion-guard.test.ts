@@ -563,8 +563,23 @@ describe("Interpretação da conclusão — 'não verificado' ≠ 'falhou' (clas
 
   it("geração sem finish_task mantém o comportamento atual (server decide pelo gate)", () => {
     const v = classifyCompletion({ ...base, mode: "generate" });
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
+    expect(v.unverified).toBe(true);
+  });
+
+  it("geração sem finish_task e SEM nada aplicado → mensagem acionável (nunca 'revise/refaça')", () => {
+    const v = classifyCompletion({ ...base, mode: "generate", changeApplied: false, touched: [] });
     expect(v.ok).toBe(false);
-    expect(v.error ?? "").toMatch(/VERIFICAÇÃO FINAL/);
+    expect(v.error ?? "").toMatch(/não consegui aplicar a geração/i);
+    expect(v.error ?? "").not.toMatch(/refaça|VERIFICAÇÃO FINAL/i);
+    expect(v.unverified).toBe(true);
+  });
+
+  it("geração com arquivos APLICADOS sem finish_task → ok (não verificado), sem mensagem de erro", () => {
+    const v = classifyCompletion({ ...base, mode: "generate", changeApplied: true, touched: ["src/App.tsx"], renderVerified: false });
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
     expect(v.unverified).toBe(true);
   });
 

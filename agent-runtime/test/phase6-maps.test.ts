@@ -52,8 +52,12 @@ describe("FASE 6 · coordenadas (nunca inventadas)", () => {
 });
 
 describe("FASE 6 · bloco do mapa (visível de verdade)", () => {
-  it("com coordenadas: container com ALTURA inline + data-pf-map + controles + link, sem iframe", () => {
+  it("com coordenadas: Google Maps interativo + fallback OSM + controles + link", () => {
     const block = buildStaticMapBlock(business)!;
+    // FASE 7.10 — o mapa primário é o iframe OFICIAL do Google (interativo, sem
+    // chave) e o mosaico OSM interativo fica como fallback (COEP do editor).
+    expect(block).toContain("data-pf-gmap");
+    expect(block).toMatch(/https:\/\/maps\.google\.com\/maps\?q=[^"']+output=embed/);
     expect(block).toContain('data-pf-map');
     expect(block).toContain('data-lat="-26.3045"');
     expect(block).toContain('data-lng="-48.8487"');
@@ -62,7 +66,8 @@ describe("FASE 6 · bloco do mapa (visível de verdade)", () => {
     // FIX Fase 6: dimensões inline (à prova de Tailwind/COEP) — antes o container
     // colapsava (altura 0) e os tiles ficavam recortados/invisíveis.
     expect(block).toContain('height: "320px"');
-    expect(block).not.toMatch(/<iframe/i);
+    // o iframe do MODELO é substituído; o do Google é o NOSSO (com fallback)
+    expect(block).toContain('data-pf-zoom');
   });
 
   it("sem coordenadas mas com endereço: fallback honesto (endereço + link), SEM mapa falso", () => {
@@ -96,7 +101,10 @@ describe("FASE 6 · normalização no workspace (iframe do modelo → mapa real)
     expect(changed).toContain("src/App.tsx");
     expect(changed).toContain("index.html");
     const app = readFileSync(join(ws, "src/App.tsx"), "utf8");
-    expect(app).not.toMatch(/<iframe/i);
+    // O iframe do GOOGLE MAPS do modelo foi trocado pelo bloco nosso (que tem o
+    // iframe oficial do Google + fallback OSM) — sem iframe "solto" do modelo.
+    expect(app).not.toMatch(/maps\/place\//i);
+    expect(app).toContain("data-pf-gmap");
     expect(app).toContain("data-pf-map");
     const html = readFileSync(join(ws, "index.html"), "utf8");
     expect(html).toContain("prospector-map-runtime");

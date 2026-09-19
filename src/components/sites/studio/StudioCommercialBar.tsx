@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import {
-  Copy, ExternalLink, FileText, FolderDown, Globe, Hammer, History, Loader2, MoreHorizontal, Rocket, Send, Undo2, Video,
+  Copy, ExternalLink, FileText, FolderDown, Globe, Hammer, History, Loader2, MoreHorizontal, Rocket, Send, Sparkles, Undo2, Video,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -12,6 +12,10 @@ export interface StudioCommercialBarProps {
   commercial: StudioCommercialActions;
   /** Histórico de versões (mesmo handler do container). */
   onOpenHistory?: () => void;
+  /** FASE 7.9 — projeto React ainda no RASCUNHO: "Gerar site" no TOPO (mesmo fluxo do preview). */
+  onGenerateSite?: () => void;
+  /** Geração em andamento (desabilita o botão e mostra spinner). */
+  generatingSite?: boolean;
 }
 
 /**
@@ -43,7 +47,7 @@ function GhostButton({ label, onClick, disabled, children }: { label: string; on
  *   · principal (Publicar) → botão sólido de destaque.
  * NENHUM handler foi removido ou alterado — só a apresentação mudou.
  */
-export function StudioCommercialBar({ commercial: c, onOpenHistory }: StudioCommercialBarProps) {
+export function StudioCommercialBar({ commercial: c, onOpenHistory, onGenerateSite, generatingSite }: StudioCommercialBarProps) {
   const secondary: Array<{ id: string; label: string; hint: string; icon: ReactNode; onClick: () => void; disabled?: boolean; show: boolean }> = [
     { id: "history", label: "Histórico", hint: "Histórico de versões", icon: <History className="h-3.5 w-3.5" />, onClick: onOpenHistory ?? (() => {}), show: !!onOpenHistory },
     { id: "build", label: "Build", hint: "Build de produção (React)", icon: c.building ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Hammer className="h-3.5 w-3.5" />, onClick: c.onBuild ?? (() => {}), disabled: !!c.building, show: c.canBuild },
@@ -53,6 +57,19 @@ export function StudioCommercialBar({ commercial: c, onOpenHistory }: StudioComm
 
   return (
     <div className="flex flex-wrap items-center gap-1">
+      {onGenerateSite && (
+        <button
+          type="button"
+          onClick={onGenerateSite}
+          disabled={generatingSite}
+          data-testid="generate-site-top"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md bg-amber-600 px-2.5 text-[11.5px] font-semibold text-white shadow-sm transition-colors duration-150 hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+          title="Gerar o site real deste cliente com o agente (substitui o rascunho)"
+        >
+          {generatingSite ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+          <span>{generatingSite ? "Gerando site…" : "Gerar site"}</span>
+        </button>
+      )}
       {secondary.length > 0 && (
         <DropdownMenu>
           <Tooltip>

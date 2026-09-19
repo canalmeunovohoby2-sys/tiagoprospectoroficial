@@ -7,6 +7,7 @@
 // (imagens) + marcador + botão "Abrir no Google Maps" (link real do Google).
 // Comprovado em Chromium: iframes bloqueados, tiles carregando sob credentialless.
 
+import { buildMapEmbedUrl } from "./site-media.js";
 import type { BusinessContext } from "../../tools.js";
 
 interface Point { lat: number; lng: number }
@@ -90,6 +91,16 @@ export function buildMapRuntimeScript(): string {
   function lngLatFromTile(x,y,z){ var n=Math.pow(2,z); var lng=x/n*360-180; var lat=Math.atan(Math.sinh(Math.PI*(1-2*y/n)))*180/Math.PI; return {lat:lat,lng:lng}; }
   function init(el){
     if(el.getAttribute("data-pf-map-ready")==="1") return; el.setAttribute("data-pf-map-ready","1");
+    // FASE 7.10 — GOOGLE MAPS PRIMEIRO: quando o navegador permite (site publicado
+    // sem COEP), o iframe oficial output=embed é o mapa (interativo). Quando o
+    // COEP do editor bloqueia, o iframe não carrega a tempo e o mosaico interativo
+    // OSM assume (nunca fica em branco).
+    var gframe=el.parentElement && el.parentElement.querySelector("[data-pf-gmap]");
+    if(gframe){ (function(fr,host){
+      var ok=false;
+      fr.addEventListener("load",function(){ ok=true; host.style.visibility="hidden"; var z=host.parentElement && host.parentElement.querySelector("[data-pf-zoom]"); if(z) z.style.display="none"; });
+      setTimeout(function(){ if(ok) return; try{ fr.remove(); }catch(e){} host.style.visibility="visible"; },3500);
+    })(gframe, el); }
     var lat=parseFloat(el.getAttribute("data-lat")), lng=parseFloat(el.getAttribute("data-lng"));
     var z=parseInt(el.getAttribute("data-zoom")||"15",10);
     if(!isFinite(lat)||!isFinite(lng)) return;
@@ -151,6 +162,13 @@ export interface StaticMapBlockOptions {
   heightClass?: string;
   /** Rota textual exibida acima/abaixo (ex.: endereço). */
   address?: string | null;
+  /**
+   * FASE 7.10 — sintaxe do destino: `jsx` (padrão, componentes .tsx) ou `html`
+   * (index.html). Em HTML, `className`/`style={{}}` não existem e `<iframe />`
+   * SEM `</iframe>` engole o resto do documento como texto (o mosaico nem
+   * existia no DOM). Por isso o bloco é gerado na sintaxe correta.
+   */
+  syntax?: "jsx" | "html";
 }
 
 /**
@@ -163,6 +181,25 @@ export function buildStaticMapBlock(business: BusinessContext, opts: StaticMapBl
   const point = businessPoint(business);
   const heightClass = opts.heightClass ?? "h-[320px]";
   const address = (opts.address ?? (typeof business.address === "string" ? business.address : "")) || "";
+  // FASE 7.10 — HTML usa atributos nativos e fecha TODAS as tags (iframe incluído).
+  if (opts.syntax === "html" && point) {
+    const embedHtml = buildMapEmbedUrl(business);
+    const dirs = mapsDirectionsUrl(business);
+    const addr = address ? `<p style="margin:0 0 8px;font-size:13px">📍 ${esc(address)}</p>` : "";
+    return [
+      `<div class="relative w-full ${heightClass}" style="position:relative;width:100%;height:320px;overflow:hidden;border:1px solid rgba(0,0,0,.1);border-radius:12px;background:#e5e7eb">`,
+      embedHtml ? `  <iframe data-pf-gmap title="Mapa do negocio" src="${esc(embedHtml)}" loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" style="position:absolute;inset:0;width:100%;height:100%;border:0"></iframe>` : "",
+      `  <div data-pf-map data-lat="${point.lat}" data-lng="${point.lng}" data-zoom="15" style="position:absolute;inset:0"></div>`,
+      `  <div data-pf-zoom style="position:absolute;right:8px;top:8px;z-index:10;display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(0,0,0,.1);border-radius:8px;background:rgba(255,255,255,.95);box-shadow:0 1px 3px rgba(0,0,0,.15)">`,
+      `    <button type="button" data-pf-zoom-step="1" data-pf-ui="1" aria-label="Aproximar" style="height:32px;width:32px;font-size:18px;line-height:1;color:#262626;background:transparent;border:0">+</button>`,
+      `    <button type="button" data-pf-zoom-step="-1" data-pf-ui="1" aria-label="Afastar" style="height:32px;width:32px;font-size:18px;line-height:1;color:#262626;background:transparent;border:0;border-top:1px solid rgba(0,0,0,.1)">−</button>`,
+      `  </div>`,
+      dirs ? `  <a href="${esc(dirs)}" target="_blank" rel="noreferrer" data-pf-ui="1" style="position:absolute;bottom:8px;right:8px;z-index:10;border-radius:8px;background:rgba(0,0,0,.75);color:#fff;padding:6px 10px;font-size:11px;font-weight:600;text-decoration:none">Abrir no Google Maps</a>` : "",
+      `  <span style="position:absolute;bottom:4px;left:8px;z-index:10;font-size:9px;color:rgba(0,0,0,.6)">© OpenStreetMap</span>`,
+      addr ? `  <div style="position:absolute;left:8px;top:8px;z-index:10;max-width:70%;border-radius:8px;background:rgba(255,255,255,.95);padding:8px 10px;box-shadow:0 1px 3px rgba(0,0,0,.15)">${addr}</div>` : "",
+      `</div>`,
+    ].filter(Boolean).join("\n");
+  }
 
   if (!point) {
     if (!directions) return null;
@@ -178,8 +215,9 @@ export function buildStaticMapBlock(business: BusinessContext, opts: StaticMapBl
 
   return [
     `<div className="relative w-full ${heightClass} overflow-hidden rounded-xl border border-black/10 bg-neutral-200" style={{ position: "relative", width: "100%", height: "320px", overflow: "hidden" }}>`,
+    `  <iframe data-pf-gmap title="Mapa do negocio" src="${esc(buildMapEmbedUrl(business) ?? "")}" loading="lazy" allowFullScreen referrerPolicy="no-referrer-when-downgrade" className="absolute inset-0 h-full w-full border-0" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }} />`,
     `  <div data-pf-map data-lat="${point.lat}" data-lng="${point.lng}" data-zoom="15" className="absolute inset-0" style={{ position: "absolute", inset: 0 }} />`,
-    `  <div className="absolute right-2 top-2 z-10 flex flex-col overflow-hidden rounded-lg border border-black/10 bg-white/95 shadow">`,
+    `  <div data-pf-zoom className="absolute right-2 top-2 z-10 flex flex-col overflow-hidden rounded-lg border border-black/10 bg-white/95 shadow">`,
     `    <button type="button" data-pf-zoom-step="1" data-pf-ui="1" aria-label="Aproximar" className="h-8 w-8 text-lg leading-none text-neutral-800 hover:bg-neutral-100">+</button>`,
     `    <button type="button" data-pf-zoom-step="-1" data-pf-ui="1" aria-label="Afastar" className="h-8 w-8 border-t border-black/10 text-lg leading-none text-neutral-800 hover:bg-neutral-100">−</button>`,
     `  </div>`,

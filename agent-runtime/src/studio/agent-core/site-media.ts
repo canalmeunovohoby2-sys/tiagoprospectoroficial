@@ -159,6 +159,9 @@ function replaceBrokenMapEmbeds(root: string, business: BusinessContext): string
  */
 export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessContext): string[] {
   const block = buildStaticMapBlock(business);
+  // FASE 7.10 — HTML recebe o bloco em sintaxe HTML (iframe fechado, style string);
+  // JSX/TSX recebe JSX. Sem isso, em .html o iframe auto-fechado engolia o resto.
+  const blockHtml = buildStaticMapBlock(business, { syntax: "html" });
   // FASE 7.7 — SEM bloco (sem coordenadas/endereço) o iframe do modelo ficava no
   // site e era BLOQUEADO pelo COEP → área branca no lugar do mapa. Agora trocamos
   // por um card honesto (endereço quando existir + link do Google Maps) ou
@@ -174,7 +177,12 @@ export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessCont
   for (const [rel, content] of Object.entries(files)) {
     if (!/\.(tsx|jsx|ts|js|html?)$/i.test(rel)) continue;
     let next = content;
-    if (/google\./i.test(content) && /maps/i.test(content)) next = content.replace(IFRAME, block);
+    // IDEMPOTENTE: o NOSSO iframe do Google (data-pf-gmap) não pode ser trocado de
+    // novo — senão a normalização se repetiria a cada run (bloco dentro de bloco).
+    const repl = /\.html?$/i.test(rel) ? (blockHtml ?? block) : block;
+    if (/google\./i.test(content) && /maps/i.test(content)) {
+      next = content.replace(IFRAME, (match) => (/data-pf-gmap/i.test(match) ? match : repl));
+    }
     if (next.includes("data-pf-map") || next.includes("data-pf-map-ready")) needsRuntime = true;
     if (next === content) continue;
     const abs = safeWorkspaceJoin(root, rel);
