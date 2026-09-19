@@ -83,7 +83,6 @@ export function UnifiedChatPanel({
   // ANEXOS PENDENTES: selecionar imagem NÃO envia nada — o envio só acontece no
   // botão Enviar (texto + anexos juntos). Removíveis e múltiplos.
   const [pending, setPending] = useState<ChatAttachmentRef[]>([]);
-  const endRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
@@ -111,9 +110,10 @@ export function UnifiedChatPanel({
   };
 
   useEffect(() => {
-    // jsdom não implementa scrollIntoView — guarda para testes/SSR.
+    // Rola SÓ o container do chat (nunca `scrollIntoView`, que arrasta a página).
     if (!stickToBottomRef.current) return;
-    endRef.current?.scrollIntoView?.({ block: "end" });
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [items.length, running, currentAgent]);
 
   const canSend = (!!text.trim() || pending.length > 0) && !running && !disabled;
@@ -280,7 +280,6 @@ export function UnifiedChatPanel({
             <RotateCcw className="mr-1 h-3 w-3" /> Tentar novamente
           </Button>
         )}
-        <div ref={endRef} />
       </div>
 
       <div className="shrink-0 border-t border-border/60 p-2.5">

@@ -299,7 +299,7 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
               src={url}
               sandbox={IFRAME_SANDBOX}
               className="border-0"
-              style={{ width: frameSize.width, height: frameSize.height }}
+              style={device === "desktop" ? { width: "100%", height: "100%" } : { width: frameSize.width, height: frameSize.height }}
             />
           </DeviceFrame>
         ) : (

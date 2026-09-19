@@ -19,15 +19,26 @@ export type StudioChatPanelProps = ComponentProps<typeof SiteChat> & {
 };
 
 function StudioStreamTimeline({ stream }: { stream: UseStudioChatResult }) {
-  const bottomRef = useRef<HTMLDivElement>(null);
   const visible = stream.running || stream.items.length > 0 || !!stream.plan || !!stream.route;
   const routeLabel = stream.route?.route === "planner" ? "Planner → Coder" : stream.route ? "Coder direto" : null;
   const lastRun = stream.runs.length ? stream.runs[stream.runs.length - 1] : null;
   // UM status humanizado (PT-BR) — operações internas NÃO aparecem no chat.
   const progress = useMemo(() => deriveAgentProgress(lastRun, stream.running), [lastRun, stream.running]);
 
+  // FASE 7.5 — auto-scroll do timeline: SOMENTE o próprio box (scrollTop) e só
+  // quando o usuário já está no fim. `scrollIntoView` rolava a PÁGINA inteira e
+  // fazia a conversa "subir" durante a execução.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
+  const onTimelineScroll = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
   useEffect(() => {
-    if (stream.running) bottomRef.current?.scrollIntoView({ block: "end" });
+    if (!stream.running || !stickRef.current) return;
+    const el = boxRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [stream.items.length, stream.running]);
 
   if (!visible) return null;
@@ -52,14 +63,13 @@ function StudioStreamTimeline({ stream }: { stream: UseStudioChatResult }) {
         {stream.cancelled && <span className="text-[10px] text-amber-600">cancelada</span>}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2.5 [scrollbar-width:thin]">
+      <div ref={boxRef} onScroll={onTimelineScroll} className="min-h-0 flex-1 overflow-y-auto p-2.5 [scrollbar-width:thin]">
         <div role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 ${errored ? "border-destructive/30 bg-destructive/5 text-destructive" : done ? "border-emerald-500/25 bg-emerald-500/5 text-emerald-700" : "border-primary/25 bg-primary/[0.04]"}`}>
           {!done && !errored
             ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
             : <span className="shrink-0 text-[13px] leading-none">{done ? "✅" : "⚠️"}</span>}
           <span className="text-[12.5px] font-medium">{progress.message}</span>
         </div>
-        <div ref={bottomRef} />
       </div>
     </div>
   );
