@@ -24,7 +24,7 @@ function makeService() {
     load: vi.fn(() => loadCtl.promise),
     syncFiles: vi.fn(async (files: Record<string, string>) => {
       syncCalls.push(files);
-      return { updated: Object.keys(files).length, removed: 0 };
+      return { updated: Object.keys(files).length, removed: 0, depsChanged: false };
     }),
     isReady: () => true,
     getUrl: () => "http://localhost:5173",

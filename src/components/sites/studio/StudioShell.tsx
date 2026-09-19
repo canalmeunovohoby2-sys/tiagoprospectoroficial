@@ -327,8 +327,8 @@ export function StudioShell({
       <ResizablePanelGroup id="studio-main" direction="horizontal" autoSaveId="studio-main-layout" className="min-h-0 flex-1">
         {showChat && (
           <>
-            <ResizablePanel id="studio-chat" order={1} defaultSize={32} minSize={20} maxSize={45} className="min-w-0">
-              <div className="relative h-full min-h-0 p-2">
+            <ResizablePanel id="studio-chat" order={1} defaultSize={26} minSize={18} maxSize={40} className="min-w-0">
+              <div className="relative h-full min-h-0 p-1.5">
                 <StudioChatPanel
                   {...chatWithFiles}
                   projectKind={projectKind}
@@ -386,7 +386,7 @@ export function StudioShell({
               <ResizablePanelGroup id="studio-code-preview" direction="horizontal" autoSaveId="studio-code-preview-layout" className="h-full">
                 {showFiles && (
                   <>
-                    <ResizablePanel id="studio-explorer" order={1} defaultSize={18} minSize={12} maxSize={32} className="min-w-0 border-r border-border/60">
+                    <ResizablePanel id="studio-explorer" order={1} defaultSize={14} minSize={10} maxSize={28} className="min-w-0 border-r border-border/60">
                       <StudioFileExplorer
                         files={effectiveFiles}
                         selectedPath={selectedPath}

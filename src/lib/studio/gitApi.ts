@@ -86,6 +86,8 @@ export interface StudioGitRequest {
   summary?: string;
   /** C4: Git do Studio é exclusivo de react (default). */
   projectKind?: "react";
+  /** FASE 2 — revisão do workspace do cliente (snapshot atrasado é ignorado no runtime). */
+  workspaceRevision?: number;
 }
 
 /**

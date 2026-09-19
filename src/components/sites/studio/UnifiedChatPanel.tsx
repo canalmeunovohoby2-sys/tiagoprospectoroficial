@@ -48,11 +48,11 @@ function ProgressBlock({ item }: { item: Extract<UnifiedChatItem, { kind: "activ
       ? "border-emerald-500/25 bg-emerald-500/5 text-emerald-700"
       : "border-primary/25 bg-primary/[0.04] text-foreground";
   return (
-    <div role="status" aria-live="polite" className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${tone}`}>
+    <div role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${tone}`}>
       {!done && !errored
         ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
         : <span className="shrink-0 text-[13px] leading-none">{done ? "✅" : "⚠️"}</span>}
-      <span className="text-[12.5px] font-medium">{p.message}</span>
+      <span className="text-[12px] font-medium">{p.message}</span>
     </div>
   );
 }
@@ -140,7 +140,7 @@ export function UnifiedChatPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-card/40">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-2.5 py-1.5">
         <p className="flex items-center gap-2 text-[12px] font-semibold"><Sparkles className="h-3.5 w-3.5 text-primary" /> Construtor IA</p>
         <span className={`inline-flex items-center gap-1 rounded-full border border-border/60 px-2 py-0.5 text-[10px] ${
           phase === "error" ? "text-destructive" : phase === "cancelled" ? "text-amber-600" : running ? "text-primary" : "text-muted-foreground"
@@ -175,7 +175,7 @@ export function UnifiedChatPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3 [scrollbar-width:thin]">
+      <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-2.5 py-2.5 [scrollbar-width:thin]">
         {items.length === 0 && (
           <p className="px-1 py-6 text-center text-[12px] text-muted-foreground">
             Descreva o que você quer criar ou alterar. O agente trabalha no projeto real e você acompanha aqui.

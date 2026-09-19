@@ -6,6 +6,8 @@ export interface StudioBuildRequest {
   projectId: string;
   userId?: string;
   files: Record<string, string>;
+  /** FASE 2 — revisão do workspace do cliente (snapshot atrasado é ignorado). */
+  workspaceRevision?: number;
 }
 
 export interface StudioBuildResult {
@@ -13,6 +15,8 @@ export interface StudioBuildResult {
   html?: string | null;
   error?: string | null;
   log?: string;
+  workspace_rev?: number;
+  snapshot_ignored?: boolean;
 }
 
 /** Executa o build de produção real. Nunca lança. */
@@ -27,7 +31,7 @@ export async function invokeStudioBuild(input: StudioBuildRequest): Promise<Stud
     const res = await fetch(`${runtimeSel.url.replace(/\/$/, "")}/build`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ projectId: input.projectId, projectKind: "react", userId: input.userId, files: input.files }),
+      body: JSON.stringify({ projectId: input.projectId, projectKind: "react", userId: input.userId, files: input.files, workspaceRevision: input.workspaceRevision }),
       signal: AbortSignal.timeout(600_000),
     });
     if (!res.ok) {

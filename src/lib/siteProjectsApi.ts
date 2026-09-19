@@ -64,10 +64,21 @@ async function uniqueSlug(base: string): Promise<string> {
   return `${root}-${Date.now().toString(36)}`;
 }
 
+// FASE 5.1 — colunas do ESTÚDIO: nunca baixar `published_code` (HTML publicado
+// inteiro, pode ter MBs) nem colunas que a tela de edição não usa. É a diferença
+// entre abrir o projeto rápido e trafegar lixo pesado a cada abertura.
+const STUDIO_PROJECT_COLUMNS = [
+  "id", "user_id", "lead_id", "name", "company_name", "segment", "city", "state",
+  "status", "slug", "published_status", "published_spec", "published_at",
+  "briefing", "design_system", "site_structure", "content", "calls_to_action",
+  "seo", "assets", "generated_code", "settings", "spec", "ai_model",
+  "created_at", "updated_at",
+].join(",");
+
 export async function listSiteProjects(userId: string): Promise<SiteProjectRow[]> {
   const { data, error } = await supabase
     .from("site_projects")
-    .select("*")
+    .select(STUDIO_PROJECT_COLUMNS)
     .order("updated_at", { ascending: false });
   if (error) throw new Error(error.message);
   return Array.isArray(data)
@@ -78,7 +89,7 @@ export async function listSiteProjects(userId: string): Promise<SiteProjectRow[]
 export async function fetchSiteProject(id: string): Promise<SiteProjectRow | null> {
   const { data, error } = await supabase
     .from("site_projects")
-    .select("*")
+    .select(STUDIO_PROJECT_COLUMNS)
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -322,6 +333,12 @@ export interface AgentExecuteResult {
   activity?: Array<{ phase: string; detail: string }>;
   /** Prova de execução real da pesquisa web (sem secrets). */
   researchTrace?: ResearchTraceItem[];
+  /** FASE 2 — revisão do workspace após a execução (source of truth). */
+  workspace_rev?: number;
+  /** FASE 2 — resultado honesto: completed_verified | completed_unverified | no_change | failed | conversation. */
+  result_state?: string;
+  /** FASE 2 — evidência da alteração (arquivos, operações, verificação, cobertura do pedido). */
+  evidence?: Record<string, unknown>;
 }
 
 // (C7) `slugName`/`invokeAgentExecute` e a Edge Function `agent-execute` saíram do
@@ -462,6 +479,8 @@ export async function invokeProspectorAgent(input: {
   execution?: { provider?: string; model?: string; fallback?: string } | null;
   /** ID da conversa atual — liga histórico persistido (runtime-ai-config ↔ conversation-save). */
   conversationId?: string;
+  /** FASE 2 — revisão do workspace que o cliente possui (snapshot atrasado é ignorado no runtime). */
+  workspaceRevision?: number;
 }, onLiveActivity?: (phase: string, detail: string) => void, opts?: {
   /** Ativa o Router→(Planner)→Coder no runtime (Fase 2 do Studio, apenas static). */
   orchestrate?: boolean;
@@ -499,6 +518,7 @@ export async function invokeProspectorAgent(input: {
         stream: useStream,
         orchestrate: opts?.orchestrate === true ? true : undefined,
         projectKind: opts?.projectKind === "react" ? "react" : undefined,
+        workspaceRevision: typeof input.workspaceRevision === "number" ? input.workspaceRevision : undefined,
       }),
       signal: opts?.signal ?? AbortSignal.timeout(600_000),
     });

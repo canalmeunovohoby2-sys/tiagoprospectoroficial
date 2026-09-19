@@ -38,7 +38,9 @@ describe("C8 · React nunca usa o fluxo legado (spec/HTML)", () => {
 
   it("conversa pura NÃO passa pelo motor de edição (responde sem tocar em arquivos)", () => {
     const server = read("agent-runtime/src/server.ts");
-    expect(server).toContain("!instructionRequestsChange(instruction)");
+    // A decisão agora é uma função testável (reactRunKind → instructionRequestsChange).
+    expect(server).toContain("export function reactRunKind");
+    expect(server).toContain('runKind === "conversation"');
     expect(server).toContain('runtime: "conversation"');
     expect(server).toContain("tools: []");
   });

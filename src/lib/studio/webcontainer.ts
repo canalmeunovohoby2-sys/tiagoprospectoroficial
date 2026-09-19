@@ -11,6 +11,10 @@
 // A API real (`@webcontainer/api`) é carregada por dynamic import dentro do
 // adapter padrão, o que permite injetar um adapter falso nos testes (Node/jsdom
 // não executam WebContainer real).
+//
+// FASE 5.1: instrumentação (T3–T7) e reinstall SÓ quando as dependências mudam.
+
+import { PERF, markPerf } from "./perf";
 
 export interface WCFileSystem {
   writeFile(path: string, content: string): Promise<void>;
@@ -59,7 +63,7 @@ export interface WebContainerService {
   /** Boot + mount + install (1x) + dev server. Idempotente e à prova de corrida. */
   load(files: Record<string, string>, onLog?: ServiceLog, projectId?: string): Promise<string>;
   /** Sincroniza um snapshot por diff (add/update/remove) — HMR cuida do resto. */
-  syncFiles(files: Record<string, string>, onLog?: ServiceLog): Promise<{ updated: number; removed: number }>;
+  syncFiles(files: Record<string, string>, onLog?: ServiceLog): Promise<{ updated: number; removed: number; depsChanged: boolean }>;
   isReady(): boolean;
   getUrl(): string | null;
   /** projectId do projeto atualmente montado (isolamento entre projetos). */
@@ -131,7 +135,18 @@ export function createWebContainerService(
   let devUrl: string | null = null;
   let depsInstalled = false;
   let devProcess: WCProcess | null = null;
+  let depsHash = "";
   const cache = new Map<string, string>();
+
+  /** Impressão digital das dependências: só muda se package.json/lock mudarem. */
+  function depsFingerprint(files: Record<string, string>): string {
+    const keys = ["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock"].filter((k) => files[k] !== undefined);
+    if (keys.length === 0) return "";
+    let h = 0;
+    const src = keys.map((k) => `${k}:${files[k]}`).join("\u0000");
+    for (let i = 0; i < src.length; i += 1) h = (h * 33 + src.charCodeAt(i)) >>> 0;
+    return `${keys.length}:${h.toString(36)}`;
+  }
 
   async function ensureBooted(onLog?: ServiceLog): Promise<WCInstance> {
     if (instance) return instance;
@@ -171,6 +186,7 @@ export function createWebContainerService(
         settled = true;
         clearTimeout(timer);
         devUrl = url;
+        markPerf(PERF.T7, { url, port });
         onLog?.(`[WebContainer] dev server pronto em ${url} (porta ${port})`);
         resolve(url);
       };
@@ -201,14 +217,19 @@ export function createWebContainerService(
     }
     if (loadPromise) return loadPromise;
     mountedProjectId = pid;
+    markPerf(PERF.T3, { projectId: pid, files: Object.keys(files).length });
     loadPromise = (async () => {
       try {
         const container = await ensureBooted(onLog);
+        markPerf(PERF.T4, { projectId: pid });
         onLog?.(`[WebContainer] montando ${Object.keys(files).length} arquivo(s)…`);
         await container.mount(toFileSystemTree(files));
+        markPerf(PERF.T5, { files: Object.keys(files).length });
         cache.clear();
         for (const [p, c] of Object.entries(files)) cache.set(p, c);
+        depsHash = depsFingerprint(files);
         if (!depsInstalled && !options.skipInstall) await runNpmInstall(container, onLog);
+        markPerf(PERF.T6, { installed: depsInstalled });
         return await startDevServer(container, onLog);
       } catch (e) {
         loadPromise = null;
@@ -218,9 +239,9 @@ export function createWebContainerService(
     return loadPromise;
   }
 
-  async function syncFiles(files: Record<string, string>, onLog?: ServiceLog): Promise<{ updated: number; removed: number }> {
+  async function syncFiles(files: Record<string, string>, onLog?: ServiceLog): Promise<{ updated: number; removed: number; depsChanged: boolean }> {
     const container = instance;
-    if (!container) return { updated: 0, removed: 0 };
+    if (!container) return { updated: 0, removed: 0, depsChanged: false };
     const incoming = new Set(Object.keys(files));
     const toUpdate: Array<[string, string]> = [];
     for (const [p, c] of Object.entries(files)) {
@@ -242,7 +263,19 @@ export function createWebContainerService(
     if (toUpdate.length || toRemove.length) {
       onLog?.(`[WebContainer] sync: ${toUpdate.length} atualizado(s), ${toRemove.length} removido(s).`);
     }
-    return { updated: toUpdate.length, removed: toRemove.length };
+    // FASE 5.1 — dependências: NADA é reinstalado quando só código mudou. Quando
+    // package.json/lock MUDAM de verdade, sinalizamos (`depsChanged`) e deixamos o
+    // container precisar de install de novo — quem decide reinstalar é o fluxo de
+    // reload/restart explícito (nunca um efeito colateral silencioso do sync).
+    let depsChanged = false;
+    const nextDeps = depsFingerprint(files);
+    if (nextDeps && nextDeps !== depsHash) {
+      depsChanged = true;
+      depsHash = nextDeps;
+      depsInstalled = false;
+      onLog?.("[WebContainer] package.json/lock mudou → dependências serão instaladas ao recarregar o preview.");
+    }
+    return { updated: toUpdate.length, removed: toRemove.length, depsChanged };
   }
 
   async function teardown(): Promise<void> {
@@ -250,6 +283,7 @@ export function createWebContainerService(
     devProcess = null;
     devUrl = null;
     depsInstalled = false;
+    depsHash = "";
     cache.clear();
     mountedProjectId = null;
     const current = instance;

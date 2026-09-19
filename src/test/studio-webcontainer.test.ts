@@ -81,7 +81,7 @@ describe("C0 · webcontainer (serviço)", () => {
     fake.writes.length = 0;
 
     const noop = await service.syncFiles({ "a.tsx": "1", "b.tsx": "2" });
-    expect(noop).toEqual({ updated: 0, removed: 0 });
+    expect(noop).toEqual({ updated: 0, removed: 0, depsChanged: false });
     expect(fake.writes.length).toBe(0);
 
     const changed = await service.syncFiles({ "a.tsx": "1b", "c.tsx": "3" });
@@ -93,7 +93,7 @@ describe("C0 · webcontainer (serviço)", () => {
     // cache atualizado → segunda passada não reescreve
     fake.writes.length = 0;
     const again = await service.syncFiles({ "a.tsx": "1b", "c.tsx": "3" });
-    expect(again).toEqual({ updated: 0, removed: 0 });
+    expect(again).toEqual({ updated: 0, removed: 0, depsChanged: false });
   });
 
   it("syncFiles cria diretórios-pai novos (arquivos gerados em src/components)", async () => {

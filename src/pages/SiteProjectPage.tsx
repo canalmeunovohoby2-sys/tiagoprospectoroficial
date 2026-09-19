@@ -7,16 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import type { SiteProjectRow, SiteSpec } from "@/data/siteProjects";
-import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf, projectKickoffState } from "@/data/siteProjects";
+import { normalizeSpec, statusLabel, safeArr, contentBlock, applyAiProtections, specsEqual, projectKindOf } from "@/data/siteProjects";
 import { StudioDeviceSwitcher } from "@/components/sites/studio/StudioPreviewPanel";
 import { StudioCommercialBar } from "@/components/sites/studio/StudioCommercialBar";
 import type { StudioDevice } from "@/lib/studio/types";
-import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
 import {
   fetchSiteProject, saveGeneratedSite, updateProjectSpec, editSiteWithAI,
   loadSiteChatMessages, appendSiteChatMessages, publishSiteProject, unpublishSiteProject, publishReactSite,
   createSiteVersion, invokeProspectorAgent, invokeProspectorGenerate, restoreSiteVersion,
-  captureWorkspaceScreenshots, generateSiteVideo, fetchRuntimeArtifact, updateGeneratedCode, markReactKickoff,} from "@/lib/siteProjectsApi";
+  captureWorkspaceScreenshots, generateSiteVideo, fetchRuntimeArtifact, updateGeneratedCode } from "@/lib/siteProjectsApi";
 import { SitePreview } from "@/components/sites/SitePreview";
 import { safeLocalStorage } from "@/lib/safeStorage";
 import { SiteChat } from "@/components/sites/editor/SiteChat";
@@ -34,6 +33,7 @@ import { StudioGitConfigDialog } from "@/components/sites/studio/StudioGitConfig
 import { StudioHistoryDialog, type StudioGitRestoreMeta } from "@/components/sites/studio/StudioHistoryDialog";
 import { invokeStudioGit } from "@/lib/studio/gitApi";
 import { isStudioUiEnabled } from "@/lib/studio/featureFlag";
+import { PERF, markPerf } from "@/lib/studio/perf";
 import { useStudioChat } from "@/hooks/studio/useStudioChat";
 import type { StudioStreamEvent, StudioFilesReadyEvent } from "@/lib/studio/streamEvents";
 import { GitHubProjectButton } from "@/components/app/GitHubProjectButton";
@@ -183,53 +183,11 @@ export default function SiteProjectPage() {
     return () => { cancelled = true; };
   }, [project?.lead_id]);
 
-// Primeira geração de um projeto React: instrução com os dados REAIS do cliente
-// (o template inicial NÃO é o site final). Roda pelo mesmo /run → StudioTeam.
-function buildReactKickoffInstruction(project: {
-  name: string; company_name?: string | null; segment?: string | null;
-  city?: string | null; state?: string | null; briefing?: unknown;
-}, lead?: ProposalLeadLike | null): string {
-  const b = (project.briefing && typeof project.briefing === "object" ? project.briefing : {}) as Record<string, unknown>;
-  const str = (...keys: string[]): string | null => {
-    for (const k of keys) { const v = b[k]; if (typeof v === "string" && v.trim()) return v.trim(); }
-    return null;
-  };
-  const media = buildSiteMediaContext({
-    name: project.company_name || project.name,
-    segment: project.segment ?? str("segment", "segmento"),
-    category: lead?.category ?? str("category", "categoria"),
-    address: str("address", "endereco", "endereço") ?? lead?.address ?? null,
-    city: project.city ?? str("city", "cidade"),
-    state: project.state ?? str("state", "estado", "uf"),
-    photoName: lead?.photo_name,
-    googleUrl: lead?.google_url,
-    latitude: lead?.latitude,
-    longitude: lead?.longitude,
-  });
-  const contact = str("phone", "telefone", "whatsapp") ?? lead?.whatsapp ?? lead?.phone ?? null;
-  const about = str("about", "sobre", "description");
-  const userPrompt = typeof b.user_prompt === "string" ? b.user_prompt.trim() : "";
-  const services = Array.isArray(b.services) ? (b.services as unknown[]).filter((x) => typeof x === "string").slice(0, 12).join(", ") : "";
-  const facts = [
-    `Empresa: ${project.company_name || project.name}`,
-    project.segment ? `Segmento: ${project.segment}` : null,
-    project.city ? `Cidade: ${project.city}${project.state ? `/${project.state}` : ""}` : null,
-    contact ? `Contato: ${contact}` : null,
-    media.address ? `Endereço: ${media.address}` : null,
-    media.photos.length ? `Fotos reais (use EXATAMENTE estas URLs): ${media.photos.join(", ")}` : "Fotos reais: nenhuma disponível",
-    media.placeId ? `Place ID do Google: ${media.placeId}` : null,
-    (media.latitude !== null && media.longitude !== null) ? `Coordenadas: ${media.latitude},${media.longitude}` : null,
-    about ? `Sobre: ${about}` : null,
-    services ? `Serviços: ${services}` : null,
-  ].filter(Boolean).join("\n");
-  return [
-    "Gere AGORA o site REAL deste cliente, substituindo o template inicial. Use SOMENTE os dados reais abaixo — NÃO invente telefone, endereço, serviços, depoimentos, números ou fatos comerciais.",
-    userPrompt ? `Pedido original: ${userPrompt}` : "",
-    facts,
-    "Use as fotos reais fornecidas quando existirem; se não houver, não use imagens quebradas nem ícones no lugar de fotos. Responsivo em mobile (~390px) e desktop (~1366px).",
-    "Use write_file/edit_file para alterar os arquivos reais do projeto e só finalize quando o site do cliente estiver aplicado.",
-  ].filter(Boolean).join("\n\n");
-}
+// FASE 1: a primeira geração deixou de ser automática (kickoff). O site é criado
+// quando o usuário PEDE no chat — o runtime monta a missão com os dados reais do
+// cliente (mediaContextBlock + briefing + memória) e roda o agente em modo
+// "generate" no projeto bootstrap.
+
 
   // Avança por fases reais do ciclo do agente enquanto a IA trabalha.
   function runAgentProgress(steps: AgentProgress[], intervalMs = 1600) {
@@ -308,7 +266,7 @@ function buildReactKickoffInstruction(project: {
     if (building) return { ok: false, error: "Build já em andamento." };
     setBuilding(true);
     try {
-      const res = await invokeStudioBuild({ projectId: project.id, userId: user?.id, files: draftFiles ?? {} });
+      const res = await invokeStudioBuild({ projectId: project.id, userId: user?.id, files: draftFiles ?? {}, workspaceRevision: workspaceRevRef.current ?? undefined });
       if (!res.ok) {
         const error = res.error ?? "Build falhou.";
         toast.error(error);
@@ -560,6 +518,7 @@ function buildReactKickoffInstruction(project: {
     setLoading(true);
     try {
       const p = await fetchSiteProject(id);
+      markPerf(PERF.T1, { id });
       if (!p || (user && p.user_id !== user.id)) {
         setNotFound(true);
       } else {
@@ -573,6 +532,11 @@ function buildReactKickoffInstruction(project: {
     }
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id, user]);
+
+  // FASE 5.1 — T2: Studio montado (dados do projeto já disponíveis na tela).
+  useEffect(() => {
+    if (!loading && project) markPerf(PERF.T2, { id: project.id });
+  }, [loading, project]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -785,7 +749,10 @@ function buildReactKickoffInstruction(project: {
     setAiError(null);
     setLiveWork([]);
     if (studioEnabled || isReactProject) studioChat.begin();
-    const stopProgress = runAgentProgress(EDIT_STEPS, 1400);
+    // FASE 1 (sem timer artificial): o progresso agora é 100% derivado dos eventos
+    // REAIS do agente (activity/tool_call/tool_response chegando ao vivo). Não há
+    // mais simulação de fases por setInterval.
+    const stopProgress = () => { /* progresso real: nada a parar */ };
     const snapshot = draftSpec;
     const hasWorkspace = !!runFiles && Object.keys(runFiles).length > 0;
     // Resposta LIMPA no chat: o log interno (arquivos lidos/editados, ferramentas)
@@ -851,6 +818,7 @@ function buildReactKickoffInstruction(project: {
             attachments: attachments.map((a) => ({ name: a.label, dataUrl: a.dataUrl, mediaType: guessMediaType(a.dataUrl), label: a.label })),
             conversation: chatConversation(),
             conversationId: conversationId ?? undefined,
+            workspaceRevision: workspaceRevRef.current ?? undefined,
           }, (phase, detail) => {
             // Atividade REAL ao vivo (arquivo sendo lido/editado etc.).
             setLiveWork((prev) => [...prev.slice(-9), { phase, detail }]);
@@ -863,6 +831,11 @@ function buildReactKickoffInstruction(project: {
           } : { signal: controller.signal });
         } catch (e) {
           agentErr = e;
+        }
+
+        // FASE 2 — guarda a revisão devolvida pelo runtime (source of truth).
+        if (typeof (agentRes as { workspace_rev?: number } | null)?.workspace_rev === "number") {
+          workspaceRevRef.current = (agentRes as { workspace_rev?: number }).workspace_rev ?? null;
         }
 
         // CONVERSA (runtime "conversation"): a IA só respondeu — nada foi tocado no
@@ -1085,6 +1058,7 @@ function buildReactKickoffInstruction(project: {
         userId: user?.id,
         files: filesToSave,
         summary,
+        workspaceRevision: workspaceRevRef.current ?? undefined,
       });
       // C2: representa o commit na conversa quando disponível (sem C4 novo pipeline).
       if (res?.ok && res.committed) {
@@ -1210,68 +1184,24 @@ function buildReactKickoffInstruction(project: {
   // Stream do Studio (Fase 2): Router/Planner/Coder + thoughts + tools agrupados.
   const studioChat = useStudioChat();
 
-  // KICKOFF: novo projeto React (bootstrap) dispara a PRIMEIRA geração real pelo
-  // /run → StudioTeam, com os dados do cliente. Nunca cai em spec/HTML legado.
-  //
-  // IDEMPOTÊNCIA (nunca retrabalhar a cada refresh):
-  // - dispara só quando o estado PERSISTIDO é "pending" (ou legado sem estado e
-  //   ainda no rascunho, uma única vez);
-  // - uma tentativa por projeto neste navegador (guarda local, sobrevive a F5) e
-  //   uma por sessão (ref);
-  // - ao terminar, PERSISTE "done"/"failed" no banco — não volta a rodar sozinho.
-  const kickoffStartedRef = useRef<string | null>(null);
-  const kickoffState = projectKickoffState(project);
-  const bootstrapPending = isReactProject && isBootstrapFiles(draftFiles);
-  const kickoffLocalKey = project ? `prospector.kickoff.${project.id}` : "";
-  const kickoffAttemptedLocally = !!kickoffLocalKey && safeLocalStorage.getItem(kickoffLocalKey) === "1";
-  const legacyStuck = kickoffState === "none" && bootstrapPending;
-  const needsKickoff = isReactProject && !kickoffAttemptedLocally && (kickoffState === "pending" || legacyStuck);
-  useEffect(() => {
-    if (!project || !isReactProject || !needsKickoff) return;
-    if (!draftFiles || Object.keys(draftFiles).length === 0) return;
-    if (!leadLoaded) return; // espera os dados reais (fotos/endereço/geo) do lead
-    if (generating || aiRunning) return;
-    if (kickoffStartedRef.current === project.id) return;
-    kickoffStartedRef.current = project.id;
-    // Marca a tentativa ANTES de rodar: mesmo um crash/F5 no meio não redispara.
-    try { safeLocalStorage.setItem(kickoffLocalKey, "1"); } catch { /* noop */ }
-    // O site JÁ foi gerado (não é rascunho): só corrige um estado persistido
-    // obsoleto e NUNCA retrabalha o site ao atualizar a página.
-    if (!isBootstrapFiles(draftFiles)) {
-      void markReactKickoff(project.id, "done")
-        .then(() => setProject((p) => (p ? { ...p, settings: { ...(p.settings ?? {}), kind: "react", kickoff: "done" } } : p)))
-        .catch(() => { /* guarda local já impede repetição */ });
-      return;
-    }
-    const instruction = buildReactKickoffInstruction(project, projectLeadRef.current);
-    // O CHAT mostra só um pedido curto e humano. A instrução completa (dados,
-    // fotos, mapa, regras) fica INTERNA — nunca aparece como mensagem do usuário.
-    const briefPrompt = (() => {
-      const b = (project.briefing && typeof project.briefing === "object" ? project.briefing : {}) as Record<string, unknown>;
-      return typeof b.user_prompt === "string" ? b.user_prompt.trim() : "";
-    })();
-    const kickoffDisplay = briefPrompt
-      || `Gerar o site: ${project.company_name || project.name}${project.segment ? ` · ${project.segment}` : ""}`;
-    void runAiInstruction(instruction, undefined, { media: true, displayText: kickoffDisplay }).then(async () => {
-      // Sucesso = o agente aplicou arquivos e o rascunho foi substituído.
-      const produced = prevFilesRef.current;
-      const applied = !!produced && Object.keys(produced).length > 0 && !isBootstrapFiles(produced);
-      const state: "done" | "failed" = applied ? "done" : "failed";
-      try {
-        await markReactKickoff(project.id, state);
-        setProject((p) => (p ? { ...p, settings: { ...(p.settings ?? {}), kind: "react", kickoff: state } } : p));
-      } catch {
-        /* guarda local já impede repetição automática */
-      }
-      if (!applied) {
-        toast.error("A geração inicial não aplicou o site (ainda está no rascunho). Peça o site no chat para tentar novamente.");
-      }
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project?.id, needsKickoff, kickoffState, bootstrapPending, isReactProject, draftFiles, leadLoaded, generating, aiRunning]);
+  // FASE 2 — revisão do workspace que este cliente possui (recebida do runtime).
+  // Enviada em /run, /build e /git: se estiver atrasada, o runtime ignora o
+  // snapshot e mantém o estado mais novo (evita "A sobrescrever B").
+  const workspaceRevRef = useRef<number | null>(null);
+
+  // FASE 1 (sem automação): abrir um projeto NÃO dispara geração. O cadastro do
+  // cliente é contexto; a PRIMEIRA geração (e qualquer alteração) só acontece
+  // quando o usuário pede no chat ("gere o site para a minha empresa..."). Uma
+  // saudação ("oi, boa tarde") conversa e nunca vira geração.
+  // O `briefing.user_prompt` continua sendo usado como texto do pedido quando o
+  // usuário pedir a geração no chat (ver handleGeneratePrompt abaixo).
 
   function handleStudioEvent(event: StudioStreamEvent) {
     studioChat.handleEvent(event);
+    // FASE 2 — revisão do workspace (source of truth): o runtime devolve em cada
+    // evento e nós a devolvemos nas próximas chamadas; snapshot antigo é ignorado.
+    const rev = (event as unknown as { workspace_rev?: number }).workspace_rev;
+    if (typeof rev === "number") workspaceRevRef.current = rev;
     if (event.type === "files_ready") {
       const files = (event as StudioFilesReadyEvent).files;
       if (files && Object.keys(files).length > 0) {

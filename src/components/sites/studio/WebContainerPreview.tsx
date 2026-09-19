@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PERF, markPerf } from "@/lib/studio/perf";
 import { AlertTriangle, CheckCircle2, Crosshair, Loader2, RefreshCw, ShieldAlert, Terminal } from "lucide-react";
 import { useWebContainerPreview } from "@/hooks/studio/useWebContainerPreview";
 import { injectReactVisualHelper } from "@/lib/studio/reactVisualHelper";
@@ -171,6 +172,11 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
     const t = setTimeout(() => setFrameKey((k) => k + 1), 700);
     return () => clearTimeout(t);
   }, [refreshKey, phase]);
+
+  // FASE 5.1 — T8: Preview REAL visível (Vite rodando + iframe carregado).
+  useEffect(() => {
+    if (phase === "ready" && url) markPerf(PERF.T8, { url });
+  }, [phase, url]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
