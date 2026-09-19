@@ -9,7 +9,7 @@ import { buildBrowserTools } from "./browser-tools.js";
 import { BrowserSession } from "./browser-session.js";
 import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
-import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, classifyCompletion, classifyToolResultFailure, type CompletionStates, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
+import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, classifyCompletion, classifyToolResultFailure, shouldBlockConfigEdit, isColorSwapRequest, type CompletionStates, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
 import { analyzeVisualEvidence } from "./visual-analysis.js";
 import { hasImageReferenceChange, requestsImageSwap, requestsFramingFix, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
@@ -34,6 +34,17 @@ export function isSurgicalEditTask(instruction: string): boolean {
   if (/(foto|fotografia|imagem|imagens|hero|banner|enquadr|cortad|cortou|cortar|recort|zoom|object-position|object-fit|background-position|background-size|cabe[çc]a|rosto|logomarca|\blogo\b|favicon|\bsvg\b|[íi]cone)/i.test(text)) return false;
   return /(troque?|troca|altere?|muda|mude|corrija?|conserta|adicione?|inclua?|coloque|remova?|apague|deixe|arrume|tire)\b/i.test(text);
 }
+
+const COLOR_SWAP_HINT = `
+
+[TROCA DE COR — NÃO É IMAGEM, NÃO É BUILD/ALÉM DA COR]
+Este pedido é sobre COR e vale para o SITE INTEIRO. Faça exatamente isto:
+1) ESCONDO = a cor pedida. Localize TODAS as ocorrências da cor de ORIGEM no projeto (nome em pt/en, HEX, rgb()/hsl(), variáveis CSS \`--*\`, classes utilitárias tipo \`bg-blue-600\`, gradientes, sombras e bordas) com \`grep_search\` em src/** e arquivos de estilo.
+2) Troque pela cor de DESTINO mantendo contraste e hierarquia (derive tons claros/escuros coerentes) e NÃO deixe resquício visível da cor antiga.
+3) NUNCA edite configuração/build (vite.config, tsconfig, package.json, tailwind.config) para "mudar cor": a mudança é em CSS/tema/componentes.
+4) Verifique no navegador (browser_reload + screenshot/visual_review ou run_command de build) e só finalize se a cor nova estiver aplicada.
+5) Responda o que MUDOU (arquivos e cor) — nunca fale de imagem/foto se o pedido era cor.
+`;
 
 const SURGICAL_HINT = `
 
@@ -405,6 +416,17 @@ export class ProspectorSiteAgent {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const input: any = (ctx as { toolCall?: { input?: unknown } }).toolCall?.input ?? (ctx as { input?: unknown }).input ?? {};
       const name = ctx?.tool?.name ?? (ctx as { toolCall?: { toolName?: string } }).toolCall?.toolName ?? ctx?.toolName ?? "";
+      // FASE 7.5 — GUARDA DE CONFIG: pedido visual/textual nunca edita arquivo de
+      // build (vite.config/tsconfig/package.json). Aconteceu de verdade: "troque o
+      // azul por laranja" foi parar no vite.config.ts e o site não mudou.
+      if ((name === "write_file" || name === "edit_file" || name === "create_file") && typeof input?.path === "string") {
+        if (shouldBlockConfigEdit(input.path, this.currentInstruction)) {
+          return {
+            skip: true,
+            reason: `"${input.path}" é ARQUIVO DE CONFIGURAÇÃO/BUILD e este pedido NÃO é sobre build/dependências. A alteração pedida é de CONTEÚDO/VISUAL: mexa nos arquivos do site (CSS/theme, src/**, componentes) — nunca em vite.config/tsconfig/package.json.`,
+          };
+        }
+      }
       if (name === "write_file" && (options.mode !== "generate" || options.hasBase) && !REBUILD_RE.test(this.currentInstruction) && this.writeSkips < 4) {
         const path = typeof input?.path === "string" ? input.path : "";
         const content = typeof input?.content === "string" ? input.content : "";
@@ -656,6 +678,8 @@ export class ProspectorSiteAgent {
       prompt = `${instruction}\n${BUG_HINT}`;
     } else if (this.options.mode === "edit" && requestsFramingFix(instruction)) {
       prompt = `${instruction}\n${FRAMING_HINT}`;
+    } else if (this.options.mode === "edit" && isColorSwapRequest(instruction)) {
+      prompt = `${instruction}\n${COLOR_SWAP_HINT}`;
     } else if (this.options.mode === "edit" && isSurgicalEditTask(instruction)) {
       prompt = `${instruction}\n${SURGICAL_HINT}`;
     } else {

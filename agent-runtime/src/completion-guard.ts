@@ -73,12 +73,40 @@ function isPureChatter(text: string): boolean {
 }
 
 /**
- * FASE 5 — pergunta sobre o PRÓPRIO trabalho/processo ("me explica o que você
- * está fazendo", "por que você escolheu essa cor?", "como você fez isso?").
- * É conversa: o usuário quer entender, não pedir alteração. Um pedido MISTO com
- * autorização/ação explícita ("pode melhorar", "ajuste isso") NÃO é pergunta de
- * processo — continua sendo trabalho.
+ * FASE 7.5 — TROCA DE COR (ex.: "mude todo o azul do site para laranja").
+ * É uma tarefa de TEMA: mexe em CSS/classes/componentes — NUNCA em configuração
+ * de build. O detector alimenta uma instrução específica para o agente e a
+ * guarda que impede editar config por engano.
  */
+const COLOR_WORD = /\b(azul|azuis|vermelh[oa]s?|verdes?|amarel[oa]s?|laranjas?|rox[oa]s?|rosas?|ros[ae]s?|pret[oa]s?|branc[oa]s?|cinz[ae]s?|marrons?|dourad[oa]s?|pratead[oa]s?|bege|turquesa|violeta|azul-marinho|ciano|magenta|blue|red|green|yellow|orange|purple|pink|black|white|gray|grey|gold|silver)\b|#[0-9a-f]{3,8}\b/i;
+const COLOR_CHANGE_VERB = /(troque|trocar|troca|mude|mudar|muda|altere|alterar|altera|substitu\w*|converta|converter|deixe|deixar|passe|passar)\b/i;
+
+export function isColorSwapRequest(instruction: string): boolean {
+  const text = String(instruction ?? "").trim();
+  if (!text) return false;
+  if (/^(o\s+que|como|qual|quando|onde|por\s+que|quem|explique|me\s+(explica|diga))/i.test(text)) return false;
+  return COLOR_WORD.test(text) && COLOR_CHANGE_VERB.test(text);
+}
+
+/**
+ * FASE 7.5 — GUARDA DE ARQUIVOS DE CONFIGURAÇÃO: pedido visual/textual NÃO pode
+ * acabar em `vite.config.ts`/`tsconfig`/`package.json` (aconteceu de verdade:
+ * "troque o azul por laranja" editou o vite.config e o site não mudou).
+ * Só libera config quando o pedido é explicitamente sobre build/dependências.
+ */
+const CONFIG_FILES = /^(vite\.config\.[cm]?[jt]s|tsconfig(\.[a-z]+)?\.json|postcss\.config\.[cm]?[jt]s|tailwind\.config\.[cm]?[jt]s|package(-lock)?\.json|\.npmrc|babel\.config\.[cm]?[jt]s)$/i;
+const CONFIG_INTENT = /\b(config|configura\w*|vite|tsconfig|tailwind|postcss|babel|depend\w*|deps|pacote|npm|yarn|pnpm|build|bundle|plugin|proxy|alias|porta|port)\b/i;
+
+export function isConfigFilePath(path: string): boolean {
+  const clean = String(path ?? "").trim().replace(/^\/+/, "").replace(/^\.\//, "");
+  const base = clean.split("/").pop() ?? "";
+  return CONFIG_FILES.test(base);
+}
+
+export function shouldBlockConfigEdit(path: string, instruction: string): boolean {
+  if (!isConfigFilePath(path)) return false;
+  return !CONFIG_INTENT.test(String(instruction ?? ""));
+}
 const PROCESS_QUESTION = /^(me\s+(explica|explique|diga|conte|conta|mostra|mostre|descreva|fala))|^(como\s+voc[êe]\s+(fez|faz|est[áa]|ger[ae]|gerar|cria|criar|monta|montou))|^(por\s+que\s+voc[êe])|^(pq\s+voc[êe])|\b(o\s+que\s+voc[êe]\s+(est[áa]|fez|faz|achou|acha|consegue|pode|sabe))|\b(no\s+que\s+voc[êe]\s+(pode|consegue))|(quais\s+(s[ãa]o\s+)?(as\s+)?(suas\s+)?(capacidades|fun[çc][õo]es))/i;
 
 /** Autorização/ordem EXPLÍCITA de alterar (pedido misto deixa de ser conversa). */
