@@ -1,0 +1,73 @@
+# Manifesto de referência (Knative) — ajuste PROJECT_ID/REGION e aplique com:
+#   gcloud run services replace deploy/cloudrun/agent-runtime.service.yaml
+# NENHUM secret aqui: referências ao Secret Manager (crie os secrets com os nomes abaixo).
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: prospector-agent-runtime
+  annotations:
+    run.googleapis.com/ingress: all
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    metadata:
+      annotations:
+        # 4 min de run + folga (Cloud Run aceita até 3600s)
+        run.googleapis.com/timeout: 600s
+        # 1 instância: sessões/locks/revisões são estado em memória do processo.
+        # (concorrência interna multiplexa /run + /git + /build no MESMO processo,
+        #  preservando os locks por projeto)
+        autoscaling.knative.dev/maxScale: "1"
+        autoscaling.knative.dev/minScale: "0"
+        # CPU durante o processamento da request (Chromium/build precisam de CPU)
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 600
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/prospector/agent-runtime:latest
+          ports:
+            - containerPort: 8787
+          resources:
+            limits:
+              # Chromium + Vite build + npm install pedem folga
+              cpu: "2"
+              memory: 2Gi
+          env:
+            - name: HOST
+              value: 0.0.0.0
+            - name: DEPLOY_VERSION
+              value: cloudrun-fase1
+            - name: SUPABASE_URL
+              value: https://efgwszjjtjebqdzziqfs.supabase.co
+            - name: SUPABASE_FUNCTIONS_URL
+              value: https://efgwszjjtjebqdzziqfs.supabase.co/functions/v1
+            # Workspaces e artefatos em /tmp (único FS gravável no Cloud Run)
+            - name: PROSPECTOR_WORKSPACES
+              value: /tmp/prospector-workspaces
+            - name: PROSPECTOR_SHOTS
+              value: /tmp/prospector-shots
+            - name: PROSPECTOR_ARTIFACTS_DIR
+              value: /tmp/branding-artifacts
+            # Tempo limite da run (4 min, igual ao default do runtime)
+            - name: AGENT_RUN_TIMEOUT_MS
+              value: "240000"
+          envFrom:
+            - secretRef:
+                name: prospector-runtime-secrets
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 24
+---
+# Secrets esperados em prospector-runtime-secrets (criar via Secret Manager):
+#   SUPABASE_ANON_KEY        (público, mas mantido como secret por higiene)
+#   RUNTIME_GATEWAY_SECRET   (auth serviço↔serviço runtime→edges)
+#   AGENT_TICKET_SECRET      (MESMO valor da edge agent-ticket; valida o ticket do front)
+#   TAVILY_API_KEY           (opcional — pesquisa web)
+# NÃO é necessário: DEEPSEEK_API_KEY/outras chaves de provider (a IA vem da edge
+# runtime-ai-config com a chave do usuário). RAILWAY_GIT_COMMIT_SHA não é requisito.
