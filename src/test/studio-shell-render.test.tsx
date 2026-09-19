@@ -41,7 +41,7 @@ function commercial(overrides: Partial<StudioCommercialActions> = {}): StudioCom
 }
 
 describe("StudioShell (Fase 1)", () => {
-  it("renderiza chat, toolbar comercial, abas e preview sem quebrar", () => {
+  it("renderiza chat, toolbar comercial, abas e preview sem quebrar", async () => {
     render(
       <TooltipProvider>
       <StudioShell
@@ -77,7 +77,11 @@ describe("StudioShell (Fase 1)", () => {
     // O que fica no Studio: abas de view + Visual + Run.
     expect(screen.getByText("Preview")).toBeInTheDocument();
     expect(screen.getByText("Código")).toBeInTheDocument();
-    expect(screen.getAllByText("index.html").length).toBeGreaterThan(0);
+    // FASE UI — em Preview puro a faixa de abas de arquivo NÃO aparece (ela roubava
+    // ~36px de altura do site). Ela volta assim que existe código na tela.
+    expect(screen.queryByText("index.html")).toBeNull();
+    fireEvent.click(screen.getByText("Código"));
+    expect((await screen.findAllByText("index.html")).length).toBeGreaterThan(0);
   });
 
   it("Ctrl/Cmd+S dispara o mesmo Salvar do botão (Fase 3)", async () => {

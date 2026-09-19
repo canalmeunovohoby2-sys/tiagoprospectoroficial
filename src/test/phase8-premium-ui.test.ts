@@ -38,11 +38,18 @@ describe("UI/UX · header e toolbar reorganizados (sem perder ações)", () => {
     expect(bar).not.toMatch(/border border-border\/70 px-2 text-\[11px\]/); // barra antiga pesada
   });
 
-  it("barras mais baixas (transições suaves 150ms e controles h-7/py-1)", () => {
+  it("barras mais baixas: UMA única linha no preview (arquivo · Preview · status)", () => {
     expect(bar).toContain("duration-150");
     expect(bar).toContain("h-7");
-    expect(preview).toMatch(/bg-card px-3 py-1"/); // header do preview compacto
+    // barra única do preview: sem wrap, padding mínimo e informações na mesma linha
+    expect(preview).toMatch(/px-2\.5 py-1"/);
+    expect(preview).toContain("flex-nowrap");
+    expect(preview).toContain("Preview do site");
+    expect(preview).toContain("Vite ativo · Preview");
+    expect(preview).toContain("entryFile");
     expect(panel).toContain("transition-all duration-200");
+    // a linha extra "Preview do site" do PAINEL foi removida (virou barra única)
+    expect(panel).not.toMatch(/border-b border-border\/60 bg-card px-3 py-1\.5[\s\S]{0,120}Preview do site/);
   });
 });
 

@@ -375,15 +375,20 @@ export function StudioShell({
               onReloadPreview={() => setLocalPreviewNonce((n) => n + 1)}
             />
 
-            <StudioEditorTabs
-              tabs={tabItems}
-              activePath={selectedPath}
-              onSelect={openFile}
-              onClose={closeTab}
-              onSave={handleSave}
-              saving={saving}
-              dirty={globalDirty}
-            />
+            {/* Abas de código SÓ quando existe código na tela (code/split). Em
+                Preview puro a faixa de abas só consumia altura do site. Abrir um
+                arquivo muda para split (openFile), então as abas reaparecem. */}
+            {showCode && (
+              <StudioEditorTabs
+                tabs={tabItems}
+                activePath={selectedPath}
+                onSelect={openFile}
+                onClose={closeTab}
+                onSave={handleSave}
+                saving={saving}
+                dirty={globalDirty}
+              />
+            )}
 
             <div className="relative min-h-0 flex-1">
               <ResizablePanelGroup id="studio-code-preview" direction="horizontal" autoSaveId="studio-code-preview-layout" className="h-full">

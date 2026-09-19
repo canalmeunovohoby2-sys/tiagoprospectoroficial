@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PERF, markPerf } from "@/lib/studio/perf";
 import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
-import { AlertTriangle, Crosshair, Loader2, RefreshCw, ShieldAlert, Terminal } from "lucide-react";
+import { AlertTriangle, Crosshair, FileCode2, Loader2, RefreshCw, ShieldAlert, Terminal } from "lucide-react";
 import { useWebContainerPreview } from "@/hooks/studio/useWebContainerPreview";
 import { injectReactVisualHelper } from "@/lib/studio/reactVisualHelper";
 import { inlineRemoteImagesInFiles } from "@/lib/studio/previewImages";
@@ -196,6 +196,13 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
 
   // FASE 7.1 — projeto ainda no bootstrap? Então o Preview mostra o RASCUNHO.
   const isDraft = useMemo(() => isBootstrapFiles(files), [files]);
+  // FASE UI — arquivo de entrada exibido na barra ÚNICA (informação real do projeto).
+  const entryFile = useMemo(() => {
+    const keys = Object.keys(files ?? {});
+    if (!keys.length) return "";
+    if (keys.includes("index.html")) return "index.html";
+    return keys.find((k) => /\.(html|tsx|jsx)$/.test(k)) ?? "";
+  }, [files]);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -215,27 +222,36 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
           )}
         </div>
       )}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-card px-3 py-1">
-        <p className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground">
-          {/* Status discreto estilo "Live Preview": ponto pulsante + rótulo curto. */}
+      <div className="flex shrink-0 flex-nowrap items-center justify-between gap-2 overflow-hidden border-b border-border/60 bg-card px-2.5 py-1">
+        <p className="flex min-w-0 items-center gap-2 whitespace-nowrap text-[11px] font-medium text-muted-foreground">
+          {/* UMA barra só: arquivo · Preview do site · status real do Vite. */}
+          {entryFile && (
+            <>
+              <span className="inline-flex min-w-0 items-center gap-1 truncate text-foreground/70" title={entryFile}>
+                <FileCode2 className="h-3.5 w-3.5 shrink-0 text-primary" />
+                <span className="hidden truncate sm:inline">{entryFile}</span>
+              </span>
+              <span className="hidden text-border sm:inline">•</span>
+            </>
+          )}
+          <span className="hidden shrink-0 text-foreground/70 md:inline">Preview do site</span>
+          <span className="hidden text-border md:inline">•</span>
           {phase === "ready" && (
-            <span className="inline-flex items-center gap-1.5 text-emerald-600">
+            <span className="inline-flex shrink-0 items-center gap-1.5 text-emerald-600">
               <span className="relative flex h-1.5 w-1.5">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/60" />
                 <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
               </span>
-              Vite ativo
+              Vite ativo · Preview
             </span>
           )}
           {phase === "booting" && (
-            <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />iniciando…</span>
+            <span className="inline-flex shrink-0 items-center gap-1.5"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />iniciando…</span>
           )}
-          {phase === "unsupported" && <span className="inline-flex items-center gap-1.5 text-amber-600"><ShieldAlert className="h-3 w-3" />sem isolamento</span>}
-          {phase === "error" && <span className="inline-flex items-center gap-1.5 text-destructive"><AlertTriangle className="h-3 w-3" />erro</span>}
-          <span className="text-border">·</span>
-          <span className="text-foreground/70">Preview</span>
+          {phase === "unsupported" && <span className="inline-flex shrink-0 items-center gap-1.5 text-amber-600"><ShieldAlert className="h-3 w-3" />sem isolamento</span>}
+          {phase === "error" && <span className="inline-flex shrink-0 items-center gap-1.5 text-destructive"><AlertTriangle className="h-3 w-3" />erro</span>}
           {visualMode && phase === "ready" && (
-            <span className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+            <span className="hidden shrink-0 items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary sm:inline-flex">
               <Crosshair className="h-2.5 w-2.5" /> modo visual
             </span>
           )}

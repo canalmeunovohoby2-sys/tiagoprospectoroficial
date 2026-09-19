@@ -268,14 +268,10 @@ export function StudioPreviewPanel({
 
   // C0: projeto React → preview REAL via WebContainer + Vite (nunca srcDoc).
   if (projectKind === "react") {
+    // UMA única barra (arquivo · Preview do site · status Vite) vive dentro do
+    // WebContainerPreview — sem linha extra aqui em cima.
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-card px-3 py-1.5">
-          <p className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
-            <FileCode2 className="h-3.5 w-3.5 text-primary" /> Preview do site
-          </p>
-          {/* O seletor Desktop/Tablet/Mobile fica no TOPO da página (só um). */}
-        </div>
         <div className="min-h-0 flex-1">
           <WebContainerPreview
             files={files}
