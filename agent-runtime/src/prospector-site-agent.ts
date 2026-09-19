@@ -13,7 +13,7 @@ import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsCh
 import { analyzeVisualEvidence } from "./visual-analysis.js";
 import { hasImageReferenceChange, requestsImageSwap, requestsFramingFix, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
-import { computeWorkEvidence, verificationToolsAfterLastEdit, EDIT_TOOLS, INSPECT_TOOLS, VERIFY_TOOLS, type WorkEventLike } from "./work-evidence.js";
+import { computeWorkEvidence, verificationToolsAfterLastEdit, EDIT_TOOLS, INSPECT_TOOLS, VERIFY_TOOLS, type WorkEvidence, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
 import { designSkillsKnowledge } from "./studio/agent-core/design-skills.js";
 import { runVisualVerification, prepareServeDirForRoot } from "./studio/agent-core/visual-verify.js";
@@ -91,6 +91,15 @@ export interface AgentRunTiming {
   tools: Record<string, { count: number; ms: number }>;
 }
 
+/**
+ * Turnos REAIS executados nesta run (contados em `turn-finished` do SDK).
+ * Substitui o antigo `iterations: 0` fixo — telemetria nunca mais mente.
+ */
+export function reportedIterations(timing: AgentRunTiming | undefined | null): number {
+  const n = timing?.turnCount ?? 0;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
 export interface AgentRunOutcome {
   ok: boolean;
   reply: string;
@@ -108,6 +117,10 @@ export interface AgentRunOutcome {
   researchTrace?: ResearchTraceItem[];
   /** Diagnóstico de performance real desta execução (tempo por tool/modelo). */
   timing?: AgentRunTiming;
+  /** FASE 2 — evidência estruturada do trabalho (touched ≠ changed ≠ verified). */
+  evidence?: WorkEvidence;
+  /** FASE 2 — ferramentas de verificação executadas DEPOIS da última edição. */
+  verificationTools?: string[];
   /** Transcript completo (messages do Cline Agent) para persistência de conversa. */
   conversationMessages?: unknown[];
   /** Motivo terminal dos guards (bloqueio definitivo) — null quando não houve. */
@@ -192,6 +205,13 @@ export interface ProspectorAgentOptions {
   research?: ResearchOutcome | null;
   /** Mensagens iniciais para restaurar contexto de conversa anterior (persistente). */
   initialMessages?: unknown[];
+  /**
+   * SEAM DE TESTE: fábrica do agente do SDK. Em produção é undefined e o agente
+   * real (@cline/agents) é criado; nos testes permite um agente falso que emite
+   * eventos reais do protocolo (turn-started/tool-started/tool-finished/...).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  agentFactory?: (cfg: Record<string, unknown>) => any;
 }
 
 export class ProspectorSiteAgent {
@@ -448,7 +468,7 @@ export class ProspectorSiteAgent {
       return undefined;
     };
 
-    this.agent = new (Agent as unknown as new (cfg: Record<string, unknown>) => unknown)({
+    const agentCfg: Record<string, unknown> = {
       providerId: options.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
       modelId: options.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
       apiKey: options.apiKey ?? process.env.DEEPSEEK_API_KEY ?? process.env.PROSPECTOR_API_KEY,
@@ -458,7 +478,10 @@ export class ProspectorSiteAgent {
       maxIterations: options.maxIterations ?? 40,
       hooks: { beforeModel, beforeTool },
       initialMessages: options.initialMessages,
-    });
+    };
+    this.agent = options.agentFactory
+      ? options.agentFactory(agentCfg)
+      : new (Agent as unknown as new (cfg: Record<string, unknown>) => unknown)(agentCfg);
   }
 
   subscribe(listener: (event: AgentRuntimeEvent) => void): () => void {
@@ -682,7 +705,8 @@ export class ProspectorSiteAgent {
       return {
         ok: verdict.ok,
         reply: verdict.reply ?? this.honestReply(reply, files, touched),
-        files, touched, iterations: 0, events, activity, timing,
+        files, touched, iterations: reportedIterations(timing), events, activity, timing,
+        evidence: workEvidence, verificationTools,
         error: verdict.error ?? undefined,
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked || !!terminal,
         researchTrace: this.researchTrace.slice(),
@@ -696,7 +720,7 @@ export class ProspectorSiteAgent {
       const files = readWorkspace(this.options.workspaceRoot);
       this.finalizeTiming(timing, tStart);
       return {
-        ok: false, reply: "", files, touched: [], iterations: 0, events, timing,
+        ok: false, reply: "", files, touched: [], iterations: reportedIterations(timing), events, timing,
         error: e instanceof Error ? e.message : String(e),
         finishSkips: this.finishSkips, finishBlocked: this.finishBlocked,
         researchTrace: this.researchTrace.slice(),

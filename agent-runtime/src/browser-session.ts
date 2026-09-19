@@ -437,44 +437,53 @@ export class BrowserSession {
     const consoleErrors = this.consoleLogs.filter((l) => l.startsWith("[error]"));
     const failedRequests = [...this.requestErrors];
     if (!this.page) return { colors: [], brokenImages: [], overflowX: false, consoleErrors, failedRequests };
-    const data = await this.page.evaluate(() => {
-      const colors = new Set<string>();
-      const hexOf = (v: string): string | null => {
-        const m = String(v).match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+    const data = await this.page.evaluate(`(() => {
+      const colors = new Set();
+      const hexOf = (v) => {
+        const m = String(v).match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/i);
         if (!m) return null;
-        const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
-        return `#${[r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
+        const r = Number(m[1]), g = Number(m[2]), b = Number(m[3]);
+        return "#" + [r, g, b].map(function (n) { return n.toString(16).padStart(2, "0"); }).join("");
       };
-      for (const el of Array.from(document.querySelectorAll("*")).slice(0, 1500)) {
+      const els = Array.from(document.querySelectorAll("*")).slice(0, 1500);
+      for (const el of els) {
         try {
           const cs = getComputedStyle(el);
-          for (const prop of ["color", "backgroundColor", "borderTopColor", "borderBottomColor", "outlineColor"] as const) {
+          const props = ["color", "backgroundColor", "borderTopColor", "borderBottomColor", "outlineColor"];
+          for (const prop of props) {
             const h = hexOf(cs[prop]);
             if (h) colors.add(h);
           }
-        } catch { /* noop */ }
+        } catch (e) { /* ignore */ }
         const cls = el.getAttribute("class") || "";
-        for (const m of cls.matchAll(/\b(?:bg|text|border|from|via|to|ring|fill|stroke)-(green|red|blue|sky|yellow|amber|orange|purple|violet|indigo|pink|rose)-(\d{2,3})\b/g)) {
-          colors.add(`${m[1]}-${m[2]}`);
-        }
+        const re = /\\b(?:bg|text|border|from|via|to|ring|fill|stroke)-(green|red|blue|sky|yellow|amber|orange|purple|violet|indigo|pink|rose)-(\\d{2,3})\\b/g;
+        let m;
+        while ((m = re.exec(cls)) !== null) colors.add(m[1] + "-" + m[2]);
       }
       try {
         for (const ss of Array.from(document.styleSheets)) {
-          let rules: CSSRuleList | null = null;
-          try { rules = (ss as CSSStyleSheet).cssRules; } catch { continue; }
+          let rules = null;
+          try { rules = ss.cssRules; } catch (e) { continue; }
           for (const r of Array.from(rules || [])) {
-            const txt = (r as CSSStyleRule).cssText || "";
-            for (const m of txt.matchAll(/--[\w-]+\s*:\s*(#[0-9a-fA-F]{3,8})/g)) colors.add(m[1].toLowerCase());
+            const txt = r.cssText || "";
+            const re2 = /--[\\w-]+\\s*:\\s*(#[0-9a-fA-F]{3,8})/g;
+            let m2;
+            while ((m2 = re2.exec(txt)) !== null) colors.add(m2[1].toLowerCase());
           }
         }
-      } catch { /* noop */ }
-      const brokenImages: string[] = [];
+      } catch (e) { /* ignore */ }
+      const brokenImages = [];
       for (const img of Array.from(document.images)) {
-        if (!img.complete || img.naturalWidth === 0) { if (img.currentSrc || img.src) brokenImages.push((img.currentSrc || img.src).slice(0, 120)); }
+        if (!img.complete || img.naturalWidth === 0) {
+          const src = img.currentSrc || img.src;
+          if (src) brokenImages.push(String(src).slice(0, 120));
+        }
       }
       const overflowX = document.documentElement.scrollWidth > window.innerWidth + 4;
-      return { colors: Array.from(colors), brokenImages, overflowX };
-    }).catch(() => ({ colors: [] as string[], brokenImages: [] as string[], overflowX: false }));
+      return { colors: Array.from(colors), brokenImages: brokenImages, overflowX: overflowX };
+    })()`)
+      .then((v) => v as { colors: string[]; brokenImages: string[]; overflowX: boolean })
+      .catch(() => ({ colors: [] as string[], brokenImages: [] as string[], overflowX: false }));
     return { ...data, consoleErrors, failedRequests };
   }
 

@@ -108,8 +108,7 @@ function toolInputPath(e: WorkEventLike): string {
 }
 
 /** Extrai a evidência de trabalho da sequência de eventos tool-started da run. */
-export function computeWorkEvidence(events: WorkEventLike[]): WorkEvidence {
-  const seq = (events ?? []).filter(isWorkToolStarted).map((e) => ({ name: workToolName(e), path: toolInputPath(e) }));
+export function computeWorkEvidence(events: WorkEventLike[]): WorkEvidence {  const seq = (events ?? []).filter(isWorkToolStarted).map((e) => ({ name: workToolName(e), path: toolInputPath(e) }));
   const editIdxs: number[] = [];
   const editedPaths = new Set<string>();
   for (let i = 0; i < seq.length; i++) {
@@ -138,4 +137,89 @@ export function computeWorkEvidence(events: WorkEventLike[]): WorkEvidence {
     visualEdit,
     assetEdit,
   };
+}
+
+// ── FASE 2 · COBERTURA DO PEDIDO (pedido ↔ alteração real) ───────────────────
+// Checagem PRAGMÁTICA (sem NLP): só valida quando o pedido contém um termo
+// distintivo verificável (cor nomeada, hex ou trecho entre aspas). Se o pedido
+// diz "troque o vermelho por azul" e NENHUM desses termos aparece no diff dos
+// arquivos alterados, a alteração NÃO pode ser declarada verificada.
+const COLOR_TERMS = new Set([
+  "vermelho", "vermelha", "azul", "verde", "amarelo", "amarela", "laranja", "roxo", "roxa", "rosa",
+  "preto", "preta", "branco", "branca", "cinza", "marrom", "dourado", "dourada", "prateado", "bege",
+  "violeta", "turquesa", "red", "blue", "green", "yellow", "orange", "purple", "pink", "black",
+  "white", "gray", "grey", "gold", "silver",
+]);
+const HEX_RE = /#(?:[0-9a-f]{3}|[0-9a-f]{6})\b/gi;
+const QUOTED_RE = /["'“”‘’]([^"'“”‘’]{2,40})["'“”‘’]/g;
+
+/** Termos verificáveis do pedido (cores, hex, trechos entre aspas). */
+export function distinctiveTerms(instruction: string): string[] {
+  const text = String(instruction ?? "").toLowerCase();
+  const terms = new Set<string>();
+  for (const m of text.matchAll(HEX_RE)) terms.add(m[0].toLowerCase());
+  for (const m of text.matchAll(QUOTED_RE)) {
+    const v = m[1].trim().toLowerCase();
+    if (v.length >= 2) terms.add(v);
+  }
+  for (const w of text.split(/[^a-zà-ÿ0-9#]+/i)) if (COLOR_TERMS.has(w)) terms.add(w);
+  return [...terms];
+}
+
+export interface IntentCoverage {
+  /** Houve checagem (o pedido tem termo distintivo)? */
+  checked: boolean;
+  /** O termo do pedido aparece no diff? Sem termos → true (não bloqueia). */
+  confirmed: boolean;
+  terms: string[];
+  matched: string[];
+}
+
+// Pedido de SUBSTITUIÇÃO ("troque X por Y"): a evidência precisa estar no estado
+// FINAL (Y presente) ou na remoção real de X — não basta X continuar lá.
+const REPLACE_VERB = /\b(troque|trocar|substitua|substituir|mude|mudar|altere|alterar|converta|converter|deixe)\b/;
+const REPLACE_CONNECTOR = /\b(por|para|em)\b/;
+
+function splitTermsByConnector(text: string, connectorIdx: number, terms: string[]): { sources: string[]; targets: string[] } {
+  const sources: string[] = [];
+  const targets: string[] = [];
+  for (const t of terms) {
+    const at = text.indexOf(t);
+    if (at >= 0 && at > connectorIdx) targets.push(t);
+    else sources.push(t);
+  }
+  return { sources, targets };
+}
+
+/** O resultado REAL cobre os termos distintivos do pedido? */
+export function intentCoverage(
+  instruction: string,
+  before: Record<string, string> | null | undefined,
+  after: Record<string, string> | null | undefined,
+  touched: string[] | null | undefined,
+): IntentCoverage {
+  const terms = distinctiveTerms(instruction);
+  if (terms.length === 0) return { checked: false, confirmed: true, terms: [], matched: [] };
+  const b = before ?? {};
+  const a = after ?? {};
+  const paths = (touched ?? []).length
+    ? (touched ?? [])
+    : [...new Set([...Object.keys(b), ...Object.keys(a)])].filter((p) => b[p] !== a[p]);
+  const text = String(instruction ?? "").toLowerCase();
+  const afterHay = paths.map((p) => a[p] ?? "").join("\n").toLowerCase();
+  const diffHay = paths.map((p) => `${b[p] ?? ""}\n${a[p] ?? ""}`).join("\n").toLowerCase();
+
+  const connectorIdx = text.search(REPLACE_CONNECTOR);
+  const isReplace = connectorIdx >= 0 && REPLACE_VERB.test(text.slice(0, connectorIdx));
+  if (isReplace) {
+    const { sources, targets } = splitTermsByConnector(text, connectorIdx, terms);
+    if (targets.length) {
+      const targetIn = targets.filter((t) => afterHay.includes(t));
+      // "vermelho→azul" cumpriu se "azul" está no resultado OU se "vermelho" sumiu.
+      const sourceGone = sources.length > 0 && sources.every((t) => !afterHay.includes(t));
+      return { checked: true, confirmed: targetIn.length > 0 || sourceGone, terms, matched: targetIn.length ? targetIn : sourceGone ? sources : [] };
+    }
+  }
+  const matched = terms.filter((t) => diffHay.includes(t));
+  return { checked: true, confirmed: matched.length > 0, terms, matched };
 }

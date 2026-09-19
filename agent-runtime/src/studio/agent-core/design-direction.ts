@@ -15,6 +15,13 @@ export interface DesignBusiness {
   category?: string | null;
   city?: string | null;
   state?: string | null;
+  address?: string | null;
+  /** Fotos REAIS do negócio (URLs) — mudam a estratégia visual. */
+  photos?: string[];
+  /** Cores de identidade JÁ existentes (ex.: do site atual) — preservar. */
+  brandColors?: string[];
+  /** Serviços informados (entram no plano de seções quando existirem). */
+  services?: string[];
 }
 
 export interface DesignDirection {
@@ -31,6 +38,16 @@ export interface DesignDirection {
   typeScale: string;
   ctaStyle: string;
   density: string;
+  /** FASE 3 — conceito visual em uma linha (consequência do contexto). */
+  visualConcept: string;
+  /** FASE 3 — plano de seções DESTE negócio (diferenciação estrutural). */
+  sectionPlan: string[];
+  /** FASE 3 — estratégia de imagem (fotos reais vs composição sem foto). */
+  imageStrategy: string;
+  /** FASE 3 — cores de identidade preservadas (quando existirem). */
+  brandColors: string[];
+  /** FASE 3 — por que esta direção evita o "site de IA". */
+  differentiationRationale: string;
   /** Clichês específicos a evitar nesta direção. */
   avoid: string[];
   /** Bloco textual pronto para o prompt. */
@@ -249,6 +266,66 @@ export function personalityFor(segment: string): Personality {
   return DEFAULT_PERSONALITY;
 }
 
+// FASE 3 — hero/estratégia quando existem FOTOS REAIS (o negócio é o visual).
+const PHOTO_LED_HEROES = [
+  "foto real full-bleed com tipografia sobreposta e gradiente apenas para legibilidade",
+  "hero assimétrico com a foto real dominante (2/3) e bloco de texto curto",
+  "abertura com foto real em sangria + faixa de prova (endereço/atendimento) logo abaixo",
+] as const;
+
+/**
+ * FASE 3 — cores de identidade JÁ existentes no projeto (somente variáveis
+ * declaradas: --primary/--accent/--brand...). Determinístico; nunca inventa.
+ */
+export function extractBrandColors(files: Record<string, string> | null | undefined): string[] {
+  if (!files) return [];
+  const out = new Set<string>();
+  for (const content of Object.values(files)) {
+    if (typeof content !== "string") continue;
+    for (const m of content.matchAll(/--(?:primary|accent|brand|brand-color|cor-primaria|cor-principal|destaque)[a-z-]*\s*:\s*([^;}\n]+)/gi)) {
+      for (const hex of (m[1] ?? "").matchAll(/#(?:[0-9a-f]{3}|[0-9a-f]{6})\b/gi)) out.add(hex[0].toLowerCase());
+    }
+  }
+  return [...out].slice(0, 6);
+}
+
+/** FASE 3 — plano de seções derivado do contexto (estrutural, não template). */
+function buildSectionPlan(p: Personality, business: DesignBusiness, realPhotos: boolean, seed: string): string[] {
+  const seg = `${business.segment ?? ""} ${business.category ?? ""}`.toLowerCase();
+  const abrir: string[] = ["Abertura (hero) — composição do hero da direção"];
+  const meio: string[] = [];
+  if (realPhotos) meio.push("Prova visual: galeria/ambiente com as fotos REAIS do negócio");
+  if ((business.services ?? []).length > 0) meio.push(`Serviços reais informados (${(business.services ?? []).slice(0, 4).join(", ")})`);
+  if (/usinag|metalog|industrial|engenharia|máquina|maquina|fabrica|fábrica|precis/i.test(seg)) {
+    meio.push("Capacidades e especificações técnicas (o que a operação executa de verdade)");
+    meio.push("Processo/qualidade (método, tolerância, controle) — sem números inventados");
+  } else if (/restaurant|restaurante|pizzaria|bar|lanch|comida|café|cafe|doceria|confeitaria|aliment/i.test(seg)) {
+    meio.push("Destaques do cardápio/produtos (sem preços inventados)");
+    meio.push("Ambiente e experiência presencial");
+  } else if (/clinic|clín|odont|dentist|médic|medic|saúde|saude|terap|psic|estétic|estetic/i.test(seg)) {
+    meio.push("Tratamentos/áreas de atendimento com hierarquia editorial");
+    meio.push("Prova de confiança: estrutura, equipe e processo (sem depoimentos inventados)");
+  } else if (/imobil|corretor|imóvel|imovel|incorpora/i.test(seg)) {
+    meio.push("Imóveis/destaques com ficha objetiva (dados reais)");
+    meio.push("Região de atuação e processo de atendimento");
+  } else if (/transport|logístic|logistic|frete|mudança|mudanca|frota/i.test(seg)) {
+    meio.push("Capacidade operacional: frota/alcance/cobertura (apenas dados reais)");
+    meio.push("Processo de cotação e acompanhamento");
+  } else {
+    meio.push(`Destaque principal: ${p.focus}`);
+    meio.push("Diferenciais reais e como o cliente é atendido");
+  }
+  const perto = [business.address, business.city, business.state].filter(Boolean).length > 0;
+  const conversao: string[] = [];
+  if (perto) conversao.push("Localização/atendimento presencial (endereço e região reais)");
+  conversao.push(`Conversão: ${p.trust}`);
+  // Duas ordens determinísticas: a direção decide se a prova visual vem antes do
+  // detalhamento técnico ou depois (nunca a mesma sequência para todos).
+  const provaPrimeiro = hash(`${seed}::ordem`) % 2 === 0;
+  const blocos = provaPrimeiro ? [...meio, ...conversao] : [...conversao.slice(0, 1), ...meio, ...conversao.slice(1)];
+  return [...abrir, ...blocos];
+}
+
 export function buildDesignDirection(business: DesignBusiness, seedSource?: string): DesignDirection {
   const name = String(business?.name ?? "").trim();
   const segment = String(business?.segment ?? business?.category ?? "").trim();
@@ -256,9 +333,11 @@ export function buildDesignDirection(business: DesignBusiness, seedSource?: stri
   const seed = String(seedSource ?? `${name}|${segment}|${city}`).trim() || "prospector";
 
   const p = personalityFor(`${segment} ${business?.category ?? ""}`);
+  const realPhotos = Array.isArray(business?.photos) && business.photos.length > 0;
+  const brandColors = (business?.brandColors ?? []).map((c) => String(c).toLowerCase()).filter((c) => /^#[0-9a-f]{3,6}$/.test(c));
 
   const archetype = pick(ARCHETYPES, seed, "archetype");
-  const heroComposition = pick(HERO_COMPOSITIONS, seed, "hero");
+  const heroComposition = realPhotos ? pick(PHOTO_LED_HEROES, seed, "hero-photo") : pick(HERO_COMPOSITIONS, seed, "hero");
   const grid = pick(GRIDS, seed, "grid");
   const imageTreatment = pick(IMAGE_TREATMENTS, seed, "img");
   const rhythm = pick(RHYTHMS, seed, "rhythm");
@@ -266,6 +345,13 @@ export function buildDesignDirection(business: DesignBusiness, seedSource?: stri
   const typeScale = pick(TYPE_SCALES, seed, "type");
   const ctaStyle = pick(CTA_STYLES, seed, "cta");
   const density = pick(DENSITIES, seed, "density");
+  const sectionPlan = buildSectionPlan(p, business, realPhotos, seed);
+
+  const imageStrategy = realPhotos
+    ? `priorizar as ${business.photos?.length ?? 0} foto(s) REAIS do negócio (hero/galeria/ambiente) — NÃO substituir por stock, NÃO esconder a operação atrás de gradientes ou ícones`
+    : "SEM foto real utilizável: compor com tipografia, cor e estrutura (NUNCA fingir que uma imagem genérica é o negócio; stock ilustrativo só com função comercial clara)";
+  const visualConcept = `${p.label} · ${archetype} — ${realPhotos ? "fotografia real como protagonista" : "tipografia e composição como protagonistas"}`;
+  const differentiationRationale = `Mesmo dentro do mesmo segmento, esta direção é derivada dos dados deste negócio (${[name, city].filter(Boolean).join(", ") || "contexto atual"}), não de um template: ${p.focus}. Evitar: ${p.avoid.slice(0, 3).join("; ")}.`;
 
   const avoid = [
     "navbar → hero centralizado → 3 cards → texto+imagem → 4 cards → galeria → depoimentos → CTA (bloco padrão)",
@@ -277,29 +363,33 @@ export function buildDesignDirection(business: DesignBusiness, seedSource?: stri
   ];
 
   const block = [
-    "BRIEFING DE DIREÇÃO DE ARTE (decida a partir do negócio; NÃO é layout pronto):",
+    "DIREÇÃO CRIATIVA DESTE NEGÓCIO (consequência dos DADOS REAIS deste cliente — obrigatória; NÃO é template e NÃO use a mesma para outro cliente):",
+    `- Conceito visual: ${visualConcept}.`,
     `- Personalidade da marca: ${p.label} — ${p.traits}.`,
-    `- Paleta: ${p.palette}.`,
+    p.palette ? `- Paleta: ${p.palette}.` : "",
+    brandColors.length ? `- IDENTIDADE EXISTENTE (preservar de verdade): ${brandColors.join(", ")} — são as cores do negócio; use como base/acento e NÃO recrie a marca com outra paleta.` : "",
     `- Confiança a transmitir: ${p.trust}.`,
     `- Destaque: ${p.focus}.`,
     `- Arquétipo visual: ${archetype}.`,
     `- Composição do hero: ${heroComposition}.`,
     `- Grid/composição: ${grid}.`,
-    `- Tratamento fotográfico: ${imageTreatment} (a imagem PARTICIPA da composição, não é enfeite de card).`,
+    `- Imagens: ${imageStrategy} (tratamento: ${imageTreatment} — a imagem PARTICIPA da composição, não é enfeite de card).`,
     `- Ritmo vertical: ${rhythm}.`,
     `- Movimento: ${motion} (sutil, nunca competindo com o conteúdo).`,
     `- Tipografia: ${typeScale}.`,
     `- Estilo de CTA: ${ctaStyle} (linguagem específica do negócio, nunca repetir 'Saiba mais').`,
     `- Densidade: ${density}.`,
+    `- ESTRUTURA DESTE SITE (ordem que faz sentido AQUI — pode ajustar se os dados pedirem): ${sectionPlan.join(" → ")}.`,
+    `- Por que esta direção: ${differentiationRationale}`,
     `- EVITE: ${avoid.join(" | ")}.`,
     `- ANTES de codar, faça a ANÁLISE: segmento, público, posicionamento, ticket percebido, objetivo comercial, principal dúvida/confiança do cliente.`,
     `- OBRIGATÓRIO: registre a direção escolhida como um comentário em src/App.tsx começando com "${ART_DIRECTION_MARKER}" (arquétipo, paleta em HEX, fontes, hero, grid) e IMPLEMENTE essa direção de verdade.`,
     "- AUTOCRÍTICA antes de finalizar (se falhar, reestruture a composição, não finalize): sem o nome/logo, ainda parece deste segmento? poderia ser confundido com outro site do mesmo sistema? o hero tem personalidade? as imagens participam? há hierarquia e ritmo? há excesso de cards/seções iguais?",
-  ].join("\n");
+  ].filter((l) => !!l).join("\n");
 
   return {
     seed, personality: p.label, archetype, heroComposition, grid, imageTreatment,
-    rhythm, motion, typeScale, ctaStyle, density, avoid, block,
+    rhythm, motion, typeScale, ctaStyle, density, visualConcept, sectionPlan, imageStrategy, brandColors, differentiationRationale, avoid, block,
   };
 }
 

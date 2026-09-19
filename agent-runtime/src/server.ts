@@ -39,7 +39,12 @@ import { mediaContextBlock } from "./studio/agent-core/site-media.js";
 import { generateCreativeBrief } from "./studio/agent-core/creative-brief.js";
 import { callModelWithTools } from "./studio/agent-core/model.js";
 import { isBootstrapProject } from "./studio/agent-core/first-message.js";
+import { createLiveStreamBridge } from "./studio/live-events.js";
+import { buildDesignDirection, extractBrandColors, hasArtDirection } from "./studio/agent-core/design-direction.js";
+import { validateRenderedSite, type DirectionExpectation } from "./studio/visual-validation.js";
 import { EDIT_TOOLS } from "./work-evidence.js";
+import { intentCoverage, type WorkEvidence } from "./work-evidence.js";
+import { syncWorkspaceFromClient, bumpWorkspaceRevision, currentWorkspaceRevision } from "./workspace.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -209,6 +214,121 @@ function truncateText(text: string, max = 4_000): string {
   return text.length > max ? `${text.slice(0, max)}… (+${text.length - max} caracteres)` : text;
 }
 
+// ===== FASE 1 · decisão de execução do caminho React =====
+
+export type ReactRunKind = "conversation" | "generate" | "edit";
+
+/**
+ * O que a mensagem do usuário pede no caminho React:
+ * - conversa pura (saudação/pergunta/cortesia) → NUNCA gera nem edita nada,
+ *   MESMO em projeto bootstrap: "Oi" jamais vira "gere o site";
+ * - pedido de alteração → geração (primeira vez) ou edição.
+ */
+export function reactRunKind(input: { firstGen: boolean; instruction: string }): ReactRunKind {
+  if (!instructionRequestsChange(input.instruction)) return "conversation";
+  return input.firstGen ? "generate" : "edit";
+}
+
+/**
+ * Blocos de continuidade que a missão do React deve receber (reaproveita a MESMA
+ * infraestrutura do caminho legado: memória de decisões, histórico de alterações
+ * e conversa recente). Nada aqui é inventado — só o que veio do projeto/conversa.
+ */
+export function buildContinuityBlock(input: {
+  memory?: string[];
+  changes?: Parameters<typeof renderProjectContextBlock>[0]["changes"];
+  conversation?: string[];
+}): string {
+  const memory = input.memory ?? [];
+  const conversation = input.conversation ?? [];
+  const parts: string[] = [];
+  if (memory.length) parts.push(`MEMÓRIA DE DECISÕES (preserve):\n- ${memory.join("\n- ")}`);
+  if ((input.changes ?? []).length) {
+    const block = renderProjectContextBlock({ memory: [], changes: input.changes ?? [] }).trim();
+    if (block) parts.push(block);
+  }
+  if (conversation.length) parts.push(`CONVERSA RECENTE (contexto de continuidade):\n${conversation.map((c) => `- ${c}`).join("\n")}`);
+  return parts.length ? `\n${parts.join("\n\n")}\n` : "";
+}
+
+/**
+ * Chave de sessão do caminho React: ISOLADA por usuário + projeto + conversa.
+ * Projeto A jamais compartilha sessão cognitiva com o Projeto B.
+ */
+export function reactSessionKey(uid: string, projectId: string, conversationId?: string | null): string {
+  return `react:${editKey(uid, projectId, conversationId || undefined)}`;
+}
+
+/** Reaproveita a sessão viva apenas quando é o MESMO projeto e a MESMA IA. */
+export function shouldReuseSession(existing: { execKey?: string } | undefined | null, execKey: string): boolean {
+  return !!existing && existing.execKey === execKey;
+}
+
+// ===== FASE 2 · resultado HONESTO =====
+export type RunResultState = "conversation" | "no_change" | "completed_verified" | "completed_unverified" | "failed";
+
+/**
+ * Resultado honesto de uma execução React: NUNCA declara sucesso verificado só
+ * porque uma ferramenta rodou ou um arquivo mudou. Distingue:
+ *   touched (arquivos que mudaram) ≠ changed (material) ≠ verified (validado).
+ * - falha real → "failed";
+ * - nada mudou → "no_change";
+ * - mudou + validado + pedido coberto pelo diff → "completed_verified";
+ * - mudou, mas sem validação/cobertura → "completed_unverified" (nunca "verificado").
+ */
+export function honestRunResult(input: { ok: boolean; touched: string[]; verified: boolean; intentConfirmed: boolean }): RunResultState {
+  if (!input.ok) return "failed";
+  const touched = input.touched ?? [];
+  if (touched.length === 0) return "no_change";
+  return input.verified && input.intentConfirmed ? "completed_verified" : "completed_unverified";
+}
+
+// ===== FASE 3 · missão do React (direção criativa + contexto) =====
+/**
+ * Monta a missão REAL entregue ao agente no caminho React. A DIREÇÃO CRIATIVA
+ * vem ANTES da instrução: ela é consequência dos dados do negócio e precisa
+ * reger estrutura/hero/paleta/imagens — não é texto decorativo.
+ */
+export function buildReactMission(input: {
+  continuityBlock?: string;
+  directionBlock?: string;
+  instruction: string;
+  creativeBrief?: string;
+  mediaBlock?: string;
+  attachBlock?: string;
+}): string {
+  return [
+    input.continuityBlock,
+    input.directionBlock,
+    input.instruction,
+    input.creativeBrief ? `BRIEFING CRIATIVO DESTE CLIENTE (decisão da IA — direção principal; implemente isto):\n${input.creativeBrief}` : "",
+    input.mediaBlock,
+    input.attachBlock,
+  ].filter(Boolean).join("\n\n");
+}
+
+/** FASE 5 — prompt da conversa pura: a IA conhece o projeto e responde como assistente. */
+export function buildConversationSystemPrompt(business: { name?: string | null; segment?: string | null; category?: string | null; city?: string | null; state?: string | null } | null | undefined): string {
+  const b = business ?? {};
+  return [
+    "Você é o parceiro de conversa do usuário dentro do Studio de sites (você TAMBÉM programa este projeto quando ele pede).",
+    "- Responda SEMPRE em português do Brasil, curto e natural (2 a 4 frases).",
+    "- Agora é só conversa: NÃO edite arquivos, não cite ferramentas nem etapas internas.",
+    b.name ? `- Projeto do cliente: ${b.name}${b.segment ?? b.category ? ` (${b.segment ?? b.category})` : ""}${b.city ? ` — ${b.city}${b.state ? `/${b.state}` : ""}` : ""}.` : "",
+    "- Você conhece o projeto: pode explicar a estrutura, as escolhas visuais e o que foi feito recentemente com base no contexto acima.",
+    "- Se o usuário quiser mudar algo no site, diga que pode fazer e pergunte o que ele quer alterar.",
+  ].filter(Boolean).join("\n");
+}
+
+/** A direção criativa foi APLICADA no código final? (evidência, não promessa) */
+export function directionApplied(files: Record<string, string> | null | undefined, brandColors: string[]): boolean {
+  if (!files) return false;
+  if (hasArtDirection(files)) return true;
+  const colors = (brandColors ?? []).map((c) => c.toLowerCase());
+  if (colors.length === 0) return false;
+  return colors.some((c) => Object.values(files).some((v) => typeof v === "string" && v.toLowerCase().includes(c)));
+}
+
 function pruneSessions(): void {
   const now = Date.now();
   for (const [id, s] of sessions) {
@@ -317,7 +437,7 @@ async function fetchRuntimeAiConfig(userId: string, execution?: unknown, options
   }
 }
 
-async function saveConversation(userId: string, projectId: string, conversationId: string, messages: unknown[], filesChanged: string[], model?: string, provider?: string, identity?: AuthIdentity | null): Promise<void> {
+export async function saveConversation(userId: string, projectId: string, conversationId: string, messages: unknown[], filesChanged: string[], model?: string, provider?: string, identity?: AuthIdentity | null): Promise<void> {
   const proxyBase = process.env.PROSPECTOR_BASE_URL ?? "";
   const funcBase = process.env.SUPABASE_FUNCTIONS_URL || (proxyBase.includes("/functions/v1") ? proxyBase.split("/functions/v1")[0] + "/functions/v1" : "");
   if (!funcBase) return;
@@ -1099,7 +1219,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         // Serializa por projeto: uma operação de Git NÃO materializa o workspace
         // enquanto um /run (Coder) está escrevendo nele.
         await withWorkspaceLock(projectId || "default", async () => {
-          const root = ensureWorkspaceDir(projectId || "default", files);
+          // Git lê o ESTADO ATUAL do workspace; o snapshot do cliente só entra se
+          // não estiver atrasado (senão um commit capturaria estado pré-run).
+          const syncedGit = syncWorkspaceFromClient(projectId || "default", files, body.workspaceRevision);
+          const root = syncedGit.root;
           try {
             let payload: unknown;
             if (action === "status" || action === "ensure") {
@@ -1125,10 +1248,17 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               payload = await gitCommit(root, message);
             } else if (action === "restore") {
               payload = await gitRestore(root, { hash: String(body.hash ?? ""), path: body.path as string | undefined, message: body.message as string | undefined });
+              // Restore ESCREVE no workspace (volta um estado do histórico): é uma
+              // mutação real → nova revisão (snapshots antigos do cliente passam a
+              // ser ignorados em vez de desfazer o restore).
+              bumpWorkspaceRevision(projectId || "default");
             } else {
               payload = { ok: false, error: `ação git desconhecida: ${action || "(vazia)"}` };
             }
-            send(res, 200, payload);
+            const withRev = payload && typeof payload === "object" && !Array.isArray(payload)
+              ? { ...(payload as Record<string, unknown>), workspace_rev: currentWorkspaceRevision(projectId || "default"), snapshot_ignored: syncedGit.stale }
+              : payload;
+            send(res, 200, withRev);
           } catch (e) {
             send(res, 500, { ok: false, error: e instanceof Error ? e.message : "erro no git" });
           }
@@ -1150,17 +1280,65 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         }
         const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
         await withWorkspaceLock(projectId || "default", async () => {
-          const root = ensureWorkspaceDir(projectId || "default", files);
+          const syncedBuild = syncWorkspaceFromClient(projectId || "default", files, body.workspaceRevision);
+          const root = syncedBuild.root;
           try {
+            // Build é SOMENTE LEITURA do estado editável (escreve apenas dist/,
+            // que não faz parte do estado do projeto) e roda depois do lock.
             const result = await buildReactProject(root);
             send(res, 200, {
               ok: result.ok,
               html: result.html ?? null,
               error: result.error ?? null,
               log: (result.log ?? "").slice(0, 20_000),
+              workspace_rev: currentWorkspaceRevision(projectId || "default"),
+              snapshot_ignored: syncedBuild.stale,
             });
           } catch (e) {
             send(res, 500, { ok: false, error: e instanceof Error ? e.message : "erro no build" });
+          }
+        });
+        return;
+      }
+
+      if (url.pathname === "/validate" && req.method === "POST") {
+        // FASE 4 — VALIDAÇÃO VISUAL REAL (somente leitura): compila/serve o site
+        // ATUAL (source of truth da Fase 2), abre no Chromium, mede e devolve
+        // evidência por viewport + comparação com a direção da Fase 3.
+        // NÃO edita o site e NÃO dispara correções (sem loop automático).
+        const body = await readJson(req);
+        const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
+        const identity = await resolveIdentity(req.headers.authorization, projectId || undefined);
+        if (!identity) { sendDenied(res, "Autenticação necessária para validar o site.", 401); return; }
+        if (identity.pid && identity.pid !== projectId) { sendDenied(res, "Projeto não autorizado para este usuário.", 403); return; }
+        if (String(body.projectKind ?? "") !== "react") {
+          send(res, 400, { ok: false, error: "validação visual é exclusiva de project_kind=react." });
+          return;
+        }
+        const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
+        await withWorkspaceLock(projectId || "default", async () => {
+          const syncedValidate = syncWorkspaceFromClient(projectId || "default", files, body.workspaceRevision);
+          try {
+            const result = await validateRenderedSite({
+              root: syncedValidate.root,
+              prepare: prepareSiteServeDir,
+              direction: (body.direction && typeof body.direction === "object" ? body.direction : undefined) as DirectionExpectation | undefined,
+              data: {
+                hasPhotos: body.hasPhotos === true,
+                hasServices: body.hasServices === true,
+                hasAddress: body.hasAddress === true,
+              },
+              businessName: typeof body.businessName === "string" ? body.businessName : undefined,
+              screenshots: body.screenshots === true,
+            });
+            send(res, 200, {
+              ok: result.status === "passed",
+              ...result,
+              workspace_rev: currentWorkspaceRevision(projectId || "default"),
+              snapshot_ignored: syncedValidate.stale,
+            });
+          } catch (e) {
+            send(res, 500, { ok: false, error: e instanceof Error ? e.message : "erro na validação visual" });
           }
         });
         return;
@@ -1180,7 +1358,8 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         }
         const files = (body.files && typeof body.files === "object" ? body.files as Record<string, string> : {});
         await withWorkspaceLock(projectId || "default", async () => {
-          const root = ensureWorkspaceDir(projectId || "default", files);
+          const syncedVisual = syncWorkspaceFromClient(projectId || "default", files, body.workspaceRevision);
+          const root = syncedVisual.root;
           const outcome = applyDeterministicVisualEdit(root, {
             file: typeof body.file === "string" ? body.file : undefined,
             line: typeof body.line === "number" ? body.line : undefined,
@@ -1192,7 +1371,13 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             changes: Array.isArray(body.changes) ? (body.changes as Array<{ property: string; value: string }>) : undefined,
             scope: typeof body.scope === "string" ? body.scope : undefined,
           });
-          send(res, 200, outcome);
+          // Aplicou de verdade no workspace → nova revisão (Fase 2).
+          if ((outcome as { applied?: boolean }).applied) bumpWorkspaceRevision(projectId || "default");
+          send(res, 200, {
+            ...(outcome as unknown as Record<string, unknown>),
+            workspace_rev: currentWorkspaceRevision(projectId || "default"),
+            snapshot_ignored: syncedVisual.stale,
+          });
         });
         return;
       }
@@ -1266,7 +1451,14 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           // Serializa por projeto: /build, /git, /visual-edit e autosave não
           // materializam o workspace enquanto o Coder está escrevendo nele.
           await withWorkspaceLock(projectId, async () => {
-          const root = ensureWorkspaceDir(projectId, files);
+          // SOURCE OF TRUTH: o snapshot do cliente só é materializado se não estiver
+          // ATRASADO (revisão). Se o workspace tem trabalho mais novo (agente/visual
+          // edit), o disco vence e nenhum estado antigo é reintroduzido.
+          const synced = syncWorkspaceFromClient(projectId, files, body.workspaceRevision);
+          const root = synced.root;
+          if (synced.stale && stream) {
+            try { res.write(`${JSON.stringify({ type: "workspace_snapshot_ignored", reason: "stale_revision", revision: synced.revision })}\n`); } catch { /* noop */ }
+          }
           const writeLine = (obj: unknown) => { if (!stream) return; try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ } };
           // ATIVIDADE REAL para o card do chat: cada evento do time (ferramenta
           // chamada pelo modelo / frase do próprio modelo) vira uma linha
@@ -1304,18 +1496,13 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // seguem disponíveis como FERRAMENTAS para o agente decidir quando usar.
             const currentFiles = readWorkspace(root);
             const firstGen = isBootstrapProject(currentFiles) || Object.keys(currentFiles).length === 0;
-            // ===== CONVERSA PURA ("oi, boa noite", "tudo bem?") =====
-            // Se a mensagem NÃO pede alteração e o projeto já existe, o agente apenas
-            // RESPONDE: nenhuma ferramenta, nenhuma edição, nenhuma automação. Se a
-            // conversa falhar no provider, seguimos o fluxo normal (nunca travamos).
-            if (!firstGen && !instructionRequestsChange(instruction)) {
-              const chatSystem = [
-                "Você é o parceiro de conversa do usuário dentro do Studio de sites.",
-                "- Responda SEMPRE em português do Brasil, curto e natural (2 a 4 frases).",
-                "- Agora é só conversa: NÃO edite arquivos, não cite ferramentas nem etapas internas.",
-                businessForRun.name ? `- Projeto do cliente: ${businessForRun.name}${businessForRun.segment ? ` (${businessForRun.segment})` : ""}${businessForRun.city ? ` — ${businessForRun.city}${businessForRun.state ? `/${businessForRun.state}` : ""}` : ""}.` : "",
-                "- Se o usuário quiser mudar algo no site, diga que pode fazer e pergunte o que ele quer alterar.",
-              ].filter(Boolean).join("\n");
+            const runKind = reactRunKind({ firstGen, instruction });
+            // ===== CONVERSA PURA ("oi, boa tarde", "tudo bem?") =====
+            // Vale TAMBÉM em projeto bootstrap: saudação/cortesia NUNCA inicia geração.
+            // O agente apenas RESPONDE (sem ferramentas, sem edição, sem automação).
+            // Se a conversa falhar no provider, seguimos o fluxo normal (nunca travamos).
+            if (runKind === "conversation") {
+              const chatSystem = buildConversationSystemPrompt(businessForRun);
               const chatUser = recentConversation.length
                 ? `CONVERSA RECENTE:\n${recentConversation.slice(-6).join("\n")}\n\nMENSAGEM ATUAL DO USUÁRIO:\n${instruction}`
                 : instruction;
@@ -1332,6 +1519,13 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               }).catch(() => null);
               const chatReply = chat?.ok ? (chat.turn?.text ?? "").trim() : "";
               if (chatReply) {
+                // Persiste o turno de conversa na MESMA infra do caminho legado
+                // (agent_conversation_memory) → o próximo turno tem continuidade.
+                void saveConversation(
+                  identity.uid, projectId, conversationId ?? "default",
+                  [{ role: "user", content: instruction }, { role: "assistant", content: chatReply }],
+                  [], exec.modelId, exec.providerId, identity,
+                );
                 const payload = {
                   status: "ok",
                   reply: chatReply,
@@ -1345,6 +1539,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                   provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
                   config_source: exec.source,
                   runtime: "conversation",
+                  result_state: "conversation",
                   orchestrated: false,
                 };
                 if (stream) {
@@ -1357,38 +1552,118 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 return;
               }
             }
-            writeLine({ type: "activity", phase: "analyzing", detail: firstGen ? "Analisando o negócio e montando o site…" : "Analisando o projeto para aplicar o pedido…" });
+            writeLine({ type: "activity", phase: "analyzing", detail: runKind === "generate" ? "Analisando o negócio e montando o site…" : "Analisando o projeto para aplicar o pedido…" });
+            // CONTINUIDADE REAL: memória de decisões + histórico de alterações +
+            // conversa recente entram na missão (mesma infraestrutura do legado).
+            const continuityBlock = buildContinuityBlock({
+              memory: mergedMemory,
+              changes: persistedContext.changes,
+              conversation: recentConversation,
+            });
             const mediaBlockForRun = mediaContextBlock(businessForRun);
-            const creativeBrief = (firstGen && (exec.apiKey || exec.providerId))
+            // FASE 3 — DIREÇÃO CRIATIVA derivada dos dados REAIS deste negócio
+            // (determinística por projeto+contexto; identidade existente e fotos
+            // reais têm prioridade). Chega ao agente SEMPRE — mesmo se o briefing
+            // criativo por IA falhar.
+            const brandColors = isBootstrapProject(currentFiles) ? [] : extractBrandColors(currentFiles);
+            const direction = buildDesignDirection({
+              name: businessForRun.name,
+              segment: businessForRun.segment,
+              category: businessForRun.category,
+              city: businessForRun.city,
+              state: businessForRun.state,
+              address: businessForRun.address,
+              photos: businessForRun.photos,
+              brandColors,
+              services: businessForRun.services,
+            }, `${projectId}|${businessForRun.name ?? ""}|${businessForRun.segment ?? ""}|${businessForRun.city ?? ""}`);
+            const creativeBrief = (runKind === "generate" && (exec.apiKey || exec.providerId))
               ? await generateCreativeBrief({
                   model: callModelWithTools,
                   ai: { providerId: exec.providerId, modelId: exec.modelId, apiKey: exec.apiKey, baseUrl: exec.baseUrl },
                   business: businessForRun,
+                  baseDirectionBlock: direction.block,
                 }).catch(() => "")
               : "";
-            const mission = [
+            const mission = buildReactMission({
+              continuityBlock,
+              directionBlock: direction.block,
               instruction,
-              creativeBrief ? `BRIEFING CRIATIVO DESTE CLIENTE (decisão da IA — direção principal; implemente isto):\n${creativeBrief}` : "",
-              mediaBlockForRun,
-            ].filter(Boolean).join("\n\n");
-            const oldAgent = await makeAgent(
-              `react:${identity.uid}:${projectId}:${conversationId ?? "default"}`,
-              projectId,
-              currentFiles,
-              businessForRun,
-              { ...body, mode: firstGen ? "generate" : "edit" },
-              exec,
-              { hasBase: !firstGen },
-            );
-        let outcome = await oldAgent.runTask(mission, { continueSession: !firstGen });
-            // Atividade REAL do agente antigo (traço da missão) para o card do chat.
-            if (Array.isArray(outcome.activity)) {
-              for (const a of outcome.activity.slice(-20)) { try { writeLine({ type: "activity", phase: a.phase, detail: a.detail }); } catch { /* noop */ } }
+              creativeBrief,
+              mediaBlock: mediaBlockForRun,
+              attachBlock,
+            });
+            // ===== SESSÃO POR PROJETO (continuidade cognitiva real) =====
+            // Reaproveita o agente VIVO do projeto (chave isolada por usuário+projeto+
+            // conversa). Projeto A nunca compartilha sessão com B; trocar de IA recria.
+            const sessionKey = reactSessionKey(identity.uid, projectId, conversationId);
+            const existingSession = sessions.get(sessionKey);
+            let oldAgent: ProspectorSiteAgent;
+            let resumed = false;
+            if (existingSession?.agent && shouldReuseSession(existingSession, exec.key)) {
+              oldAgent = existingSession.agent;
+              resumed = true;
+              existingSession.lastActive = Date.now();
+              // O disco já foi sincronizado no início desta request (respeitando a
+              // revisão) — nada a materializar aqui.
+            } else {
+              if (existingSession) sessions.delete(sessionKey);
+              oldAgent = await makeAgent(
+                sessionKey,
+                projectId,
+                currentFiles,
+                businessForRun,
+                { ...body, mode: runKind === "generate" ? "generate" : "edit" },
+                exec,
+                { hasBase: !firstGen },
+              );
+              sessions.set(sessionKey, { agent: oldAgent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
+            }
+            // ===== STREAMING REAL: assina ANTES de runTask =====
+            // Cada evento REAL do agente vira linha NDJSON na hora (activity,
+            // tool_call/tool_response, thought do texto do modelo, files_ready).
+            const liveBridge = createLiveStreamBridge({
+              writeLine,
+              readFiles: () => readWorkspace(root),
+              messageText,
+              truncateText,
+              editTools: EDIT_TOOLS,
+            });
+            const unsubscribeLive = oldAgent.subscribe((event) => liveBridge.onEvent(event as never));
+            // Estado REAL antes da run (para a cobertura do pedido: "pediu azul e
+            // nenhum arquivo alterado contém azul?").
+            const filesBeforeRun = readWorkspace(root);
+            let outcome: AgentRunOutcome;
+            try {
+              outcome = await oldAgent.runTask(mission, { continueSession: resumed });
+            } finally {
+              try { unsubscribeLive(); } catch { /* noop */ }
+            }
+            liveBridge.flushFiles();
+            // PERSISTÊNCIA da conversa do agente (mesma infra do legado): o próximo
+            // turno (mesmo após reload) recebe o histórico via runtime-ai-config.
+            if (identity.uid && outcome.conversationMessages?.length) {
+              void saveConversation(
+                identity.uid, projectId, conversationId ?? "default",
+                outcome.conversationMessages, outcome.touched ?? [],
+                exec.modelId, exec.providerId, identity,
+              );
             }
             const mapFixed = (() => { try { return normalizeWorkspaceMapEmbeds(root, business); } catch { return [] as string[]; } })();
             const finalFiles = readWorkspace(root);
             if (mapFixed.length > 0) emitFiles();
             const touched = [...new Set([...(outcome.touched ?? []), ...mapFixed])];
+            // FASE 2 — o workspace MUDOU (agente e/ou normalização): nova revisão.
+            // O cliente recebe este número e o devolve; snapshots antigos passam a
+            // ser ignorados em /run, /build, /git e /visual-edit.
+            const workspaceRevision = bumpWorkspaceRevision(projectId);
+            // FASE 2 — EVIDÊNCIA REAL: touched (arquivos que mudaram) ≠ changed
+            // (alteração material relativa ao pedido) ≠ verified (validação após a
+            // última edição). Nada de "tool rodou = sucesso".
+            const evidence = outcome.evidence ?? { inspectedBeforeEdit: false, verifiedAfterLastEdit: false, editActionCount: 0, editedPaths: touched, visualEdit: false, assetEdit: false, renderVerifiedAfterLastEdit: false };
+            const coverage = intentCoverage(instruction, filesBeforeRun, finalFiles, touched);
+            const verified = outcome.completion?.verification_passed === true || evidence.renderVerifiedAfterLastEdit === true;
+            const resultState = honestRunResult({ ok: outcome.ok, touched, verified, intentConfirmed: coverage.confirmed });
             const payload = {
               status: outcome.ok ? "ok" : "error",
               reply: outcome.reply,
@@ -1400,6 +1675,30 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               files: finalFiles,
               plan: null,
               iterations: outcome.iterations ?? 0,
+              result_state: resultState,
+              workspace_rev: workspaceRevision,
+              direction: {
+                seed: direction.seed,
+                personality: direction.personality,
+                archetype: direction.archetype,
+                visual_concept: direction.visualConcept,
+                section_plan: direction.sectionPlan,
+                image_strategy: direction.imageStrategy,
+                brand_colors: direction.brandColors,
+                photo_led: (businessForRun.photos ?? []).length > 0,
+                applied: directionApplied(finalFiles, direction.brandColors),
+              },
+              evidence: {
+                changed_files: touched,
+                edit_operations: evidence.editActionCount,
+                inspected_before_edit: evidence.inspectedBeforeEdit,
+                verified_after_last_edit: evidence.verifiedAfterLastEdit,
+                render_verified: evidence.renderVerifiedAfterLastEdit === true,
+                verification_tools: outcome.verificationTools ?? [],
+                intent_checked: coverage.checked,
+                intent_confirmed: coverage.confirmed,
+                matched_terms: coverage.matched,
+              },
               model: exec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
               provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
               config_source: exec.source,

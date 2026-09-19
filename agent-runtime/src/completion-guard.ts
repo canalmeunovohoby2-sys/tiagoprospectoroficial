@@ -71,6 +71,23 @@ function isPureChatter(text: string): boolean {
   if (!words.length) return false;
   return words.every((w) => CHATTER_WORDS.has(w));
 }
+
+/**
+ * FASE 5 — pergunta sobre o PRÓPRIO trabalho/processo ("me explica o que você
+ * está fazendo", "por que você escolheu essa cor?", "como você fez isso?").
+ * É conversa: o usuário quer entender, não pedir alteração. Um pedido MISTO com
+ * autorização/ação explícita ("pode melhorar", "ajuste isso") NÃO é pergunta de
+ * processo — continua sendo trabalho.
+ */
+const PROCESS_QUESTION = /^(me\s+(explica|explique|diga|conte|conta|mostra|mostre|descreva|fala))|^(como\s+voc[êe]\s+(fez|faz|est[áa]))|^(por\s+que\s+voc[êe])|^(pq\s+voc[êe])|(o\s+que\s+voc[êe]\s+(est[áa]|fez|faz|achou|acha|consegue|pode|sabe))|(no\s+que\s+voc[êe]\s+(pode|consegue))|(quais\s+(s[ãa]o\s+)?(as\s+)?(suas\s+)?(capacidades|fun[çc][õo]es))/i;
+
+/** Autorização/ordem EXPLÍCITA de alterar (pedido misto deixa de ser conversa). */
+const CHANGE_IMPERATIVE = /\b(pode|poderia|consegue)\s+(melhorar|mudar|alterar|ajustar|mexer|deixar|refazer|arrumar|corrigir|substituir|trocar)|^(fa[çc]a|mude|troque|altere|ajuste|deixe|coloque|adicione|crie|remova|arrume|corrija)\b/i;
+
+function isProcessQuestion(text: string): boolean {
+  const t = String(text ?? "").trim();
+  return PROCESS_QUESTION.test(t) && !CHANGE_IMPERATIVE.test(t);
+}
 const EXPLAIN_ASK = /^(me\s+)?(explica|explique|explicar|resuma|resume|resumir|liste|lista|listar|diga|dizer|conte|contar|fale|falar|descreva|descrever|mostre|mostrar|ensina|ensine|ensinar)\b/i;
 // Sinal de AÇÃO/DESEJO: usado só para decidir se uma pergunta é, na verdade, um
 // pedido ("pode colocar animações?"). NÃO é uma whitelist de tarefas.
@@ -84,6 +101,9 @@ export function instructionRequestsChange(instruction: string): boolean {
   if (!text) return false;
   // Conversa fiada / agradecimento puro → não é pedido de alteração.
   if (isPureChatter(text)) return false;
+  // FASE 5 — pergunta sobre o trabalho/processo do agente → conversa (o usuário
+  // quer entender; perguntar não autoriza alteração).
+  if (isProcessQuestion(text)) return false;
   // Análise/relatório SOMENTE LEITURA → não é pedido de alteração.
   if (READ_ONLY.test(text)) return false;
   if (ANALYZE_LEAD.test(text) && !ACTION_HINT.test(text)) return false;
