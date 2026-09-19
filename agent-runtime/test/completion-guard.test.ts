@@ -447,7 +447,7 @@ describe("Interpretação da conclusão — 'não verificado' ≠ 'falhou' (clas
   });
 
   it("Caso B — válida + sem finish_task + sem erro/regressão → NÃO é falha; relatório honesto e sem 'refaça'", () => {
-    const v = classifyCompletion({ ...base, editedPaths: ["src/site.css"], verificationTools: ["browser_inspect"], renderVerified: true, visualEdit: true });
+    const v = classifyCompletion({ ...base, editedPaths: ["src/site.css"], verificationTools: ["browser_inspect"], renderVerified: false, visualEdit: true });
     expect(v.ok).toBe(true);
     expect(v.error).toBeNull();
     expect(v.reply ?? "").toMatch(/Fiz a alteração no projeto/);
@@ -457,6 +457,16 @@ describe("Interpretação da conclusão — 'não verificado' ≠ 'falhou' (clas
     expect(v.states.change_applied).toBe(true);
     expect(v.states.verification_performed).toBe(false);
     expect(v.states.verification_passed).toBe(false);
+  });
+
+  it("Caso B2 (FASE 7.7) — render conferido no navegador = verificação FEITA, mesmo sem finish_task", () => {
+    const v = classifyCompletion({ ...base, editedPaths: ["src/site.css"], verificationTools: ["browser_reload"], renderVerified: true, visualEdit: true });
+    expect(v.ok).toBe(true);
+    expect(v.unverified).toBe(false);
+    expect(v.states.verification_performed).toBe(true);
+    expect(v.states.verification_passed).toBe(true);
+    // e o relatório fala em render conferido (não mais "não concluída")
+    expect(v.reply ?? "").toMatch(/render conferido no navegador/i);
   });
 
   it("Caso C — erro real de ferramenta → bloqueia e relata (não finge sucesso)", () => {

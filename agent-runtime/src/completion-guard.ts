@@ -440,8 +440,10 @@ export interface ChangeReportInput {
 export function classifyEditKind(instruction: string): string {
   const t = String(instruction ?? "").toLowerCase();
   if (/(enquadr|cortad|cortou|cortando|recort|cabe[çc]a|rosto|sujeito|inteir|object-position|object-fit|background-position|zoom|aproxim|afast|desça a (foto|imagem)|suba a (foto|imagem))/.test(t)) return "framing";
+  // FASE 7.5 — COR vem ANTES de "swap": "troque o azul por vermelho" é cor, não
+  // troca de imagem (era o que fazia a resposta falar "troquei a imagem").
+  if (/(cor|cores|color|paleta|tom|tinta|laranja|vermelh|azul|verde|roxo|amarelo|rosa|cinza|preto|branco|dourad|#\d?[0-9a-f]{3,6})/.test(t)) return "color";
   if (/(troque|troca|trocar|substitua|substitui|outra foto|outra imagem|mude a foto|mude a imagem)/.test(t) && /(foto|imagem|fotografia|banner)/.test(t)) return "swap";
-  if (/(cor|color|paleta|laranja|vermelh|azul|verde|roxo|amarelo)/.test(t)) return "color";
   if (/(texto|t[ií]tulo|subt[ií]tulo|frase|palavra|copy)/.test(t)) return "text";
   if (/(tamanho|diminu|aument|margem|padding|espa[çc])/.test(t)) return "size";
   return "generic";
@@ -490,12 +492,17 @@ export function buildChangeReport(i: ChangeReportInput): string {
 
 export function classifyCompletion(s: CompletionState): CompletionVerdict {
   const terminal = s.terminalReason ?? null;
-  const unverified = !terminal && s.verificationRequired && !s.finishTaskCalled;
+  // FASE 7.7 — VERIFICAÇÃO POR EVIDÊNCIA: se houve RENDER conferido no navegador
+  // depois da última edição, a verificação FOI feita — mesmo sem finish_task.
+  // (Antes disso o sistema respondia "não concluí a verificação final" mesmo com
+  // o site verificado no navegador, e a tarefa parecia nunca concluir.)
+  const verifiedByEvidence = s.finishTaskCalled || s.renderVerified === true;
+  const unverified = !terminal && s.verificationRequired && !verifiedByEvidence;
   const states: CompletionStates = {
     change_applied: s.changeApplied,
     verification_required: s.verificationRequired,
-    verification_performed: s.finishTaskCalled,
-    verification_passed: s.finishTaskCalled,
+    verification_performed: verifiedByEvidence,
+    verification_passed: verifiedByEvidence,
     regression_detected: !!terminal,
     tool_failure: s.toolFailure,
     finish_task_called: s.finishTaskCalled,

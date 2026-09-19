@@ -9,7 +9,8 @@ import { buildBrowserTools } from "./browser-tools.js";
 import { BrowserSession } from "./browser-session.js";
 import { readWorkspace, type FileMap } from "./workspace.js";
 import { resolveVisionCapability, imageToDataUrl, type VisionConfig } from "./vision.js";
-import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, classifyCompletion, classifyToolResultFailure, shouldBlockConfigEdit, isColorSwapRequest, type CompletionStates, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
+import { decideFinishBlock, isBugReport, replyAsksForCode, instructionRequestsChange, classifyCompletion, classifyToolResultFailure, classifyEditKind, shouldBlockConfigEdit, isColorSwapRequest, type CompletionStates, MAX_VISUAL_ITERATIONS_DEFAULT } from "./completion-guard.js";
+import { callModelWithTools } from "./studio/agent-core/model.js";
 import { analyzeVisualEvidence } from "./visual-analysis.js";
 import { hasImageReferenceChange, requestsImageSwap, requestsFramingFix, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
@@ -223,6 +224,11 @@ export interface ProspectorAgentOptions {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   agentFactory?: (cfg: Record<string, unknown>) => any;
+  /**
+   * SEAM DE TESTE/OVERRIDE: redator final da resposta (a "voz" da IA com os fatos
+   * da execução). Em produção usa o modelo do usuário; nos testes pode ser falso.
+   */
+  composeReply?: (input: { instruction: string; modelReply: string; facts: string }) => Promise<string>;
 }
 
 export class ProspectorSiteAgent {
@@ -510,6 +516,67 @@ export class ProspectorSiteAgent {
     return this.agent.subscribe(listener);
   }
 
+  /**
+   * FASE 7.6 — REDACÃO FINAL PELA IA: o agente é o EXECUTOR; quem responde ao
+   * usuário é o modelo (o cérebro), informado com os FATOS da execução.
+   * - Se o modelo já escreveu uma resposta e a execução está OK/verificada →
+   *   preserva a voz dele (nada de template).
+   * - Se a resposta veio vazia ou o estado é incerto (não verificado/falha) →
+   *   pede ao modelo UMA resposta baseada nos fatos (sem inventar, sem prometer).
+   * - Se o modelo falhar → cai no texto de emergência (honesto).
+   */
+  private async composeFinalReply(input: {
+    modelReply: string;
+    templateReply: string;
+    ok: boolean;
+    unverified: boolean;
+    instruction: string;
+    filesChanged: string[];
+    verificationTools: string[];
+    renderVerified: boolean;
+    touchedCount: number;
+    kind: string;
+  }): Promise<string> {
+    const modelText = String(input.modelReply ?? "").trim();
+    const needsRewrite = !modelText || input.unverified || !input.ok;
+    if (!needsRewrite) return modelText;
+    const facts = [
+      `PEDIDO DO USUARIO: ${input.instruction}`,
+      `TIPO DO PEDIDO: ${input.kind}`,
+      `ARQUIVOS ALTERADOS (${input.filesChanged.length}): ${input.filesChanged.slice(0, 15).join(", ") || "(nenhum)"}`,
+      `VERIFICACAO NO NAVEGADOR: ${input.renderVerified ? "concluida" : "nao concluida"}`,
+      `FERRAMENTAS DE VERIFICACAO USADAS: ${input.verificationTools.join(", ") || "(nenhuma)"}`,
+      `TOTAL DE ARQUIVOS MUDADOS: ${input.touchedCount}`,
+      `ESTADO: ${input.ok ? (input.unverified ? "alteracao aplicada, verificacao formal NAO concluida" : "alteracao aplicada e verificada") : "execucao falhou/incompleta"}`,
+      modelText ? `RESPOSTA PRELIMINAR DO PROPRIO AGENTE (pode complementar, mas corrija se estiver errada): ${modelText}` : "",
+    ].filter(Boolean).join("\n");
+    const system = [
+      "Voce e o agente do Studio de sites e esta respondendo AO USUARIO em portugues do Brasil.",
+      "Escreva a resposta final em 2 a 4 frases, com base SOMENTE nos FATOS abaixo.",
+      "Regras: NAO cite ferramentas internas; NAO prometa nada para depois; NAO invente o que nao esta nos fatos;",
+      "se a verificacao NAO foi concluida, diga isso com naturalidade; se o pedido era de COR, fale de cores (nunca de imagem/foto).",
+    ].join(" ");
+    try {
+      const writer = this.options.composeReply ?? (async (i) => {
+        const res = await callModelWithTools({
+          providerId: this.options.providerId,
+          modelId: this.options.modelId,
+          apiKey: this.options.apiKey,
+          baseUrl: this.options.baseUrl,
+          system,
+          messages: [{ role: "user", content: i.facts }],
+          tools: [],
+          maxTokens: 400,
+          temperature: 0.4,
+        });
+        return res.ok ? (res.turn?.text ?? "").trim() : "";
+      });
+      const written = String(await writer({ instruction: input.instruction, modelReply: modelText, facts })).trim();
+      if (written) return written;
+    } catch { /* cai no texto de emergencia */ }
+    return modelText || input.templateReply || "Alteração aplicada no projeto.";
+  }
+
   /** Aborta a execução em andamento (cancelamento explícito do cliente). */
   abort(reason = "cancelled"): void {
     try {
@@ -726,9 +793,24 @@ export class ProspectorSiteAgent {
         visualEdit: workEvidence.visualEdit === true,
         instruction: this.currentInstruction,
       });
+      // FASE 7.6 — A RESPOSTA É DA IA (cérebro), não do código: entregamos os
+      // FATOS reais da execução e o modelo escreve a resposta final. O texto do
+      // template só entra se o modelo falhar (rede de segurança).
+      const finalReply = await this.composeFinalReply({
+        modelReply: reply,
+        templateReply: verdict.reply ?? "",
+        ok: verdict.ok,
+        unverified: verdict.unverified === true,
+        instruction: this.currentInstruction,
+        filesChanged: workEvidence.editedPaths.length ? workEvidence.editedPaths : touched,
+        verificationTools,
+        renderVerified: workEvidence.renderVerifiedAfterLastEdit === true,
+        touchedCount: touched.length,
+        kind: classifyEditKind(this.currentInstruction),
+      });
       return {
         ok: verdict.ok,
-        reply: verdict.reply ?? this.honestReply(reply, files, touched),
+        reply: finalReply,
         files, touched, iterations: reportedIterations(timing), events, activity, timing,
         evidence: workEvidence, verificationTools,
         error: verdict.error ?? undefined,

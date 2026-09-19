@@ -121,6 +121,37 @@ export function normalizeMapEmbedUrls(text: string, canonicalEmbedUrl: string): 
 }
 
 /**
+ * FASE 7.7 — Sem coordenadas/endereço, o iframe de mapa do modelo é bloqueado
+ * (COEP) e vira ÁREA BRANCA. Aqui ele é trocado por um card honesto (endereço
+ * quando houver + link real do Google Maps) ou simplesmente removido.
+ */
+function replaceBrokenMapEmbeds(root: string, business: BusinessContext): string[] {
+  const IFRAME = /<iframe\b[^>]*\bsrc\s*=\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*'|\{\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*')\s*\})[^>]*(?:\/>|>[\s\S]*?<\/iframe>)/gi;
+  const address = cleanText(business.address);
+  const name = cleanText(business.name);
+  const city = cleanText(business.city);
+  const link = staticMapDirectionsUrl(business)
+    ?? (name || city ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([name, city, business.state].filter(Boolean).join(" "))}` : "");
+  const label = address || [name, city].filter(Boolean).join(" — ") || "";
+  const cardJsx = label
+    ? `<div className="rounded-xl border border-black/10 bg-neutral-100 p-4 text-center" style={{ padding: "16px", textAlign: "center", border: "1px solid rgba(0,0,0,.1)", borderRadius: "12px" }}><p style={{ margin: "0 0 8px", fontSize: "14px" }}>📍 ${label}</p>${link ? `<a href="${link}" target="_blank" rel="noreferrer" style={{ display: "inline-block", fontWeight: 600 }}>Abrir no Google Maps</a>` : ""}</div>`
+    : "";
+  const changed: string[] = [];
+  for (const [rel, content] of Object.entries(readWorkspace(root))) {
+    if (!/\.(tsx|jsx|html?)$/i.test(rel)) continue;
+    if (!IFRAME.test(content)) { IFRAME.lastIndex = 0; continue; }
+    IFRAME.lastIndex = 0;
+    const next = content.replace(IFRAME, cardJsx);
+    if (next !== content) {
+      const full = safeWorkspaceJoin(root, rel);
+      if (!full) continue;
+      try { writeFileSync(full, next, "utf8"); changed.push(rel); } catch { /* ignora */ }
+    }
+  }
+  return changed;
+}
+
+/**
  * Substitui qualquer <iframe> de Google Maps pelo MAPA ESTÁTICO (tiles + marcador).
  * MOTIVO (comprovado em Chromium): o site roda em contexto COEP (necessário ao
  * WebContainer) e QUALQUER iframe cross-origin sem CORP é bloqueado ali
@@ -128,7 +159,11 @@ export function normalizeMapEmbedUrls(text: string, canonicalEmbedUrl: string): 
  */
 export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessContext): string[] {
   const block = buildStaticMapBlock(business);
-  if (!block) return [];
+  // FASE 7.7 — SEM bloco (sem coordenadas/endereço) o iframe do modelo ficava no
+  // site e era BLOQUEADO pelo COEP → área branca no lugar do mapa. Agora trocamos
+  // por um card honesto (endereço quando existir + link do Google Maps) ou
+  // removemos o iframe quebrado — NUNCA deixamos a área branca.
+  if (!block) return replaceBrokenMapEmbeds(root, business);
   const changed: string[] = [];
   const IFRAME = /<iframe\b[^>]*\bsrc\s*=\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*'|\{\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*')\s*\})[^>]*(?:\/>|>[\s\S]*?<\/iframe>)/gi;
   const files = readWorkspace(root);

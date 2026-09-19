@@ -89,7 +89,7 @@ export const AGENT_PROGRESS_MESSAGE: Record<AgentProgressStatus, string> = {
   REFINING: "✨ Refinando composição, responsividade e acabamento...",
   VALIDATING: "🧪 Validando o resultado final...",
   COMPLETED: "✅ Site concluído.",
-  ERROR: "⚠️ Encontrei um problema durante a geração. Estou ajustando...",
+  ERROR: "⚠️ A execução terminou com erro (nada foi concluído). Detalhe abaixo.",
   CANCELLED: "⚠️ Geração cancelada.",
 };
 
