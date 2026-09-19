@@ -33,6 +33,7 @@ import { StudioGitConfigDialog } from "@/components/sites/studio/StudioGitConfig
 import { StudioHistoryDialog, type StudioGitRestoreMeta } from "@/components/sites/studio/StudioHistoryDialog";
 import { invokeStudioGit } from "@/lib/studio/gitApi";
 import { isStudioUiEnabled } from "@/lib/studio/featureFlag";
+import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
 import { PERF, markPerf } from "@/lib/studio/perf";
 import { recordRuntimeChange, detectStaleSnapshot, type RuntimeChangeMap } from "@/lib/studio/autosaveGuard";
 import { isConversationResult, type RunResultLike } from "@/lib/studio/runOutcome";
@@ -1412,9 +1413,14 @@ export default function SiteProjectPage() {
                     <Pencil className="h-3.5 w-3.5 mr-1" /> Editar site
                   </Button>
                 ) : (
-                  <Button onClick={generate} disabled={generating} size="sm">
-                    {generating ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Sparkles className="h-4 w-4 mr-1" />}
-                    {hasSpec ? "Regenerar com IA" : "Gerar site com IA"}
+                  /* FASE 7.8 — REACT: o botão do topo chama o AGENTE (mesmo fluxo do
+                     botão no preview). Antes chamava generate() (spec legado) e nada
+                     acontecia de verdade no projeto React. */
+                  <Button onClick={isReactProject ? handleGenerateSite : generate} disabled={isReactProject ? (aiRunning || generating) : generating} size="sm">
+                    {(isReactProject ? aiRunning : generating) ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Sparkles className="h-4 w-4 mr-1" />}
+                    {isReactProject
+                      ? (isBootstrapFiles(draftFiles) ? "Gerar site" : "Regenerar site")
+                      : (hasSpec ? "Regenerar com IA" : "Gerar site com IA")}
                   </Button>
                 )}
               </>

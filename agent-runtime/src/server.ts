@@ -313,6 +313,9 @@ export function buildReactMission(input: {
   attachBlock?: string;
 }): string {
   return [
+    // FASE 7.8 — IDIOMA: a IA deve pensar/planejar/narrar em pt-BR (o usuário
+    // acompanha o texto no chat). Sem isso o modelo narrava em inglês.
+    "IDIOMA (obrigatório): pense, planeje, narre e responda SEMPRE em português do Brasil. Nomes técnicos/classes de código podem ficar em inglês, mas TUDO o que o usuário lê (análise, plano, comentários de progresso e resposta final) é em pt-BR.",
     input.continuityBlock,
     input.directionBlock,
     input.instruction,

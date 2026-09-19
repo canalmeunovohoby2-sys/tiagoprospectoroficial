@@ -416,6 +416,13 @@ export function classifyToolResultFailure(input: {
   if (input.toolName === "finish_task") {
     return { kind: "guard", detail: input.message ?? "conclusão recusada pelo guard (verificação não comprovada)" };
   }
+  // FASE 7.9 — SKIP das NOSSAS guardas (config/encolhimento/regressão) NÃO é
+  // ferramenta quebrada: é orientação ao agente. Antes isso virava "uma ferramenta
+  // falhou" no relatório final (ex.: write_file em vite.config por engano).
+  const msg = String(input.message ?? "");
+  if (/ARQUIVO DE CONFIGURAÇÃO\/BUILD|EDITAR ≠ RECONSTRUIR|REGRESSÃO estrutural|guard de conclusão/i.test(msg)) {
+    return { kind: "guard", detail };
+  }
   if (input.readOnlyVerify) return { kind: "verify", detail };
   return { kind: "tool", detail };
 }

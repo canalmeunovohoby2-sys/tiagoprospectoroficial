@@ -65,6 +65,10 @@ describe("FASE 7.2 · saída explícita do bootstrap", () => {
     expect(handler).toContain("runAiInstruction(");
     expect(handler).toMatch(/Crie o site real de/);
     expect(handler).toContain("media: true");
+    // FASE 7.8 — o botão do TOPO também chama o AGENTE em projeto React
+    // (antes chamava generate(), o gerador de spec legado, e nada acontecia).
+    expect(page).toMatch(/onClick=\{isReactProject \? handleGenerateSite : generate\}/);
+    expect(page).toMatch(/isBootstrapFiles\(draftFiles\) \? "Gerar site" : "Regenerar site"/);
     // nada de efeito automático disparando geração ao abrir
     expect(page).not.toContain("needsKickoff");
     expect(page).not.toMatch(/useEffect\([^)]*handleGenerateSite/);

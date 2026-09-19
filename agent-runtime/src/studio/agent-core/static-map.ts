@@ -107,6 +107,10 @@ export function buildMapRuntimeScript(): string {
       for(var j=0;j<rows;j++){ for(var i=0;i<cols;i++){
         var X=sx+i, Y=sy+j; if(X<0||Y<0||X>=n||Y>=n) continue;
         var img=document.createElement("img"); img.alt=""; img.loading="lazy"; img.draggable=false;
+        // COEP (o site roda isolado por COOP/COEP no Vercel): imagens no-cors são
+        // BLOQUEADAS. O tile do OSM manda Access-Control-Allow-Origin:*, então
+        // carregar em modo CORS (crossOrigin=anonymous) faz o mapa aparecer.
+        img.crossOrigin="anonymous";
         img.src="https://tile.openstreetmap.org/"+z+"/"+X+"/"+Y+".png";
         img.style.cssText="position:absolute;left:"+(i*TILE)+"px;top:"+(j*TILE)+"px;width:"+TILE+"px;height:"+TILE+"px";
         stage.appendChild(img);
