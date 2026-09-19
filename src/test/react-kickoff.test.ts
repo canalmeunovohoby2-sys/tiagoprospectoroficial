@@ -29,11 +29,11 @@ describe("Kickoff automático REMOVIDO (Fase 1)", () => {
     expect(page).toContain("progresso real");
   });
 
-  it("a flag persistida de kickoff continua existindo na API (compatibilidade), sem gatilho", () => {
+  it("FASE 7.2: a flag de kickoff NÃO é mais gravada (geração é ação explícita)", () => {
     const api = read("src/lib/siteProjectsApi.ts");
-    expect(api).toMatch(/settings:\s*\{\s*kind:\s*"react",\s*kickoff:\s*"pending"\s*\}/);
-    expect(api).toContain("export async function markReactKickoffDone");
-    // O estado continua consultável (galeria/telemetria), mas nada dispara em cima.
+    expect(api).not.toContain('kickoff: "pending"');
+    expect(api).toMatch(/settings:\s*\{\s*kind:\s*"react"\s*\}/);
+    // Os helpers continuam existindo (leitura de projetos antigos), sem gatilho.
     expect(projectKickoffPending({ settings: { kind: "react", kickoff: "pending" } })).toBe(true);
     expect(projectKickoffState({ settings: { kind: "react", kickoff: "done" } })).toBe("done");
     expect(projectKickoffState({ settings: {} })).toBe("none");

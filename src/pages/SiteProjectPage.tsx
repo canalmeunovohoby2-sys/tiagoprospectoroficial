@@ -34,6 +34,7 @@ import { StudioHistoryDialog, type StudioGitRestoreMeta } from "@/components/sit
 import { invokeStudioGit } from "@/lib/studio/gitApi";
 import { isStudioUiEnabled } from "@/lib/studio/featureFlag";
 import { PERF, markPerf } from "@/lib/studio/perf";
+import { recordRuntimeChange, detectStaleSnapshot, type RuntimeChangeMap } from "@/lib/studio/autosaveGuard";
 import { useStudioChat } from "@/hooks/studio/useStudioChat";
 import type { StudioStreamEvent, StudioFilesReadyEvent } from "@/lib/studio/streamEvents";
 import { GitHubProjectButton } from "@/components/app/GitHubProjectButton";
@@ -819,6 +820,9 @@ export default function SiteProjectPage() {
             conversation: chatConversation(),
             conversationId: conversationId ?? undefined,
             workspaceRevision: workspaceRevRef.current ?? undefined,
+            // FASE 7.2 — estado REAL da execução (último evento ao vivo) para a
+            // conversa responder "o que você está fazendo agora?" com a verdade.
+            liveStatus: aiRunning || generating ? liveWork[liveWork.length - 1]?.detail ?? undefined : undefined,
           }, (phase, detail) => {
             // Atividade REAL ao vivo (arquivo sendo lido/editado etc.).
             setLiveWork((prev) => [...prev.slice(-9), { phase, detail }]);
@@ -858,6 +862,8 @@ export default function SiteProjectPage() {
           setAiHistory((prev) => [{ spec: snapshot, files: runFiles }, ...prev].slice(0, 10));
           const derivedSpec = agentRes.spec ? normalizeSpec(agentRes.spec as SiteSpec | Record<string, unknown> | null) : draftSpec;
           setDraftSpec(derivedSpec);
+          // FASE 7.2 — registra o valor anterior antes de aplicar o resultado REAL.
+          recordRuntimeChange(draftFilesRef.current, agentRes.files, runtimeChangeRef.current);
           prevFilesRef.current = agentRes.files;
           setDraftFiles(agentRes.files);
           setPreviewNonce((n) => n + 1);
@@ -1076,6 +1082,14 @@ export default function SiteProjectPage() {
     summary?: string,
   ): Promise<{ ok: boolean; created: boolean; error?: string }> {
     if (!project?.id) return { ok: false, created: false, error: "Projeto não carregado." };
+    // FASE 7.2 — SNAPSHOT ANTIGO nunca sobrescreve trabalho mais novo do runtime:
+    // se algum arquivo que o agente mudou voltaria ao valor anterior, não grava.
+    const stale = detectStaleSnapshot(filesToSave, runtimeChangeRef.current);
+    if (stale.stale) {
+      const msg = `snapshot antigo ignorado (protege ${stale.revertedFiles.slice(0, 3).join(", ")})`;
+      console.warn("[autosave:react] " + msg);
+      return { ok: false, created: false, error: msg };
+    }
     const hasFiles = !!filesToSave && Object.keys(filesToSave).length > 0;
     try {
       if (hasFiles) await updateGeneratedCode(project.id, filesToSave);
@@ -1188,6 +1202,11 @@ export default function SiteProjectPage() {
   // Enviada em /run, /build e /git: se estiver atrasada, o runtime ignora o
   // snapshot e mantém o estado mais novo (evita "A sobrescrever B").
   const workspaceRevRef = useRef<number | null>(null);
+  // FASE 7.2 — espelho do draft atual (leitura segura dentro de handlers) e o mapa
+  // de "valor anterior" dos arquivos que o runtime mudou (guarda do autosave).
+  const draftFilesRef = useRef<Record<string, string>>({});
+  const runtimeChangeRef = useRef<RuntimeChangeMap>(new Map());
+  useEffect(() => { draftFilesRef.current = draftFiles ?? {}; }, [draftFiles]);
 
   // FASE 1 (sem automação): abrir um projeto NÃO dispara geração. O cadastro do
   // cliente é contexto; a PRIMEIRA geração (e qualquer alteração) só acontece
@@ -1195,6 +1214,18 @@ export default function SiteProjectPage() {
   // saudação ("oi, boa tarde") conversa e nunca vira geração.
   // O `briefing.user_prompt` continua sendo usado como texto do pedido quando o
   // usuário pedir a geração no chat (ver handleGeneratePrompt abaixo).
+
+  // FASE 7.2 — AÇÃO EXPLÍCITA do usuário quando o projeto está no RASCUNHO.
+  // Usa o MESMO fluxo do chat (runAiInstruction → /run com projectKind react), que
+  // roda o agente em modo `generate` porque o projeto ainda é bootstrap. Não é
+  // kickoff automático: só acontece quando o usuário clica.
+  async function handleGenerateSite() {
+    if (!project || aiRunning || generating) return;
+    const nome = project.company_name || project.name || "minha empresa";
+    const seg = project.segment ? ` (${project.segment})` : "";
+    const prompt = `Crie o site real de ${nome}${seg} agora, substituindo o rascunho inicial pelos arquivos reais do site — use os dados, as fotos e a direção criativa deste cliente.`;
+    await runAiInstruction(prompt, undefined, { media: true });
+  }
 
   function handleStudioEvent(event: StudioStreamEvent) {
     studioChat.handleEvent(event);
@@ -1205,6 +1236,9 @@ export default function SiteProjectPage() {
     if (event.type === "files_ready") {
       const files = (event as StudioFilesReadyEvent).files;
       if (files && Object.keys(files).length > 0) {
+        // FASE 7.2 — guarda do autosave: registra o valor ANTERIOR dos arquivos que
+        // o runtime acabou de mudar (snapshot antigo nunca devolve o rascunho).
+        recordRuntimeChange(draftFilesRef.current, files, runtimeChangeRef.current);
         // O agente alterou o workspace: o editor/Preview refletem na hora.
         prevFilesRef.current = files;
         setDraftFiles(files);
@@ -1525,6 +1559,7 @@ export default function SiteProjectPage() {
             previewDevice={previewDevice}
             onPreviewDeviceChange={setPreviewDevice}
             previewFallback={isReactProject ? undefined : <SitePreview spec={draftSpec as SiteSpec | Record<string, unknown> | null} />}
+            onGenerateSite={isReactProject ? handleGenerateSite : undefined}
             chat={{
               messages: aiMessages,
               running: aiRunning,

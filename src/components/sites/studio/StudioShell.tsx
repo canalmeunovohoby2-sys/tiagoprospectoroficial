@@ -33,6 +33,8 @@ export interface StudioShellProps {
   /** Device CONTROLADO do preview (barra do projeto: Desktop/Tablet/Mobile). */
   previewDevice?: StudioDevice;
   onPreviewDeviceChange?: (device: StudioDevice) => void;
+  /** FASE 7.2 — ação explícita "Gerar site" (projeto em rascunho). */
+  onGenerateSite?: () => void;
   /** Projeto (para o preview React/WebContainer — C0). */
   projectId?: string;
   /** `static` (legado, srcDoc) ou `react` (C0, WebContainer). */
@@ -71,6 +73,7 @@ export function StudioShell({
   previewFallback,
   previewDevice: previewDeviceProp,
   onPreviewDeviceChange,
+  onGenerateSite,
   projectId,
   projectKind,
   openFileRequest,
@@ -428,6 +431,7 @@ export function StudioShell({
                       onElementSelected={handleElementSelected}
                       onSelectionCleared={handleSelectionCleared}
                       onViewportChange={setPreviewDevice}
+                      onGenerateSite={onGenerateSite}
                     />
                   </ResizablePanel>
                 )}

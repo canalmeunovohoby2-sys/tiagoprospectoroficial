@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PERF, markPerf } from "@/lib/studio/perf";
+import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
 import { AlertTriangle, CheckCircle2, Crosshair, Loader2, RefreshCw, ShieldAlert, Terminal } from "lucide-react";
 import { useWebContainerPreview } from "@/hooks/studio/useWebContainerPreview";
 import { injectReactVisualHelper } from "@/lib/studio/reactVisualHelper";
@@ -23,6 +24,8 @@ export interface WebContainerPreviewProps {
   visualMode?: boolean;
   /** Seleção de elemento (origem React via `_debugSource`). */
   onElementSelected?: (element: StudioElementDescriptor) => void;
+  /** FASE 7.2 — ação explícita "Gerar site" quando o projeto está no rascunho. */
+  onGenerateSite?: () => void;
 }
 
 const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads";
@@ -95,7 +98,7 @@ function DeviceFrame({ device, children }: { device: StudioDevice; children: Rea
  * NÃO usa `srcDoc`. Em modo visual, injeta o helper que lê `_debugSource` do
  * fiber React e reporta a seleção — apenas nesta projeção, nunca no código-fonte.
  */
-export function WebContainerPreview({ files, projectId, refreshKey, device = "desktop", visualMode = false, onElementSelected }: WebContainerPreviewProps) {
+export function WebContainerPreview({ files, projectId, refreshKey, device = "desktop", visualMode = false, onElementSelected, onGenerateSite }: WebContainerPreviewProps) {
   const frameSize = WC_DEVICE_SIZE[device];
   const [showLogs, setShowLogs] = useState(false);
   // Reload GARANTIDO do iframe depois de mudanças do agente. O HMR do Vite costuma
@@ -191,8 +194,27 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
     if (phase === "ready" && url) markPerf(PERF.T8, { url });
   }, [phase, url]);
 
+  // FASE 7.1 — projeto ainda no bootstrap? Então o Preview mostra o RASCUNHO.
+  const isDraft = useMemo(() => isBootstrapFiles(files), [files]);
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {isDraft && (
+        // FASE 7.1/7.2 — estado HONESTO: o projeto ainda é o rascunho inicial (nada foi
+        // gerado). Não é tela quebrada nem geração automática: o usuário pede aqui.
+        <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] font-medium text-amber-700">
+          <span>📝 Rascunho — peça no chat para gerar o site.</span>
+          {onGenerateSite && (
+            <button
+              type="button"
+              onClick={onGenerateSite}
+              className="inline-flex h-6 items-center gap-1 rounded-md bg-amber-600 px-2 text-[11px] font-semibold text-white hover:bg-amber-700"
+            >
+              ✨ Gerar site
+            </button>
+          )}
+        </div>
+      )}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-card px-3 py-1.5">
         <p className="flex items-center gap-2 text-[11px] font-semibold text-muted-foreground">
           <span className="text-primary">WebContainer</span>

@@ -17,6 +17,8 @@ export interface ReactTemplateInput {
  */
 export const REACT_BOOTSTRAP_MARKER = "prospector-bootstrap";
 
+import { REACT_TEMPLATE_LOCK } from "./reactTemplateLock";
+
 const PKG = {
   name: "prospector-site",
   private: true,
@@ -45,6 +47,7 @@ const PKG = {
 
 export const REACT_TEMPLATE_PATHS = [
   "package.json",
+  "package-lock.json",
   "index.html",
   "vite.config.ts",
   "tsconfig.json",
@@ -69,6 +72,9 @@ export function buildReactTemplateFiles(input: ReactTemplateInput = {}): Record<
 
   return {
     "package.json": `${JSON.stringify(PKG, null, 2)}\n`,
+    // FASE 7.1 — lockfile montado no WebContainer: evita a resolução de árvore na
+    // rede a cada boot (causa documentada de boot lento no WebContainers).
+    "package-lock.json": `${REACT_TEMPLATE_LOCK}\n`,
     "index.html": `<!doctype html>
 <html lang="pt-BR">
   <head>

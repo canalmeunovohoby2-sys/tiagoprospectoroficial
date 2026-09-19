@@ -39,6 +39,8 @@ export interface StudioPreviewPanelProps {
   inspectMode?: boolean;
   onConsole?: (entry: StudioConsoleEntry) => void;
   onElementSelected?: (element: StudioElementDescriptor, viewport: StudioViewportInfo) => void;
+  /** FASE 7.2 — ação explícita "Gerar site" (projeto em rascunho). */
+  onGenerateSite?: () => void;
   onSelectionCleared?: () => void;
   onPreviewReady?: (capabilities: string[]) => void;
   onPreviewError?: (error: StudioPreviewError) => void;
@@ -107,6 +109,7 @@ export function StudioPreviewPanel({
   inspectMode = false,
   projectId,
   projectKind = "static",
+  onGenerateSite,
   onConsole,
   onElementSelected,
   onSelectionCleared,
@@ -281,6 +284,7 @@ export function StudioPreviewPanel({
             refreshKey={refreshKey}
             visualMode={inspectMode}
             onElementSelected={onElementSelected}
+            onGenerateSite={onGenerateSite}
           />
         </div>
       </div>

@@ -142,7 +142,9 @@ export async function openOrCreateSiteProject(userId: string, lead: LeadSource):
       city: briefingMap.city ? String(briefingMap.city) : null,
       state: briefingMap.state ? String(briefingMap.state) : null,
       status: "generated",
-      settings: { kind: "react", kickoff: "pending" } as unknown as Json,
+      // FASE 7.2 — sem `kickoff` órfão: a geração é uma AÇÃO EXPLÍCITA do usuário
+      // (botão "Gerar site" / mensagem no chat), nunca automática ao abrir.
+      settings: { kind: "react" } as unknown as Json,
       generated_code: template as unknown as Json,
       briefing,
     })
@@ -180,7 +182,8 @@ export async function createSiteProjectFromPrompt(userId: string, prompt: string
     briefing,
     ...(isReact
       ? {
-          settings: { kind: "react", kickoff: "pending" } as unknown as Json,
+          // FASE 7.2 — sem `kickoff` órfão: nada dispara geração sozinho ao abrir.
+          settings: { kind: "react" } as unknown as Json,
           // O bootstrap é um rascunho NEUTRO: NUNCA usa o prompt do usuário como
           // texto visível (senão o preview "mostra o prompt"). O prompt fica em
           // `briefing.user_prompt` e só alimenta a geração.
@@ -481,6 +484,8 @@ export async function invokeProspectorAgent(input: {
   conversationId?: string;
   /** FASE 2 — revisão do workspace que o cliente possui (snapshot atrasado é ignorado no runtime). */
   workspaceRevision?: number;
+  /** FASE 7.2 — estado REAL da execução em andamento (para conversa contextual). */
+  liveStatus?: string;
 }, onLiveActivity?: (phase: string, detail: string) => void, opts?: {
   /** Ativa o Router→(Planner)→Coder no runtime (Fase 2 do Studio, apenas static). */
   orchestrate?: boolean;
@@ -519,6 +524,7 @@ export async function invokeProspectorAgent(input: {
         orchestrate: opts?.orchestrate === true ? true : undefined,
         projectKind: opts?.projectKind === "react" ? "react" : undefined,
         workspaceRevision: typeof input.workspaceRevision === "number" ? input.workspaceRevision : undefined,
+        liveStatus: typeof input.liveStatus === "string" && input.liveStatus.trim() ? input.liveStatus.trim() : undefined,
       }),
       signal: opts?.signal ?? AbortSignal.timeout(600_000),
     });

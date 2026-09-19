@@ -264,15 +264,17 @@ export function deriveStudioPhase(input: DerivePhaseInput): StudioPhase {
   return "complete";
 }
 
+// FASE 7.1 — rótulos OPERACIONAIS em português do Brasil, sempre verdadeiros:
+// cada um só aparece quando a ação correspondente está realmente acontecendo.
 export const PHASE_LABEL: Record<StudioPhase, string> = {
   idle: "Pronto",
-  preparing: "Preparando…",
+  preparing: "Entendendo o pedido…",
   planning: "Planejando…",
-  coding: "Codificando…",
-  tool_running: "Executando ferramenta…",
-  validating: "Verificando…",
-  files_ready: "Arquivos atualizados",
-  committing: "Salvando checkpoint…",
+  coding: "Alterando os arquivos…",
+  tool_running: "Executando a ação…",
+  validating: "Validando a alteração…",
+  files_ready: "Atualizando o Preview…",
+  committing: "Salvando versão…",
   complete: "Concluído",
   cancelled: "Cancelado",
   error: "Erro",
