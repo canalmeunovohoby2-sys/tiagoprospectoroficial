@@ -93,7 +93,7 @@ export function buildMapRuntimeScript(): string {
     var lat=parseFloat(el.getAttribute("data-lat")), lng=parseFloat(el.getAttribute("data-lng"));
     var z=parseInt(el.getAttribute("data-zoom")||"15",10);
     if(!isFinite(lat)||!isFinite(lng)) return;
-    el.style.position="relative"; el.style.overflow="hidden"; el.style.touchAction="none"; el.style.cursor="grab"; el.style.background="#e5e7eb";
+    el.style.position="relative"; el.style.width="100%"; el.style.height="100%"; el.style.minHeight="240px"; el.style.overflow="hidden"; el.style.touchAction="none"; el.style.cursor="grab"; el.style.background="#e5e7eb";
     var stage=document.createElement("div"); stage.style.cssText="position:absolute;left:0;top:0;will-change:transform"; el.appendChild(stage);
     var dx=0, dy=0, dragging=false, moved=false, startX=0, startY=0;
     function render(){
@@ -163,8 +163,8 @@ export function buildStaticMapBlock(business: BusinessContext, opts: StaticMapBl
   if (!point) {
     if (!directions) return null;
     return [
-      `<div className="relative w-full ${heightClass} overflow-hidden rounded-xl border border-black/10 bg-neutral-100">`,
-      `  <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">`,
+      `<div className="relative w-full ${heightClass} overflow-hidden rounded-xl border border-black/10 bg-neutral-100" style={{ position: "relative", width: "100%", height: "320px", overflow: "hidden" }}>`,
+      `  <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center" style={{ display: "flex", height: "100%", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px", padding: "24px", textAlign: "center" }}>`,
       address ? `    <p className="text-sm font-medium text-neutral-800">${esc(address)}</p>` : "",
       `    <a href="${esc(directions)}" target="_blank" rel="noreferrer" className="rounded-lg bg-neutral-900 px-3 py-2 text-xs font-semibold text-white">Abrir no Google Maps</a>`,
       `  </div>`,
@@ -173,8 +173,8 @@ export function buildStaticMapBlock(business: BusinessContext, opts: StaticMapBl
   }
 
   return [
-    `<div className="relative w-full ${heightClass} overflow-hidden rounded-xl border border-black/10 bg-neutral-200">`,
-    `  <div data-pf-map data-lat="${point.lat}" data-lng="${point.lng}" data-zoom="15" className="absolute inset-0" />`,
+    `<div className="relative w-full ${heightClass} overflow-hidden rounded-xl border border-black/10 bg-neutral-200" style={{ position: "relative", width: "100%", height: "320px", overflow: "hidden" }}>`,
+    `  <div data-pf-map data-lat="${point.lat}" data-lng="${point.lng}" data-zoom="15" className="absolute inset-0" style={{ position: "absolute", inset: 0 }} />`,
     `  <div className="absolute right-2 top-2 z-10 flex flex-col overflow-hidden rounded-lg border border-black/10 bg-white/95 shadow">`,
     `    <button type="button" data-pf-zoom-step="1" data-pf-ui="1" aria-label="Aproximar" className="h-8 w-8 text-lg leading-none text-neutral-800 hover:bg-neutral-100">+</button>`,
     `    <button type="button" data-pf-zoom-step="-1" data-pf-ui="1" aria-label="Afastar" className="h-8 w-8 border-t border-black/10 text-lg leading-none text-neutral-800 hover:bg-neutral-100">−</button>`,
