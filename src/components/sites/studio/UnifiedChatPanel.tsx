@@ -99,8 +99,20 @@ export function UnifiedChatPanel({
     onNotice: (m) => setMicNotice(m),
   });
 
+  // FASE 7.4 — auto-scroll só quando o usuário JÁ está no fim da conversa.
+  // Antes, cada evento da run puxava a tela: a mensagem do usuário "subia" sem
+  // parar. Se ele rolou para ler, a posição fica travada.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottomRef = useRef(true);
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
+
   useEffect(() => {
     // jsdom não implementa scrollIntoView — guarda para testes/SSR.
+    if (!stickToBottomRef.current) return;
     endRef.current?.scrollIntoView?.({ block: "end" });
   }, [items.length, running, currentAgent]);
 
@@ -175,7 +187,7 @@ export function UnifiedChatPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-2.5 py-2.5 [scrollbar-width:thin]">
+      <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-2.5 py-2.5 [scrollbar-width:thin]">
         {items.length === 0 && (
           <p className="px-1 py-6 text-center text-[12px] text-muted-foreground">
             Descreva o que você quer criar ou alterar. O agente trabalha no projeto real e você acompanha aqui.

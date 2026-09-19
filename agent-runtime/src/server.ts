@@ -264,6 +264,21 @@ export function shouldReuseSession(existing: { execKey?: string } | undefined | 
   return !!existing && existing.execKey === execKey;
 }
 
+/**
+ * FASE 7.4 — LIMITE DE TEMPO DA RUN (fim do "demora infinito"): uma execução
+ * React nunca pode ficar aberta indefinidamente (40 iterações × chamadas do
+ * modelo). Padrão 4 min; configurável por `AGENT_RUN_TIMEOUT_MS` (0 desliga,
+ * mínimo 30s, máximo 15min).
+ */
+export function resolveRunTimeoutMs(raw?: string | number | null): number {
+  const fromArg = raw === undefined || raw === null || raw === "" ? null : String(raw);
+  const text = String(fromArg ?? process.env.AGENT_RUN_TIMEOUT_MS ?? "").trim();
+  if (text === "") return 240_000; // padrão 4 min
+  const n = Number(text);
+  if (!Number.isFinite(n) || n <= 0) return 0; // 0 ou inválido = desligado (nunca NaN)
+  return Math.min(Math.max(Math.floor(n), 30_000), 900_000);
+}
+
 // ===== FASE 2 · resultado HONESTO =====
 export type RunResultState = "conversation" | "no_change" | "completed_verified" | "completed_unverified" | "failed";
 
@@ -1713,9 +1728,35 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // nenhum arquivo alterado contém azul?").
             const filesBeforeRun = readWorkspace(root);
             let outcome: AgentRunOutcome;
+            // FASE 7.4 — CORTA A RUN NO TEMPO LIMITE: aborta o agente e devolve o
+            // que já foi aplicado, com resposta honesta (nunca fica "infinito").
+            const runTimeoutMs = resolveRunTimeoutMs();
+            let timedOut = false;
+            const runTimer = runTimeoutMs > 0
+              ? setTimeout(() => {
+                  timedOut = true;
+                  try { oldAgent.abort("timeout"); } catch { /* noop */ }
+                  try { writeLine({ type: "activity", phase: "analyzing", detail: "Tempo limite atingido — encerrando…" }); } catch { /* noop */ }
+                }, runTimeoutMs)
+              : null;
             try {
               outcome = await oldAgent.runTask(mission, { continueSession: resumed });
+            } catch (e) {
+              if (!timedOut) throw e;
+              // Abortado pelo tempo: resultado PARCIAL honesto (diff real do disco).
+              const afterTimeout = readWorkspace(root);
+              const touchedTimeout = Object.keys(afterTimeout).filter((p) => filesBeforeRun[p] !== afterTimeout[p]);
+              outcome = {
+                ok: true,
+                reply: `⏱ Atingi o tempo limite desta execução (${Math.round(runTimeoutMs / 60000)} min). Apliquei o que deu até aqui (${touchedTimeout.length} arquivo(s)). Me diga "continue" que eu retomo exatamente de onde parei.`,
+                files: afterTimeout,
+                touched: touchedTimeout,
+                iterations: 0,
+                events: [],
+                activity: [],
+              } as unknown as AgentRunOutcome;
             } finally {
+              if (runTimer) clearTimeout(runTimer);
               try { unsubscribeLive(); } catch { /* noop */ }
             }
             liveBridge.flushFiles();
