@@ -58,11 +58,27 @@ describe("UI/UX · sidebar do chat enxuta e colapsável", () => {
   });
 });
 
-describe("UI/UX · feed limpo (sem balões volumosos)", () => {
-  it("mensagens usam divisores finos e acento de 2px, não balões rounded-2xl", () => {
+describe("UI/UX · cards premium do chat (Você × Agente)", () => {
+  it("mensagem do usuário: card tingido com o acento, rótulo 'Você' e avatar à direita", () => {
+    expect(chat).toMatch(/rounded-xl border border-primary\/25 bg-primary\/\[0\.06\]/);
+    expect(chat).toMatch(/uppercase tracking-\[0\.08em\] text-primary\/80">Você</);
+    expect(chat).toMatch(/from-primary to-primary\/70 text-primary-foreground/);
+  });
+
+  it("resposta do agente: card neutro com gradiente, rótulo 'Agente' e avatar de identidade", () => {
+    expect(chat).toMatch(/rounded-xl border border-border\/60 bg-gradient-to-b from-background to-muted\/25/);
+    expect(chat).toMatch(/uppercase tracking-\[0\.08em\] text-muted-foreground">Agente</);
+    expect(chat).toMatch(/from-foreground\/85 to-foreground\/60 text-background/);
+  });
+
+  it("acabamento premium: sombra sutil, hover refinado e transição de 150ms", () => {
+    expect(chat).toMatch(/shadow-\[0_1px_2px_rgba\(15,23,42,\.04\)\]/);
+    expect(chat).toMatch(/hover:shadow-\[0_2px_10px_-4px_rgba\(15,23,42,\.14\)\]/);
+    expect(chat).toMatch(/transition-all duration-150/);
+  });
+
+  it("continua sem balões volumosos (nada de rounded-2xl cheio)", () => {
     expect(chat).not.toMatch(/rounded-2xl rounded-b[rt]-sm/);
-    expect(chat).toMatch(/border-t border-border\/50 pt-2\.5/);
-    expect(chat).toMatch(/border-l-2 border-primary\/60/);
   });
 
   it("status de erro continua em callout discreto (ProgressBlock), não em balão", () => {

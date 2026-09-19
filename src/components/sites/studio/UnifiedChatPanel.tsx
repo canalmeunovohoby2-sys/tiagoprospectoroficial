@@ -185,8 +185,10 @@ export function UnifiedChatPanel({
           if (item.kind === "user") {
             return (
               <div key={item.id} className="flex justify-end gap-2">
-                {/* Feed clean: sem balão volumoso — bloco discreto com acento de 2px. */}
-                <div className="max-w-[88%] rounded-lg border-l-2 border-primary/60 bg-muted/40 px-2.5 py-1.5 text-[13px] leading-relaxed text-foreground">
+                {/* Card premium do USUÁRIO: superfície tingida com o acento da marca,
+                    borda fina, cantos suaves e rótulo discreto — diferente do agente. */}
+                <div className="group max-w-[88%] rounded-xl border border-primary/25 bg-primary/[0.06] px-3 py-2 text-[13px] leading-relaxed text-foreground shadow-[0_1px_2px_rgba(15,23,42,.04)] transition-all duration-150 hover:border-primary/40 hover:shadow-[0_2px_10px_-4px_rgba(15,23,42,.14)] dark:bg-primary/[0.10]">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-primary/80">Você</p>
                   {(() => {
                     const atts = item.images?.length ? item.images : (item.image ? [{ dataUrl: item.image, label: item.fileLabel ?? "anexo" }] : []);
                     if (atts.length === 0) return null;
@@ -194,25 +196,33 @@ export function UnifiedChatPanel({
                       <div className="mb-1.5 flex flex-wrap gap-1.5">
                         {atts.map((a, i) => (
                           a.dataUrl.startsWith("data:image")
-                            ? <img key={i} src={a.dataUrl} alt={a.label} className="max-h-40 rounded-md border border-border/60" />
-                            : <span key={i} className="rounded border border-border/60 px-1.5 py-0.5 text-[11px] text-muted-foreground">📎 {a.label}</span>
+                            ? <img key={i} src={a.dataUrl} alt={a.label} className="max-h-40 rounded-md border border-primary/20" />
+                            : <span key={i} className="rounded-md border border-primary/20 px-1.5 py-0.5 text-[11px] text-primary/80">📎 {a.label}</span>
                         ))}
                       </div>
                     );
                   })()}
                   <p className="whitespace-pre-wrap break-words">{item.text}</p>
                 </div>
-                <span className="mt-1 hidden h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border/60 text-muted-foreground sm:flex"><User className="h-3 w-3" /></span>
+                <span className="mt-0.5 hidden h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/70 text-primary-foreground shadow-sm sm:flex">
+                  <User className="h-3 w-3" />
+                </span>
               </div>
             );
           }
           if (item.kind === "assistant") {
             return (
-              // Feed clean: conteúdo integrado à interface, separado por divisor fino.
-              <div key={item.id} className="flex gap-2 border-t border-border/50 pt-2.5 first:border-t-0 first:pt-0">
-                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"><Bot className="h-3 w-3" /></span>
-                <div className="min-w-0 flex-1 text-[13px] leading-relaxed">
-                  <MarkdownMessage text={item.text} />
+              // Card premium do AGENTE: superfície neutra com leve gradiente, borda
+              // fina e avatar com identidade — visualmente distinto da mensagem do usuário.
+              <div key={item.id} className="flex gap-2">
+                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-foreground/85 to-foreground/60 text-background shadow-sm">
+                  <Bot className="h-3 w-3" />
+                </span>
+                <div className="min-w-0 flex-1 rounded-xl border border-border/60 bg-gradient-to-b from-background to-muted/25 px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,.04)] transition-all duration-150 hover:border-border hover:shadow-[0_2px_10px_-4px_rgba(15,23,42,.12)]">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Agente</p>
+                  <div className="text-[13px] leading-relaxed">
+                    <MarkdownMessage text={item.text} />
+                  </div>
                 </div>
               </div>
             );
