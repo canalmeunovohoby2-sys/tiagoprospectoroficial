@@ -1,0 +1,48 @@
+# GMaps Photos Engine — manifesto de referência (Cloud Run / Knative)
+# Não altera nada do serviço Railway: usa o MESMO código/Dockerfile de gmapsphotos-service/.
+# Aplicar (após build+push da imagem):
+#   gcloud run services replace deploy/gmaps-photos-engine/photos-engine.service.yaml --region REGION
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: prospector-gmaps-photos-engine
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "2"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      # cada scrape abre Chrome/Selenium: poucas requisições simultâneas por instância
+      containerConcurrency: 2
+      # scraping completo (browser + consent + scroll) — folga sobre o timeout interno de 280s
+      timeoutSeconds: 360
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/prospector/gmaps-photos-engine:latest
+          ports:
+            # o CMD do serviço escuta em 8000 (uvicorn) — a plataforma deve usar 8000
+            - containerPort: 8000
+          resources:
+            limits:
+              # auditoria: Chrome + Xvfb + Selenium pedem 1–2 GiB
+              cpu: "2"
+              memory: 2Gi
+          env:
+            # mesma semântica do serviço atual (nenhum código muda)
+            - name: SCRAPER_WINDOWED
+              value: "1"            # usa xvfb-run (estável em datacenter)
+            - name: BROWSER_WAIT_SECONDS
+              value: "20"
+            - name: SCRAPE_TIMEOUT_SECONDS
+              value: "280"
+            - name: LOG_LEVEL
+              value: INFO
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 24

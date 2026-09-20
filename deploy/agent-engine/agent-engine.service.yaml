@@ -1,0 +1,73 @@
+# Agent Engine — manifesto de referência (Cloud Run / Knative)
+# Reaproveita o runtime atual SEM alterá-lo: a imagem é a do agent-runtime + a
+# camada mínima de deploy/agent-engine/Dockerfile (adiciona `git`).
+# Aplicar (após o build em 2 passos descrito no Dockerfile/README):
+#   gcloud run services replace deploy/agent-engine/agent-engine.service.yaml --region REGION
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: prospector-agent-engine
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # Sessões/locks/revisions são estado EM MEMÓRIA do processo: uma única
+        # instância mantém a continuidade coerente (não escalar nesta fase).
+        autoscaling.knative.dev/maxScale: "1"
+        autoscaling.knative.dev/minScale: "0"
+        # CPU durante todo o processamento da request (Chromium/build precisam)
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      # /run + /git + /build chegam da mesma sessão de usuário: multiplexar no
+      # MESMO processo preserva os locks por projeto.
+      containerConcurrency: 80
+      # execuções longas (agente com deadline interno de 240s + build/captura)
+      timeoutSeconds: 600
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/prospector/agent-engine:latest
+          ports:
+            - containerPort: 8787
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          env:
+            - name: HOST
+              value: 0.0.0.0
+            - name: DEPLOY_VERSION
+              value: agent-engine
+            - name: SUPABASE_URL
+              value: https://efgwszjjtjebqdzziqfs.supabase.co
+            - name: SUPABASE_FUNCTIONS_URL
+              value: https://efgwszjjtjebqdzziqfs.supabase.co/functions/v1
+            # Único filesystem gravável no host gerenciado: workspaces/capturas/artefatos
+            - name: PROSPECTOR_WORKSPACES
+              value: /tmp/prospector-workspaces
+            - name: PROSPECTOR_SHOTS
+              value: /tmp/prospector-shots
+            - name: PROSPECTOR_ARTIFACTS_DIR
+              value: /tmp/branding-artifacts
+            # deadline da run (mesmo default do runtime)
+            - name: AGENT_RUN_TIMEOUT_MS
+              value: "240000"
+          envFrom:
+            - secretRef:
+                name: prospector-runtime-secrets
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8787
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 24
+# NOTA (comentário de fim de arquivo: sem segundo documento YAML): secrets esperados
+# em prospector-runtime-secrets (Secret Manager; NUNCA no Git):
+#   SUPABASE_ANON_KEY        (público, mantido como secret por higiene)
+#   RUNTIME_GATEWAY_SECRET   (runtime → edges: runtime-ai-config / conversation-save)
+#   AGENT_TICKET_SECRET      (MESMO valor da edge `agent-ticket` — valida o ticket do front)
+#   TAVILY_API_KEY           (opcional — pesquisa web)
+# NÃO são necessários no runtime: DEEPSEEK_API_KEY/GEMINI/OPENAI (a IA vem da edge
+# `runtime-ai-config` com a chave do usuário). RAILWAY_GIT_COMMIT_SHA não é requisito.

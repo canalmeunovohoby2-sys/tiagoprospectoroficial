@@ -1,0 +1,42 @@
+# Maps Engine — manifesto de referência (Cloud Run / Knative)
+# Não altera nada do serviço Railway: usa o MESMO código/Dockerfile em mapscraper-service/.
+# Aplicar (após build+push da imagem):
+#   gcloud run services replace deploy/maps-engine/maps-engine.service.yaml --region REGION
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: prospector-maps-engine
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "2"
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      containerConcurrency: 4
+      # scraping de lista com paginação; 300s é folga confortável
+      timeoutSeconds: 300
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/prospector/maps-engine:latest
+          ports:
+            # o CMD do serviço escuta em 8000 (uvicorn) — a plataforma deve usar 8000
+            - containerPort: 8000
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          env:
+            # mesmos knobs do serviço atual (nenhum código muda)
+            - name: SCRAPER_CONCURRENCY
+              value: "3"
+            - name: LOG_LEVEL
+              value: INFO
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8000
+            periodSeconds: 5
+            failureThreshold: 24
