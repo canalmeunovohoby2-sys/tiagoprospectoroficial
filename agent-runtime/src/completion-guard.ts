@@ -410,17 +410,23 @@ export function classifyToolResultFailure(input: {
   message?: string | null;
   /** true quando a ferramenta é de verificação/inspeção (somente leitura). */
   readOnlyVerify: boolean;
+  /** FASE 7.11 — a falha veio de uma GUARDA nossa (skip do beforeTool), não da ferramenta. */
+  guardSkip?: boolean;
 }): ToolResultFailureClassification {
   if (!input.isError) return { kind: "none" };
   const detail = input.message ? `${input.toolName}: ${input.message}` : input.toolName;
   if (input.toolName === "finish_task") {
     return { kind: "guard", detail: input.message ?? "conclusão recusada pelo guard (verificação não comprovada)" };
   }
+  // FASE 7.11 — skip de guarda NUNCA é ferramenta quebrada. O flag cobre o caso em
+  // que o SDK reporta o erro SEM mensagem (detalhe vinha só "write_file") e a tag
+  // [guard] cobre textos futuros sem depender da redação exata.
+  if (input.guardSkip === true) return { kind: "guard", detail };
   // FASE 7.9 — SKIP das NOSSAS guardas (config/encolhimento/regressão) NÃO é
   // ferramenta quebrada: é orientação ao agente. Antes isso virava "uma ferramenta
   // falhou" no relatório final (ex.: write_file em vite.config por engano).
   const msg = String(input.message ?? "");
-  if (/ARQUIVO DE CONFIGURAÇÃO\/BUILD|EDITAR ≠ RECONSTRUIR|REGRESSÃO estrutural|guard de conclusão/i.test(msg)) {
+  if (/\[guard\]|ARQUIVO DE CONFIGURAÇÃO\/BUILD|EDITAR ≠ RECONSTRUIR|REGRESSÃO estrutural|guard de conclusão/i.test(msg)) {
     return { kind: "guard", detail };
   }
   if (input.readOnlyVerify) return { kind: "verify", detail };
@@ -523,6 +529,12 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
 
   // 2) FALHA REAL DE FERRAMENTA: relata (não finge sucesso, não mascara).
   if (s.toolFailure) {
+    // FASE 7.11 — se o site JÁ FOI ALTERADO, uma falha de ferramenta (ex.: uma
+    // tentativa de escrita recusada no meio do caminho) NÃO é erro terminal: fica
+    // como "não verificado" e a IA narra o parcial. Só é falha real sem alteração.
+    if (s.changeApplied) {
+      return { ok: true, reply: null, error: null, unverified: true, states };
+    }
     const detail = s.toolFailureDetail ? ` Detalhe: ${s.toolFailureDetail}.` : "";
     const partial = s.changeApplied ? " A alteração pode ter ficado parcial." : "";
     const msg = `Não concluí a alteração: uma ferramenta falhou durante a execução.${partial}${detail}`.trim();

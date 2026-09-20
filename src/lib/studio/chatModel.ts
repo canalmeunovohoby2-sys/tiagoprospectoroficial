@@ -208,7 +208,17 @@ export function buildUnifiedChat(input: BuildUnifiedChatInput): UnifiedChatItem[
   for (let c = 0; c < (input.commits ?? []).length; c += 1) {
     out.push({ kind: "commit", id: `c-${c}`, message: input.commits![c].message, hash: input.commits![c].hash });
   }
-  return out;
+  // FASE UX — CHAT LIMPO: a atividade é TRANSITÓRIA. Enquanto a execução roda, ela
+  // aparece normalmente; quando termina, sai da timeline e fica SOMENTE a resposta
+  // final da IA (sem resíduos de "Raciocínio", "N etapas", "COMPLETED"/"ERROR").
+  // Segurança: se não existir resposta `assistant` depois da atividade, ela é
+  // PRESERVADA — nunca deixar o chat sem resultado visível.
+  const hasAssistantAfter = (index: number) => out.some((item, j) => j > index && item.kind === "assistant");
+  return out.filter((item, index) => {
+    if (item.kind !== "activity") return true;
+    if (item.status === "running") return true;
+    return !hasAssistantAfter(index);
+  });
 }
 
 function toActivityItem(run: StudioRun): UnifiedChatItem {

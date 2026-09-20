@@ -471,10 +471,21 @@ describe("Interpretação da conclusão — 'não verificado' ≠ 'falhou' (clas
 
   it("Caso C — erro real de ferramenta → bloqueia e relata (não finge sucesso)", () => {
     const v = classifyCompletion({ ...base, toolFailure: true, toolFailureDetail: "edit_file: ENOENT" });
+    // FASE 7.11 — com o site JÁ alterado, a falha de ferramenta é PARCIAL (não
+    // terminal): ok + não verificado, com a falha preservada em states para a IA
+    // narrar. Sem alteração aplicada é que continua sendo falha real (Caso C2).
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
+    expect(v.unverified).toBe(true);
+    expect(v.states.tool_failure).toBe(true);
+    expect(v.states.change_applied).toBe(true);
+  });
+
+  it("Caso C2 — falha de ferramenta SEM alteração aplicada → falha real com detalhe", () => {
+    const v = classifyCompletion({ ...base, changeApplied: false, touched: [], toolFailure: true, toolFailureDetail: "edit_file: ENOENT" });
     expect(v.ok).toBe(false);
     expect(v.error ?? "").toMatch(/ferramenta falhou/i);
-    expect(v.reply ?? "").toMatch(/edit_file/);
-    expect(v.states.tool_failure).toBe(true);
+    expect(v.error ?? "").toMatch(/edit_file/);
   });
 
   it("Caso D — regressão detectada (terminal) → bloqueia e preserva o motivo real", () => {
@@ -538,9 +549,12 @@ describe("Interpretação da conclusão — 'não verificado' ≠ 'falhou' (clas
 
   it("Caso I — falha de ferramenta de EDIÇÃO continua sendo falha REAL", () => {
     const v = classifyCompletion({ ...base, toolFailure: true, toolFailureDetail: "edit_file: ENOENT", verifyToolFailure: true });
-    expect(v.ok).toBe(false);
-    expect(v.error ?? "").toMatch(/ferramenta falhou/i);
-    expect(v.reply ?? "").toMatch(/edit_file/);
+    // FASE 7.11 — site alterado + falha em ferramenta ⇒ parcial honesto (não terminal),
+    // com a falha preservada em states para a IA narrar.
+    expect(v.ok).toBe(true);
+    expect(v.error).toBeNull();
+    expect(v.unverified).toBe(true);
+    expect(v.states.tool_failure).toBe(true);
   });
 
   it("relatório lista arquivos REAIS e a verificação executada (closed-loop), sem duplicar", () => {

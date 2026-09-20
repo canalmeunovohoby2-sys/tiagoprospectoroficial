@@ -19,7 +19,9 @@ describe("C2 · buildUnifiedChat", () => {
   it("intercala usuário → atividade → resposta", () => {
     const items = buildUnifiedChat({
       messages: [{ role: "user", text: "Adicione depoimentos" }, { role: "assistant", text: "Adicionado." }],
-      runs: [run(1, { events: [thought("analisando"), toolCall("read_file", "1"), toolResponse("read_file", "1")], plan: "PLAN", filesUpdated: true })],
+      // FASE UX: com a execução EM ANDAMENTO a atividade aparece entre as mensagens.
+      // (Ao concluir + existir resposta, o bloco transitório sai da timeline — ver chat-clean-timeline.)
+      runs: [run(1, { status: "running", events: [thought("analisando"), toolCall("read_file", "1"), toolResponse("read_file", "1")], plan: "PLAN", filesUpdated: true })],
     });
     expect(items.map((i) => i.kind)).toEqual(["user", "activity", "assistant"]);
     const activity = items[1];
@@ -36,7 +38,7 @@ describe("C2 · buildUnifiedChat", () => {
         { role: "user", text: "u1" }, { role: "assistant", text: "a1" },
         { role: "user", text: "u2" }, { role: "assistant", text: "a2" },
       ],
-      runs: [run(1, { events: [thought("t1")] }), run(2, { events: [thought("t2")] })],
+      runs: [run(1, { status: "running", events: [thought("t1")] }), run(2, { status: "running", events: [thought("t2")] })],
     });
     expect(items.map((i) => i.kind)).toEqual(["user", "activity", "assistant", "user", "activity", "assistant"]);
   });
@@ -55,7 +57,7 @@ describe("C2 · buildUnifiedChat", () => {
   it("não duplica conteúdo de arquivos (só atividade)", () => {
     const items = buildUnifiedChat({
       messages: [{ role: "user", text: "x" }, { role: "assistant", text: "y" }],
-      runs: [run(1, { events: [toolCall("write_file", "1")], filesUpdated: true })],
+      runs: [run(1, { status: "running", events: [toolCall("write_file", "1")], filesUpdated: true })],
     });
     const activity = items.find((i) => i.kind === "activity");
     expect(activity).toBeTruthy();

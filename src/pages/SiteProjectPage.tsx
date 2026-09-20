@@ -886,9 +886,14 @@ export default function SiteProjectPage() {
           if (autosave.ok && autosave.created) savedNote = "\n\n_(salvo no projeto.)_";
           else if (autosave.ok) savedNote = "";
           else savedNote = `\n\n⚠ Não foi possível salvar automaticamente: ${autosave.error || "erro desconhecido"}. Clique em Salvar para persistir.`;
-          const valErrors = agentRes.status === "error" && agentRes.errors?.length ? `\n(Validação reportou: ${agentRes.errors.slice(0, 2).join("; ")})` : "";
+          // FASE UX — NUNCA despejar detalhe técnico no chat. Se a alteração foi
+          // aplicada mas a verificação final ficou pendente, uma nota humana curta
+          // basta (o texto técnico continua nos payloads/logs internos).
+          const pendingNote = agentRes.status === "error" && agentRes.changed
+            ? "\n\n_Alteração aplicada; verificação final pendente._"
+            : "";
           const changedKeys = Object.keys(agentRes.files).filter((p) => runFiles?.[p] !== agentRes.files?.[p]);
-          pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}${valErrors}`);
+          pushReply(`${agentRes.reply?.trim() || `Arquivos atualizados (${(agentRes.touched ?? []).length}).${runtime}`}${savedNote}${pendingNote}`);
           stopProgress();
           setAgentStep(null);
           setAiRunning(false);
@@ -907,11 +912,9 @@ export default function SiteProjectPage() {
           }
         }
         if (!agentErr && agentRes && agentRes.status === "error" && (agentRes.errors?.length ?? 0) > 0 && !agentRes.changed) {
-          // O agente reportou BLOQUEIO real sem alterar nada (ex.: falhou ao
-          // encontrar o trecho/arquivo). Honestidade: NÃO cair no fallback que
-          // "responde que fez" sem ter feito — informa o bloqueio ao usuário.
-          const reason = agentRes.errors!.slice(0, 3).join("; ");
-          pushReply(`⚠ Não consegui concluir essa alteração: ${reason}\nNada foi modificado no site. Me diga o que deseja de outro jeito (ou confira o nome/imagem exatos) que eu tento novamente.`);
+          // O agente reportou BLOQUEIO real sem alterar nada. Honestidade sem jargão:
+          // o detalhe técnico fica nos logs/payloads internos — aqui vai só o humano.
+          pushReply("⚠ Não consegui aplicar essa alteração no site — nada foi modificado. Me diga o que deseja de outro jeito (ou confira o nome/imagem exatos) que eu tento novamente.");
           stopProgress();
           setAgentStep(null);
           setAiRunning(false);
@@ -1018,6 +1021,8 @@ export default function SiteProjectPage() {
       aiAbortRef.current = null;
       stopProgress();
       setAgentStep(null);
+      // FASE UX — o card "Executando agora" é transitório: some junto com a run.
+      setLiveWork([]);
       if (studioEnabled || isReactProject) studioChat.finish();
       setAiRunning(false);
     }
@@ -1236,10 +1241,14 @@ export default function SiteProjectPage() {
   // roda o agente em modo `generate` porque o projeto ainda é bootstrap. Não é
   // kickoff automático: só acontece quando o usuário clica.
   async function handleGenerateSite() {
-    if (!project || aiRunning || generating) return;
+    // FASE 7.11 — clique NUNCA é silencioso: se já está trabalhando, o usuário é
+    // avisado (antes o clique simplesmente não fazia nada e parecia "botão morto").
+    if (!project) { toast.error("Projeto ainda não carregou. Tente novamente em instantes."); return; }
+    if (aiRunning || generating) { toast.info("Já estou trabalhando neste site — acompanhe no chat."); return; }
     const nome = project.company_name || project.name || "minha empresa";
     const seg = project.segment ? ` (${project.segment})` : "";
     const prompt = `Crie o site real de ${nome}${seg} agora, substituindo o rascunho inicial pelos arquivos reais do site — use os dados, as fotos e a direção criativa deste cliente.`;
+    toast.info("Gerando o site com o agente… acompanhe no chat.");
     await runAiInstruction(prompt, undefined, { media: true });
   }
 

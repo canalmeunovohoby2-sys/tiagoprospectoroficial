@@ -52,10 +52,13 @@ describe("C7-fix · finish_task bloqueado pelo guard ≠ ferramenta quebrada", (
     expect(v.reply ?? "").not.toMatch(/ferramenta falhou/i);
   });
 
-  it("falha REAL + guard bloqueado ⇒ a falha real prevalece (não mascara)", () => {
+  it("falha REAL + guard bloqueado ⇒ a falha é preservada e narrada (não mascara)", () => {
     const v = classifyCompletion({ ...base, toolFailure: true, toolFailureDetail: "edit_file: ENOENT", guardBlocked: true });
-    expect(v.reply).toMatch(/ferramenta falhou/i);
+    // FASE 7.11 — com alteração aplicada não é erro terminal, mas a falha NÃO é
+    // escondida: fica em states (para a IA contar o parcial) e o run é "não verificado".
     expect(v.states.tool_failure).toBe(true);
+    expect(v.unverified).toBe(true);
+    expect(String(v.error ?? "")).not.toMatch(/ferramenta falhou/i);
   });
 
   it("Caso C — finish_task aprovado mantém o sucesso/relatório (nada muda)", () => {

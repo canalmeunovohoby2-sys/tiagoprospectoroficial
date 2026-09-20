@@ -246,6 +246,8 @@ export class ProspectorSiteAgent {
   private finishBlocked = false;
   /** Retentativas da barreira anti-reescrita destrutiva (write_file encolhedor). */
   private writeSkips = 0;
+  /** FASE 7.11 — a última falha de escrita veio de uma GUARDA nossa (orientação), não de ferramenta quebrada. */
+  private lastGuardSkip = false;
   /** Ciclos visuais (correção por renderização/medição) já realizados — limite anti-loop. */
   private visualCycles = 0;
   private runStartFiles: Record<string, string> | null = null;
@@ -427,9 +429,10 @@ export class ProspectorSiteAgent {
       // azul por laranja" foi parar no vite.config.ts e o site não mudou.
       if ((name === "write_file" || name === "edit_file" || name === "create_file") && typeof input?.path === "string") {
         if (shouldBlockConfigEdit(input.path, this.currentInstruction)) {
+          this.lastGuardSkip = true;
           return {
             skip: true,
-            reason: `"${input.path}" é ARQUIVO DE CONFIGURAÇÃO/BUILD e este pedido NÃO é sobre build/dependências. A alteração pedida é de CONTEÚDO/VISUAL: mexa nos arquivos do site (CSS/theme, src/**, componentes) — nunca em vite.config/tsconfig/package.json.`,
+            reason: `[guard] "${input.path}" é ARQUIVO DE CONFIGURAÇÃO/BUILD e este pedido NÃO é sobre build/dependências. A alteração pedida é de CONTEÚDO/VISUAL: mexa nos arquivos do site (CSS/theme, src/**, componentes) — nunca em vite.config/tsconfig/package.json.`,
           };
         }
       }
@@ -440,9 +443,10 @@ export class ProspectorSiteAgent {
         const current = readWorkspace(options.workspaceRoot)[clean];
         if (current !== undefined && content.length < current.length * 0.55) {
           this.writeSkips += 1;
+          this.lastGuardSkip = true;
           return {
             skip: true,
-            reason: `"write_file" reduziria ${clean} de ${current.length} para ${content.length} caracteres (remoção de mais de 45% num ARQUIVO EXISTENTE). EDITAR ≠ RECONSTRUIR: prefira "edit_file" (alteração localizada, preservando o resto) ou devolva o arquivo COMPLETO preservando todo o conteúdo existente que não faz parte do pedido.`,
+            reason: `[guard] "write_file" reduziria ${clean} de ${current.length} para ${content.length} caracteres (remoção de mais de 45% num ARQUIVO EXISTENTE). EDITAR ≠ RECONSTRUIR: prefira "edit_file" (alteração localizada, preservando o resto) ou devolva o arquivo COMPLETO preservando todo o conteúdo existente que não faz parte do pedido.`,
           };
         }
       }
@@ -458,9 +462,10 @@ export class ProspectorSiteAgent {
           const structural = editRegressionIssues({ [clean]: current }, { [clean]: content }, this.currentInstruction);
           if (structural.length > 0) {
             this.writeSkips += 1;
+            this.lastGuardSkip = true;
             return {
               skip: true,
-              reason: `"write_file" em ${clean} causaria REGRESSÃO estrutural (não é uma edição preservadora). Use "edit_file" para alterar SOMENTE o necessário — se a missão realmente pede reconstrução, diga explicitamente "reconstruir/reescrever do zero". Problemas:\n${structural.map((r) => `- ${r}`).join("\n")}`,
+              reason: `[guard] "write_file" em ${clean} causaria REGRESSÃO estrutural (não é uma edição preservadora). Use "edit_file" para alterar SOMENTE o necessário — se a missão realmente pede reconstrução, diga explicitamente "reconstruir/reescrever do zero". Problemas:\n${structural.map((r) => `- ${r}`).join("\n")}`,
             };
           }
         }
@@ -696,7 +701,8 @@ export class ProspectorSiteAgent {
             // caminho (browser_open/browser_eval/screenshot). Só ferramentas de
             // ALTERAÇÃO (write/edit/delete/rename/move) contam como falha real.
             const readOnly = !EDIT_TOOLS.has(toolName) && (VERIFY_TOOLS.has(toolName) || INSPECT_TOOLS.has(toolName));
-            const classification = classifyToolResultFailure({ toolName, isError: true, message: detection.message, readOnlyVerify: readOnly });
+            const classification = classifyToolResultFailure({ toolName, isError: true, message: detection.message, readOnlyVerify: readOnly, guardSkip: this.lastGuardSkip });
+            this.lastGuardSkip = false;
             if (classification.kind === "guard") {
               // finish_task recusado pelo completion guard: o guard exerceu
               // autoridade — NÃO é ferramenta quebrada.
