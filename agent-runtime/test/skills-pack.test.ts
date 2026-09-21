@@ -8,7 +8,11 @@ import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "../src/agent-i
 // e foto sem relação com o segmento. O pack agora é carregado e conectado nos DOIS fluxos.
 describe("skills-pack (pack senior) · carregado e conectado", () => {
   it("carrega o pack do disco (≥45 skills, 14 verticais)", () => {
-    expect(PACK_SKILLS.length).toBeGreaterThanOrEqual(65);
+    expect(PACK_SKILLS.length).toBeGreaterThanOrEqual(80);
+    expect(PACK_VERTICALS.length).toBe(30);
+    expect(packSkillKnowledge("eletricista")).toContain("Servi�os Residenciais");
+    expect(packSkillKnowledge("paisagismo")).toContain("Paisagismo");
+    expect(packSkillKnowledge("funeraria")).toContain("Funer");
     expect(PACK_SKILLS.some((s) => s.id === "cro-teste-ab")).toBe(true);
     expect(PACK_SKILLS.some((s) => s.id === "social-share-og-meta")).toBe(true);
     expect(PACK_SKILLS.some((s) => s.id === "paginas-erro-404-manutencao")).toBe(true);

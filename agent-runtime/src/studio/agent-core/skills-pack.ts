@@ -82,17 +82,14 @@ export function packSkillKnowledge(topic?: string | null): string | null {
   return null;
 }
 
-/** Índice do pack para o prompt: verticais + como consultar (sem inflar o contexto). */
+/** Índice do pack para o prompt: compacto (o texto completo vem pela ferramenta). */
 export function packIndexBlock(): string {
   if (PACK_SKILLS.length === 0) return "";
-  const verticais = PACK_VERTICALS.map((s) => `- ${s.id} — ${s.title}`).join("\n");
-  const outros = PACK_SKILLS.filter((s) => !s.id.startsWith("site-")).map((s) => s.id).join(", ");
-  return `SKILLS SENIOR INSTALADAS (skills-pack) — CONSUTE ANTES DE COMPOR:
-OBRIGATÓRIO: chame a ferramenta design_skills com o SEGMENTO do cliente para receber o VERTICAL daquele nicho (seções esperadas, objeções, fotografia, provas, tom). A fotografia e a arquitetura da página vêm DESSE vertical — não de suposição.
-VERTICAIS DISPONÍVEIS (topic = id OU o nome do segmento):
-${verticais}
-Outras skills do pack (design system, hierarquia, hero, copy, CRO, provas, motion, acessibilidade, SEO, performance, mapas, WhatsApp, LGPD, testes, orquestração): ${outros}.
-O pack orienta; a DIREÇÃO CRIATIVA do projeto continua decidindo composição, número de seções, grid e tipografia.`;
+  const verticais = PACK_VERTICALS.map((s) => s.id).join(", ");
+  return `SKILLS SENIOR DO SEGMENTO (skills-pack): OBRIGATÓRIO chamar design_skills com o SEGMENTO do cliente antes de compor — o VERTICAL do nicho traz seções, objeções, PROVAS e DIREÇÃO FOTOGRÁFICA daquele negócio (nunca suponha).
+Verticais: ${verticais}.
+Demais skills do pack (design system, hierarquia, hero, copy, CRO, provas, motion, a11y, SEO, performance, mapas, WhatsApp, LGPD, testes): idem por topic.
+O pack ORIENTA; a DIREÇÃO CRIATIVA do projeto decide composição, nº de seções, grid e tipografia.`;
 }
 
 export const PACK_INDEX_BLOCK = packIndexBlock();
