@@ -201,6 +201,7 @@ SISTEMA PROFISSIONAL DE LOGOMARCA + IDENTIDADE VISUAL (mesmo cérebro — projet
 // Não duplicar este texto em nenhum outro lugar: importe/adicione esta constante.
 export const CONTACT_AND_PHOTOS_RULES = `
 
+- FONTE DA VERDADE DO NEGÓCIO: use SEMPRE os dados reais do cliente (briefing/lead/contexto da missão). Se algum arquivo auxiliar (ex.: `src/site.json` da base) estiver VAZIO ou trouxer nome genérico/de TESTE (ex.: "TESTE…", "Exemplo", "Lorem", "rascunho"), trate como AUSENTE e siga com o contexto do cliente — NUNCA ancore o plano (imagens, seções, copy) em placeholder e NUNCA escreva esse nome no site final. Sem dados reais para um passo, diga o que falta de forma operacional (ex.: "sem dados do cliente para o plano de imagem — usando o briefing do lead") em vez de comentar a inutilidade do arquivo.
 - ENDEREÇO É DADO DE CONTATO, NÃO CONTEÚDO COMERCIAL: rua/número/bairro/CEP/telefone/WhatsApp
   pertencem a Contato / Localização / bloco de informações da empresa / rodapé. NUNCA abra a
   narrativa com endereço completo nem jogue o endereço no meio de seções comerciais só porque o
