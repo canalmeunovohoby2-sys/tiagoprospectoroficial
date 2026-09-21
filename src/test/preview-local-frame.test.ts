@@ -22,9 +22,9 @@ describe("preview · iframe para o runtime local", () => {
     expect(src).toContain(") : fullTabUrl && appServedByAgent ? (");
   });
 
-  it("explica o bloqueio e oferece o caminho que funciona (aba / app do agente)", () => {
+  it("na mesma origem o iframe do runtime e usado, sem aviso extra na tela", () => {
+    expect(src).toContain("src={fullTabUrl}");
     expect(src).toContain("Abrir completo");
-    expect(src).toContain("127.0.0.1:8787");
-    expect(src).toMatch(/não permite|nao permite/);
+    expect(src).not.toContain("não permite carregar");
   });
 });

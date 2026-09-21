@@ -355,14 +355,6 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
         </div>
       )}
 
-      {fullTabUrl && !appServedByAgent && (
-        <div className="shrink-0 border-b border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700">
-          Este app está no endereço público e o Chrome <b>não permite</b> carregar <b>127.0.0.1</b> dentro do preview.
-          Use <b>Abrir completo</b> (abre em aba, com a permissão de rede local) ou o app do agente em{" "}
-          <b>http://127.0.0.1:8787</b> — nele o preview embutido funciona direto.
-        </div>
-      )}
-
       <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
         {previewSource === "runtime" && fullTabUrl && appServedByAgent ? (
           // PADRÃO: site buildado pelo runtime — hidrata sempre (o Vite do WebContainer
