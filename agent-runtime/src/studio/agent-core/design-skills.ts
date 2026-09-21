@@ -216,3 +216,15 @@ A DIREÇÃO CRIATIVA DESTE PROJETO (paleta, arquétipo, tipografia, composição
 19. PROFUNDIDADE PROPORCIONAL AO NEGÓCIO: antes de finalizar, avalie "este site explica suficientemente POR QUE esta empresa merece atenção e oferece informação suficiente para gerar confiança e conversão?" Se não, desenvolva a experiência usando o material real: proposta de valor, diferenciais, serviços/produtos, aplicações, benefícios, processo, estrutura, portfólio/cases, área de atendimento, FAQ/objeções, localização — SOMENTE o que fizer sentido para o negócio. Uma indústria comunica mais que hero→serviços→sobre→contato; um negócio pequeno pode ser naturalmente menor. NUNCA criar conteúdo falso (números, clientes, depoimentos, prêmios) para preencher espaço.
 
 20. RITMO VISUAL (nenhuma monotonia): seções nunca em sequência interminável de cards idênticos ou três colunas repetidas — alterne composição (editorial, imagem+conteúdo, grids assimétricos, números/informações, cases, blocos de destaque, full-width, cards só quando úteis). Cada seção pertence ao MESMO projeto (mesmo sistema) com ritmo e hierarquia próprios.`;
+
+// PACK SENIOR RESTAURADO: os 14 verticais + demais skills do skills-pack entram no
+// prompt pelo ÍNDICE (leve) e pelo texto completo sob demanda via `design_skills`.
+// Antes só 01-core-design + 02-conversao estavam condensados — os verticais estavam
+// FORA, e era isso que deixava o site genérico e a foto sem relação com o segmento.
+import { PACK_INDEX_BLOCK } from "./skills-pack.js";
+
+export const DESIGN_FOUNDATIONS_WITH_PACK = PACK_INDEX_BLOCK
+  ? `${DESIGN_FOUNDATIONS}
+
+${PACK_INDEX_BLOCK}`
+  : DESIGN_FOUNDATIONS;

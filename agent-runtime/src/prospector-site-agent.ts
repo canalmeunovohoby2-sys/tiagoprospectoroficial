@@ -17,6 +17,7 @@ import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identi
 import { computeWorkEvidence, verificationToolsAfterLastEdit, EDIT_TOOLS, INSPECT_TOOLS, VERIFY_TOOLS, type WorkEvidence, type WorkEventLike } from "./work-evidence.js";
 import { researchEnabled, runSearchQuery, runFirecrawlSearch, runPageFetch, firecrawlEnabled, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
 import { designSkillsKnowledge } from "./studio/agent-core/design-skills.js";
+import { packSkillKnowledge } from "./studio/agent-core/skills-pack.js";
 import { runVisualVerification, prepareServeDirForRoot } from "./studio/agent-core/visual-verify.js";
 import { buildReactProject } from "./studio/build.js";
 import { readFileSync, rmSync } from "node:fs";
@@ -343,7 +344,12 @@ export class ProspectorSiteAgent {
       description:
         "Consulta o guia INSTALADO de design premium (direção de arte, paleta/tipografia, CRO, copy, componentes, motion, mobile, performance, mídia, mapas, inspeção profunda). Use quando precisar da técnica ao criar/reformular o visual. Sem `topic` devolve o guia completo; com `topic`, só a seção.",
       inputSchema: z.object({ topic: z.string().optional().describe("tópico específico (opcional)") }),
-      execute: async (input: { topic?: string }) => designSkillsKnowledge(input?.topic ?? null),
+      execute: async (input: { topic?: string }) => {
+      // Conhecimento instalado (destilado) + PACK SENIOR (verticais por segmento).
+      const local = designSkillsKnowledge(input?.topic ?? null);
+      const pack = packSkillKnowledge(input?.topic ?? null);
+      return [local, pack].filter(Boolean).join("\n\n---\n\n");
+    },
     });
 
     // `visual_verify`: abre o SITE REAL no Chromium (desktop/tablet/mobile), coleta

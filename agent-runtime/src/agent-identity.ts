@@ -7,7 +7,9 @@
 // FUNDAÇÕES DE DESIGN (skills premium) — injeção DETERMINÍSTICA na geração:
 // princípios de UI/UX/art-direction/CRO sempre presentes no contexto (a tool
 // `design_skills` continua existindo para consulta complementar sob demanda).
-import { DESIGN_FOUNDATIONS } from "./studio/agent-core/design-skills.js";
+import { DESIGN_FOUNDATIONS_WITH_PACK as DESIGN_FOUNDATIONS } from "./studio/agent-core/design-skills.js";
+// Pacote SENIOR (verticals por segmento) — índice no prompt + texto sob demanda.
+import { PACK_INDEX_BLOCK } from "./studio/agent-core/skills-pack.js";
 
 // Skill de BRAND IDENTITY / LOGOMARCA — enviada SOMENTE quando a tarefa exige
 // branding/identidade visual/logo (economia de tokens no caso comum).
@@ -222,7 +224,7 @@ export const CONTACT_AND_PHOTOS_RULES = `
 // tarefa exige (economia de ~2,1k chars nos demais casos).
 export function buildEditSystemPrompt(opts?: { branding?: boolean }): string {
   const brand = opts?.branding ? `\n\n${BRAND_IDENTITY_SKILL}` : "";
-  return `${AGENT_IDENTITY}${brand}${CONTACT_AND_PHOTOS_RULES}
+  return `${AGENT_IDENTITY}${brand}${CONTACT_AND_PHOTOS_RULES}${PACK_INDEX_BLOCK ? `\n\n${PACK_INDEX_BLOCK}` : ""}
 
 EDIÇÃO DE ASSET (logo, imagem, favicon, arquivo — pedido objetivo, RÁPIDO):
 - O anexo JÁ está no workspace em assets/<nome>.<ext> (binário real). Para "trocar a logo/imagem/anexada": localize onde o site referencia a logo/imagem atual, substitua o arquivo no caminho usado (copie o anexo para lá) e altere SOMENTE a referência necessária (src= ou url()). NÃO reescreva App.tsx nem o site inteiro; NÃO rode npm install nem npm run build; faça UMA verificação objetiva (o arquivo existe no caminho e a referência aponta para ele) e finalize.
