@@ -852,14 +852,73 @@ export async function appendSiteChatMessages(projectId: string, userId: string, 
   if (error) throw new Error(error.message);
 }
 
+// PUBLICAÇÃO DE IMAGENS/LOGO ✱: o snapshot publicado é TEXTO, então `/assets/logo.png`
+// quebrava na URL pública. Aqui os assets REALMENTE referenciados são buscados no
+// runtime local (rota autenticada do preview, que serve o arquivo real do workspace) e
+// embutidos como data URL SÓ NO SNAPSHOT — o código-fonte do projeto continua com
+// `/assets/...`. Sem bucket novo, sem provider novo, sem infra nova.
+const ASSET_REF = /\/assets\/([A-Za-z0-9._-]+\.(?:png|jpe?g|webp|svg|gif|avif|ico))/gi;
+const MAX_ASSET_BYTES = 400_000;
+const MAX_TOTAL_BYTES = 2_000_000;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const passo = 8192;
+  for (let i = 0; i < bytes.length; i += passo) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + passo));
+  }
+  return btoa(bin);
+}
+
+export async function inlinePublishedAssets(
+  projectId: string,
+  files: Record<string, string> | undefined,
+): Promise<Record<string, string> | undefined> {
+  if (!files || Object.keys(files).length === 0) return files;
+  const nomes = new Set<string>();
+  for (const conteudo of Object.values(files)) {
+    for (const m of String(conteudo).matchAll(ASSET_REF)) nomes.add(m[1]);
+  }
+  if (nomes.size === 0) return files;
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) return files;
+  const mapa = new Map<string, string>();
+  let total = 0;
+  for (const nome of nomes) {
+    try {
+      const res = await fetch(
+        `${LOCAL_AGENT_RUNTIME_URL}/preview/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(nome)}?t=${encodeURIComponent(token)}`,
+      );
+      if (!res.ok) continue;
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.byteLength === 0) continue;
+      if (bytes.byteLength > MAX_ASSET_BYTES || total + bytes.byteLength > MAX_TOTAL_BYTES) continue;
+      total += bytes.byteLength;
+      const tipo = res.headers.get("content-type") ?? "application/octet-stream";
+      mapa.set(`/assets/${nome}`, `data:${tipo};base64,${bytesToBase64(bytes)}`);
+    } catch { /* segue sem esse asset (nunca derruba a publicação) */ }
+  }
+  if (mapa.size === 0) return files;
+  const out: Record<string, string> = {};
+  for (const [caminho, conteudo] of Object.entries(files)) {
+    let texto = String(conteudo);
+    for (const [de, para] of mapa) texto = texto.split(de).join(para);
+    out[caminho] = texto;
+  }
+  return out;
+}
+
 // Publicação atômica: copia o draft (spec + código real) para published_*.
 // A URL pública renderiza o published_code quando existir (code-first).
 export async function publishSiteProject(projectId: string, spec: SiteSpec, generatedFiles?: Record<string, string>): Promise<void> {
+  // Imagens/logos enviadas pelo usuário entram no snapshot (o workspace segue com /assets/…).
+  const filesPublicados = await inlinePublishedAssets(projectId, generatedFiles);
   const payload = {
     published_status: "published" as const,
     published_spec: spec as unknown as Json,
     // Snapshot imutável do código real no momento da publicação (code-first).
-    published_code: (generatedFiles && Object.keys(generatedFiles).length ? generatedFiles : null) as unknown as Json | null,
+    published_code: (filesPublicados && Object.keys(filesPublicados).length ? filesPublicados : null) as unknown as Json | null,
     published_at: new Date().toISOString(),
   };
   const { error } = await supabase.from("site_projects").update(payload).eq("id", projectId);
@@ -876,10 +935,12 @@ export async function unpublishSiteProject(projectId: string): Promise<void> {
 // página pública existente; `published_spec` recebe o mínimo para a RPC pública.
 export async function publishReactSite(projectId: string, builtHtml: string, opts?: { name?: string }): Promise<void> {
   if (!builtHtml || !builtHtml.trim()) throw new Error("Build vazio — nada para publicar.");
+  // Mesmo tratamento das imagens enviadas pelo usuário (data URL só no snapshot).
+  const comAssets = await inlinePublishedAssets(projectId, { "index.html": builtHtml });
   const payload = {
     published_status: "published" as const,
     published_spec: { business: { name: opts?.name ?? "" } } as unknown as Json,
-    published_code: { "index.html": builtHtml } as unknown as Json,
+    published_code: { "index.html": comAssets?.["index.html"] ?? builtHtml } as unknown as Json,
     published_at: new Date().toISOString(),
   };
   const { error } = await supabase.from("site_projects").update(payload).eq("id", projectId);
