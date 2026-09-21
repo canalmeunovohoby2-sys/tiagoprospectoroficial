@@ -18,6 +18,8 @@ import { computeWorkEvidence, verificationToolsAfterLastEdit, EDIT_TOOLS, INSPEC
 import { researchEnabled, runSearchQuery, runFirecrawlSearch, runPageFetch, firecrawlEnabled, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
 import { designSkillsKnowledge } from "./studio/agent-core/design-skills.js";
 import { packSkillKnowledge } from "./studio/agent-core/skills-pack.js";
+// ANTI-REPETIÇÃO (pacote site-generator-pipeline): histórico de estilos por segmento.
+import { buscarUltimosRegistros, montarContextoAntiRepeticao, salvarNoHistorico } from "./site-generator/anti-repetition.js";
 import { runVisualVerification, prepareServeDirForRoot } from "./studio/agent-core/visual-verify.js";
 import { buildReactProject } from "./studio/build.js";
 import { readFileSync, rmSync } from "node:fs";
@@ -350,6 +352,54 @@ export class ProspectorSiteAgent {
       const pack = packSkillKnowledge(input?.topic ?? null);
       return [local, pack].filter(Boolean).join("\n\n---\n\n");
     },
+  });
+
+    // ===== ANTI-REPETIÇÃO (pacote site-generator-pipeline) =====
+    // `estilo_historico`: o que JÁ saiu para este segmento (paleta/headline/seções)
+    // — chamar ANTES de decidir qualquer coisa visual. `registrar_estilo`: grava o
+    // que foi entregue, para a PRÓXIMA geração não repetir. Sem isso o modelo
+    // converge sempre para a "resposta mais provável" e o site fica com cara de IA.
+    const estiloHistoricoTool = createTool({
+      name: "estilo_historico",
+      description:
+        "Lista o que JÁ foi gerado para este segmento (paleta, headline do hero, estilo e estrutura de seções) para você NÃO repetir. Chame ANTES de decidir paleta, headline e ordem das seções.",
+      inputSchema: z.object({
+        segmento: z.string().describe("segmento do cliente (ex.: 'energia solar', 'odontologia')"),
+      }),
+      execute: async (input: { segmento: string }) => {
+        const registros = buscarUltimosRegistros(input.segmento, 5);
+        return montarContextoAntiRepeticao(registros);
+      },
+    });
+
+    const registrarEstiloTool = createTool({
+      name: "registrar_estilo",
+      description:
+        "Registra o estilo do site que você acabou de criar (paleta/structure/headline) no histórico anti-repetição. Chame UMA vez, no FINAL da geração.",
+      inputSchema: z.object({
+        segmento: z.string().describe("segmento do cliente"),
+        corPrimaria: z.string().describe("hex da cor primária usada"),
+        corDestaque: z.string().describe("hex da cor de destaque/CTA"),
+        estiloVisual: z.string().describe("ex.: editorial contemporâneo, minimalista clínico"),
+        promessaCentral: z.string().describe("headline do hero"),
+        estruturaDeSecoes: z.array(z.string()).describe("seções na ordem em que saíram"),
+      }),
+      execute: async (input: {
+        segmento: string;
+        corPrimaria: string;
+        corDestaque: string;
+        estiloVisual: string;
+        promessaCentral: string;
+        estruturaDeSecoes: string[];
+      }) => {
+        const reg = salvarNoHistorico(input.segmento, {
+          paleta: { corPrimaria: input.corPrimaria, corDestaque: input.corDestaque },
+          estiloVisual: { descricao: input.estiloVisual },
+          estruturaDeSecoes: input.estruturaDeSecoes,
+          promessaCentral: input.promessaCentral,
+        });
+        return `Estilo registrado no histórico (${reg.id.slice(0, 8)}) — próximas gerações deste segmento vão evitar repetir.`;
+      },
     });
 
     // `visual_verify`: abre o SITE REAL no Chromium (desktop/tablet/mobile), coleta
@@ -543,7 +593,7 @@ export class ProspectorSiteAgent {
       apiKey: options.apiKey ?? process.env.DEEPSEEK_API_KEY ?? process.env.PROSPECTOR_API_KEY,
       baseUrl: options.baseUrl ?? process.env.PROSPECTOR_BASE_URL ?? "https://api.deepseek.com",
       systemPrompt,
-      tools: [...tools, ...browserTools, ...researchTools, designSkillsTool, visualVerifyTool, complete],
+      tools: [...tools, ...browserTools, ...researchTools, designSkillsTool, estiloHistoricoTool, registrarEstiloTool, visualVerifyTool, complete],
       maxIterations: options.maxIterations ?? 40,
       hooks: { beforeModel, beforeTool },
       initialMessages: options.initialMessages,

@@ -36,3 +36,6 @@ __pycache__/
 .runtime.log
 .maps.log
 .photos.log
+
+# historico anti-repeticao (store local do runtime)
+agent-runtime/data/historico-sites.json
