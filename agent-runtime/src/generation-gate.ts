@@ -60,8 +60,15 @@ export function assertGenerationQuality(
   }
 
   // Google Maps embutido — obrigatório em TODA landing page gerada.
-  if (!/google\.com\/maps\/embed|maps\.google\.com\/maps[^"']*output=embed/i.test(html)) {
+  // MAPA: exigido para SITE (landing/institucional). Em PRODUTO (SaaS/painel/app)
+  // não faz sentido — antes o gate reprovava um dashboard por "sem Google Maps",
+  // o que empurrava o agente a poluir o produto com seção de mapa/contato.
+  const ehProduto = /(dashboard|painel|multi-?tenant|saas|onboarding|assinatura|billing|login|rota|router|sidebar)/i.test(html);
+  const pedeLocalizacao = /(contato|fale conosco|onde estamos|localiza|endere[cç]o|como chegar|mapa)/i.test(html);
+  if (!ehProduto && !/google\.com\/maps\/embed|maps\.google\.com\/maps[^"']*output=embed/i.test(html)) {
     issues.push("Sem Google Maps embutido. Adicione a seção 'Localização/Como chegar' com <iframe> do Google Maps (https://maps.google.com/maps?q=ENDEREÇO_OU_CIDADE&z=15&output=embed) responsivo. Use o endereço real se existir no contexto; caso contrário use a cidade/UF.");
+  } else if (ehProduto && pedeLocalizacao && !/google\.com\/maps\/embed|maps\.google\.com\/maps[^"']*output=embed/i.test(html)) {
+    issues.push("Se há seção de contato/localização no produto, inclua o mapa embutido (ou remova a seção, se não fizer sentido no fluxo).");
   }
 
   // ENDEREÇO NO LUGAR ERRADO (caso óbvio): dado de contato não abre a narrativa nem fica

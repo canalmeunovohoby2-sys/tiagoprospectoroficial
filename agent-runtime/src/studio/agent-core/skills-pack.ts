@@ -59,12 +59,52 @@ const normalizar = (v: unknown): string =>
   String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
 /**
+ * APPS/SAAS/MOBILE (pack 07-mobile-saas-avancado) — quando o pedido é um PRODUTO
+ * (não uma landing page), este é o conjunto certo de skills. Sem isso o agente
+ * consultava só design de site e tratava SaaS/app como página comercial.
+ */
+const APP_SAAS_TOPICS: Array<{ match: RegExp; ids: string[] }> = [
+  {
+    match: /\b(saas|multi[- ]?tenant|dashboard|painel|assinatura|subscription|b2b|enterprise|crm|erp|plataforma|white[- ]?label)\b/,
+    ids: [
+      "white-label-multi-marca", "sso-enterprise-saml-oidc", "usage-based-billing-avancado",
+      "audit-log-compliance", "api-rate-limiting-quotas", "webhooks-sistema-saida",
+      "background-jobs-filas", "escalabilidade-multi-regiao-cache", "feature-flags-experimentacao",
+    ],
+  },
+  {
+    match: /\b(app|aplicativo|mobile|ios|android|celular|pwa|offline|push|loja de aplicativos)\b/,
+    ids: [
+      "cross-platform-framework-choice", "app-state-management", "offline-first-sync",
+      "device-native-features", "push-notifications-avancado", "mobile-security-armazenamento-seguro",
+      "app-store-aso-publicacao", "in-app-purchases-monetizacao", "ota-updates-versionamento",
+      "deep-linking-universal-links", "crash-monitoring-observabilidade-mobile",
+    ],
+  },
+];
+
+function blocoAppSaas(t: string): string | null {
+  const grupos = APP_SAAS_TOPICS.filter((g) => g.match.test(t));
+  if (grupos.length === 0) return null;
+  const ids = Array.from(new Set(grupos.flatMap((g) => g.ids)));
+  const skills = ids
+    .map((id) => PACK_SKILLS.find((s) => s.id === id))
+    .filter((s): s is PackSkill => Boolean(s));
+  if (skills.length === 0) return null;
+  const corpo = skills.map((s) => `### SKILL: ${s.id}\n${s.body.slice(0, 1_400)}`).join("\n\n");
+  return `SKILLS DE PRODUTO (SaaS/app/mobile) — este projeto é um PRODUTO, não uma landing page:\n\n${corpo}`;
+}
+
+/**
  * Busca uma skill do pack por id exato, parcial, ou pelo SEGMENTO do cliente
  * ("energia solar" → site-energia-solar; "academia" → site-academia-fitness).
  */
 export function packSkillKnowledge(topic?: string | null): string | null {
   const t = normalizar(topic);
   if (!t || PACK_SKILLS.length === 0) return null;
+  // Produto (SaaS/app/mobile) tem precedência: muda arquitetura, não só estética.
+  const appSaas = blocoAppSaas(t);
+  if (appSaas) return appSaas;
   const exato = PACK_SKILLS.find((s) => normalizar(s.id) === t);
   if (exato) return `${exato.title}\n\n${exato.body}`;
   const parcial = PACK_SKILLS.find((s) => normalizar(s.id).includes(t) || t.includes(normalizar(s.id)));
@@ -88,6 +128,7 @@ export function packIndexBlock(): string {
   const verticais = PACK_VERTICALS.map((s) => s.id).join(", ");
   return `SKILLS SENIOR DO SEGMENTO (skills-pack): OBRIGATÓRIO chamar design_skills com o SEGMENTO do cliente antes de compor — o VERTICAL do nicho traz seções, objeções, PROVAS e DIREÇÃO FOTOGRÁFICA daquele negócio (nunca suponha).
 Verticais: ${verticais}.
+PRODUTO (SaaS, painel, app mobile, PWA, multi-tenant, cobrança, SSO, white-label): NÃO é landing page — chame design_skills com "saas" e/ou "mobile" para receber a arquitetura de produto (telas/rotas/estado/offline/monetização/publicação/segurança/escala). Regras de landing page (hero comercial, seção de contato, mapa embedado) NÃO se aplicam.
 Demais skills do pack (design system, hierarquia, hero, copy, CRO, provas, motion, a11y, SEO, performance, mapas, WhatsApp, LGPD, testes): idem por topic.
 O pack ORIENTA; a DIREÇÃO CRIATIVA do projeto decide composição, nº de seções, grid e tipografia.`;
 }

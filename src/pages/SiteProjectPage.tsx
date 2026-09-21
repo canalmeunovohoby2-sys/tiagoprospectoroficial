@@ -31,6 +31,8 @@ import { LiveProjectPreview } from "@/components/sites/LiveProjectPreview";
 import { StudioShell } from "@/components/sites/studio/StudioShell";
 import { StudioGitConfigDialog } from "@/components/sites/studio/StudioGitConfigDialog";
 import { StudioHistoryDialog, type StudioGitRestoreMeta } from "@/components/sites/studio/StudioHistoryDialog";
+import { supabase } from "@/integrations/supabase/client";
+import { LOCAL_AGENT_RUNTIME_URL } from "@/lib/siteProjectsApi";
 import { invokeStudioGit } from "@/lib/studio/gitApi";
 import { isStudioUiEnabled } from "@/lib/studio/featureFlag";
 import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
@@ -1254,6 +1256,29 @@ export default function SiteProjectPage() {
     // avisado (antes o clique simplesmente não fazia nada e parecia "botão morto").
     if (!project) { toast.error("Projeto ainda não carregou. Tente novamente em instantes."); return; }
     if (aiRunning || generating) { toast.info("Já estou trabalhando neste site — acompanhe no chat."); return; }
+    // PREFLIGHT DE IA (bug real: "finalizou mas o site não apareceu"): sem IA VALIDADA o
+    // runtime recusa a execução (blocked_code=no_validated_ai) e o projeto fica no
+    // rascunho — o usuário via a execução "terminar" sem nenhum arquivo. Aqui barramos
+    // ANTES de começar, com a causa exata e o que fazer.
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (token) {
+        const res = await fetch(`${LOCAL_AGENT_RUNTIME_URL}/agent-config`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ user_id: data.session?.user?.id }),
+          signal: AbortSignal.timeout(8_000),
+        });
+        const cfg = (await res.json().catch(() => null)) as { ok?: boolean; blocked_reason?: string; warning?: string } | null;
+        if (cfg && cfg.ok === false) {
+          const motivo = cfg.blocked_reason ?? cfg.warning ?? "Nenhuma IA validada foi encontrada na sua conta.";
+          toast.error(motivo);
+          pushReply(`⚠ ${motivo} Nada foi gerado — o projeto continua no rascunho.`);
+          return;
+        }
+      }
+    } catch { /* preflight é proteção: se falhar, o fluxo normal decide */ }
     const nome = project.company_name || project.name || "minha empresa";
     const seg = project.segment ? ` (${project.segment})` : "";
     const prompt = `Crie o site real de ${nome}${seg} agora, substituindo o rascunho inicial pelos arquivos reais do site — use os dados, as fotos e a direção criativa deste cliente.`;
