@@ -1261,20 +1261,20 @@ export default function SiteProjectPage() {
     await runAiInstruction(prompt, undefined, { media: true });
   }
 
-  // INTENÇÃO EXPLÍCITA de "Gerar site" (clique no Lead ou criação com prompt): o usuário
-  // JÁ pediu a geração — o preview NÃO pode exigir um segundo clique. Dispara UMA vez,
-  // só quando a navegação trouxe essa intenção (abrir o projeto normalmente continua
-  // sem gerar, como na FASE 7.2). A intenção é limpa em seguida: 1 clique = 1 execução.
-  const startIntentRef = useRef(false);
+  // GERAÇÃO IMEDIATA (rascunho): projeto React que ainda é o RASCUNHO não fica esperando um
+  // segundo clique — ao entrar, a geração começa sozinha. Cobre TODAS as entradas (clique em
+  // "Gerar site" no Lead, criação com prompt e abrir o projeto). Dispara UMA vez e só quando
+  // há rascunho real e nada rodando — o card "Gerar site" do preview deixou de existir.
+  const autoStartRef = useRef(false);
   useEffect(() => {
-    if (startIntentRef.current || !project) return;
-    const st = window.history.state as { usr?: { startGeneration?: boolean } } | null;
-    if (!st?.usr?.startGeneration) return;
-    startIntentRef.current = true;
-    try { window.history.replaceState({ ...st, usr: {} }, ""); } catch { /* noop */ }
+    if (autoStartRef.current) return;
+    if (!project || !isReactProject) return;
+    if (aiRunning || generating) return;
+    if (!isBootstrapFiles(draftFiles)) return;
+    autoStartRef.current = true;
     void handleGenerateSite();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project]);
+  }, [project, draftFiles, aiRunning, generating, isReactProject]);
 
   function handleStudioEvent(event: StudioStreamEvent) {
     studioChat.handleEvent(event);

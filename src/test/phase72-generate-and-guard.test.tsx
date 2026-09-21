@@ -40,13 +40,15 @@ describe("FASE 7.2 · saída explícita do bootstrap", () => {
     expect(String(DRAFT_FILES["src/App.tsx"] ?? "")).toContain(REACT_BOOTSTRAP_MARKER);
   });
 
-  it("2/3) botão 'Gerar site' aparece no rascunho e dispara a ação explícita", () => {
+  it("2/3) o rascunho NÃO mostra card/botão 'Gerar site' — a geração inicia sozinha na página", () => {
     const onGenerateSite = vi.fn();
     render(<WebContainerPreview files={DRAFT_FILES} projectId="p1" onGenerateSite={onGenerateSite} />);
-    expect(screen.getByText(/Rascunho — peça no chat para gerar o site\./)).toBeInTheDocument();
-    const button = screen.getByRole("button", { name: /Gerar site/ });
-    fireEvent.click(button);
-    expect(onGenerateSite).toHaveBeenCalledTimes(1);
+    expect(isBootstrapFiles(DRAFT_FILES)).toBe(true);
+    // o card "📝 Rascunho … ✨ Gerar site" foi REMOVIDO: quem dispara é a página (auto-start
+    // no rascunho), então o preview nunca mais pede um segundo clique.
+    expect(screen.queryByText(/Rascunho — peça no chat para gerar o site\./)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Gerar site/ })).toBeNull();
+    expect(onGenerateSite).not.toHaveBeenCalled();
   });
 
   it("4/5) com arquivos REAIS o aviso e o botão desaparecem (e o projeto segue gerado)", () => {

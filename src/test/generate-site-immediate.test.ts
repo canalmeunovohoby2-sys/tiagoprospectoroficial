@@ -4,27 +4,29 @@ import { join } from "node:path";
 
 const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
-// BUG: clicar em "Gerar site" (Lead ou criação com prompt) só NAVEGAVA para o preview;
-// a geração exigia um SEGUNDO clique dentro da página. Agora a navegação leva a intenção
-// explícita e a página dispara a MESMA ação do botão — uma única vez.
-describe("Gerar site · inicia a geração imediatamente", () => {
-  it("Lead e criação com prompt levam a intenção explícita", () => {
+// BUG: clicar em "Gerar site" (Lead ou criação com prompt) abria o Studio no RASCUNHO e
+// exigia um SEGUNDO clique. Agora o projeto React em rascunho inicia a geração sozinho ao
+// entrar, e o card "✨ Gerar site" foi removido do preview.
+describe("Gerar site · inicia a geração sozinho (sem segundo clique)", () => {
+  it("a página inicia a geração quando o projeto React está em rascunho", () => {
+    const page = read("src/pages/SiteProjectPage.tsx");
+    expect(page).toContain("autoStartRef");
+    expect(page).toContain("isBootstrapFiles(draftFiles)");
+    expect(page).toContain("void handleGenerateSite()");
+    expect(page).toContain("aiRunning || generating");
+  });
+
+  it("o card 'Gerar site' saiu do preview", () => {
+    const preview = read("src/components/sites/studio/WebContainerPreview.tsx");
+    expect(preview).not.toContain("Rascunho — peça no chat para gerar o site");
+    expect(preview).not.toContain("✨ Gerar site");
+  });
+
+  it("Lead e criação com prompt seguem levando a intenção (sem duplicar execução)", () => {
     expect(read("src/pages/Leads.tsx")).toContain("state: { startGeneration: true }");
     expect(read("src/pages/Sites.tsx")).toContain("state: { startGeneration: true }");
-  });
-
-  it("o projeto consome a intenção UMA vez (1 clique = 1 execução)", () => {
+    // uma única via de disparo automático (ref) — nunca duas gerações em paralelo
     const page = read("src/pages/SiteProjectPage.tsx");
-    expect(page).toContain("startIntentRef");
-    expect(page).toContain("startGeneration");
-    expect(page).toContain("handleGenerateSite()");
-    // limpa a intenção para reload/voltar não re-disparar
-    expect(page).toContain("window.history.replaceState");
-  });
-
-  it("abrir o projeto normalmente NÃO gera (FASE 7.2 preservada)", () => {
-    expect(read("src/pages/Sites.tsx")).toContain("onOpen={() => navigate(`/sites/${p.id}`)}");
-    const page = read("src/pages/SiteProjectPage.tsx");
-    expect(page).not.toContain("markReactKickoff(");
+    expect((page.match(/autoStartRef\.current = true/g) ?? []).length).toBe(1);
   });
 });

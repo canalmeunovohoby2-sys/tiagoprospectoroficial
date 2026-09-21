@@ -252,22 +252,6 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      {isDraft && (
-        // FASE 7.1/7.2 — estado HONESTO: o projeto ainda é o rascunho inicial (nada foi
-        // gerado). Não é tela quebrada nem geração automática: o usuário pede aqui.
-        <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-[11px] font-medium text-amber-700">
-          <span>📝 Rascunho — peça no chat para gerar o site.</span>
-          {onGenerateSite && (
-            <button
-              type="button"
-              onClick={onGenerateSite}
-              className="inline-flex h-6 items-center gap-1 rounded-md bg-amber-600 px-2 text-[11px] font-semibold text-white hover:bg-amber-700"
-            >
-              ✨ Gerar site
-            </button>
-          )}
-        </div>
-      )}
       <div className="flex shrink-0 flex-nowrap items-center justify-between gap-2 overflow-hidden border-b border-border/60 bg-card px-2.5 py-1">
         {fullTabUrl && (
           <span className="flex shrink-0 items-center gap-1">
