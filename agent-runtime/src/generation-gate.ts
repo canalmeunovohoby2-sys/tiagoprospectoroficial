@@ -64,6 +64,14 @@ export function assertGenerationQuality(
     issues.push("Sem Google Maps embutido. Adicione a seção 'Localização/Como chegar' com <iframe> do Google Maps (https://maps.google.com/maps?q=ENDEREÇO_OU_CIDADE&z=15&output=embed) responsivo. Use o endereço real se existir no contexto; caso contrário use a cidade/UF.");
   }
 
+  // ENDEREÇO NO LUGAR ERRADO (caso óbvio): dado de contato não abre a narrativa nem fica
+  // no meio da composição comercial. Sem scoring: só o caso evidente do HERO.
+  const heroBlock = html.match(/<section[^>]*(?:hero|banner|topo)[^>]*>[\s\S]{0,1500}?<\/section>/i)?.[0] ?? "";
+  const temEndereco = /(?:rua|avenida|av\.|alameda|rodovia|estrada|travessa)\s+[^,<]{2,40},?\s*(?:n[º°o]?\s*)?\d{1,6}/i;
+  if (heroBlock && temEndereco.test(heroBlock)) {
+    issues.push("Endereço completo dentro do HERO. Endereço é dado de CONTATO: mova para a seção de Contato/Localização (ou bloco de informações da empresa / rodapé) — ele não deve abrir a narrativa comercial.");
+  }
+
   // Responsividade
   if (!/@media/i.test(css || html)) issues.push("Sem regras responsivas (@media). Adicione layout mobile (a partir de ~900px e ~600px).");
 

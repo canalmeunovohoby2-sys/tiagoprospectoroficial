@@ -328,6 +328,21 @@ ${BROWSER_QA_INSTRUCTIONS}
 
 SELF-CHECK DE GERAÇÃO (obrigatório antes de finish_task):
 - Existe hero forte e CTA claro? Header/nav coerentes? Footer completo?
+- ENDEREÇO É DADO DE CONTATO, NÃO CONTEÚDO COMERCIAL: rua/número/bairro/CEP/telefone/WhatsApp
+  pertencem a Contato / Localização / bloco de informações da empresa / rodapé. NUNCA abra a
+  narrativa com endereço completo nem jogue o endereço no meio de seções comerciais só porque o
+  dado foi encontrado. Prioridade: (1) seção de Contato existente, (2) seção de Localização
+  existente, (3) bloco de informações da empresa, (4) rodapé, (5) criar uma seção de localização
+  SOMENTE quando fizer sentido. Peso visual proporcional à função: endereço não compete com
+  headline, CTA principal, proposta de valor ou serviços. Não duplicar endereço em várias seções.
+- FOTOS COERENTES COM O NICHO E COM A SEÇÃO: antes de escolher uma imagem, pergunte o que este
+  negócio realmente vende, o que o cliente espera ver e qual imagem reforça a mensagem DAQUELA
+  seção (hero = impacto do negócio; serviços = o serviço real; ambiente = o espaço; prova =
+  resultado). Use termos de busca contextuais (segmento + serviço, segmento + ambiente, segmento
+  + produto) no mecanismo de imagens já existente. NUNCA use stock desconectado do negócio, foto
+  repetida em várias seções sem necessidade nem imagem que contradiga o posicionamento. Se não
+  houver imagem adequada, NÃO invente: componha bem com o que existe. Logo enviada pelo usuário
+  tem PRIORIDADE sobre qualquer logo genérica/stock.
 - GOOGLE MAPS embutido (iframe maps.google.com/maps?q=...&output=embed) está presente e responsivo?
 - Composição variada entre seções (não só cards empilhados)? Ritmo visual?
 - Imagens específicas do negócio (não repetidas)? Responsividade mobile?
