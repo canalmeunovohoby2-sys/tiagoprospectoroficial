@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Cloud, HardDrive, Loader2, RefreshCw, Wand2 } from "lucide-react";
 import {
+  cloudRuntimeHealth,
   getAgentRuntimeMode,
   localRuntimeHealth,
   setAgentRuntimeMode,
@@ -34,6 +35,7 @@ const OPTIONS: Array<{ id: AgentRuntimeMode; label: string; hint: string; Icon: 
 export function AgentRuntimeSettings() {
   const [mode, setMode] = useState<AgentRuntimeMode>(() => getAgentRuntimeMode());
   const [localOk, setLocalOk] = useState<boolean | null>(null);
+  const [cloud, setCloud] = useState<{ ok: boolean; url: string | null } | null>(null);
   const [checking, setChecking] = useState(false);
 
   const checkLocal = async () => {
@@ -45,14 +47,25 @@ export function AgentRuntimeSettings() {
     }
   };
 
+  const checkCloud = async (force = false) => {
+    setChecking(true);
+    try {
+      setCloud(await cloudRuntimeHealth(force));
+    } finally {
+      setChecking(false);
+    }
+  };
+
   useEffect(() => {
-    void checkLocal();
+    if (getAgentRuntimeMode() === "remote") void checkCloud();
+    else void checkLocal();
   }, []);
 
   const pick = (next: AgentRuntimeMode) => {
     setMode(next);
     setAgentRuntimeMode(next);
-    if (next !== "remote") void checkLocal();
+    if (next === "remote") void checkCloud(true);
+    else void checkLocal();
   };
 
   return (
@@ -112,8 +125,44 @@ export function AgentRuntimeSettings() {
             </button>
           </>
         )}
-        {mode === "remote" && <span className="text-muted-foreground">Executando somente na nuvem.</span>}
+        {mode === "remote" && (
+          <>
+            {checking ? (
+              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+            ) : (
+              <span
+                className={`inline-block h-2 w-2 rounded-full ${
+                  cloud?.ok ? "bg-emerald-500" : "bg-red-500"
+                }`}
+              />
+            )}
+            <span className={cloud?.ok ? "text-emerald-600" : "text-muted-foreground"} title={cloud?.url ?? undefined}>
+              {cloud === null
+                ? "Verificando a nuvem…"
+                : cloud.ok
+                  ? "Agente na nuvem conectado"
+                  : cloud.url
+                    ? "Agente na nuvem não respondeu"
+                    : "Nuvem não configurada neste ambiente"}
+            </span>
+            <button
+              type="button"
+              onClick={() => void checkCloud(true)}
+              disabled={checking}
+              className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11px] hover:bg-muted disabled:opacity-50"
+            >
+              <RefreshCw className="h-3 w-3" /> Testar nuvem
+            </button>
+          </>
+        )}
       </div>
+      {mode === "remote" && cloud?.ok === false && (
+        <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2 text-[11px] leading-relaxed text-amber-700">
+          {cloud.url
+            ? "O agente na nuvem não respondeu agora. Clique em Testar nuvem; se persistir, a geração fica indisponível por alguns instantes."
+            : "A nuvem não está configurada neste ambiente. Defina VITE_AGENT_RUNTIME_URL (build) ou o secret AGENT_RUNTIME_URL na edge runtime-config com a URL do agent-runtime."}
+        </p>
+      )}
       {mode !== "remote" && localOk === false && (
         <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2 text-[11px] leading-relaxed text-amber-700">
           Não encontrei o agente neste computador. Duas checagens:

@@ -842,7 +842,14 @@ export function startServer(port = PORT, host = HOST) {
         } else {
           const previewBuild = await buildReactProject(previewRoot);
           if (!previewBuild.ok || !previewBuild.html) {
-            send(res, 500, { status: "error", error: previewBuild.error || "Falha ao compilar o projeto." });
+            // Página AMIGÁVEL no iframe (antes: JSON 500 → "conexão recusada").
+            res.writeHead(200, {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store",
+              "Cross-Origin-Opener-Policy": "same-origin",
+              "Cross-Origin-Embedder-Policy": "credentialless",
+            });
+            res.end(`<!doctype html><html><body style="margin:0;background:#0b0b0f;color:#e5e7eb;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh"><div style="max-width:520px;text-align:center;padding:24px"><h2 style="margin:0 0 8px">Este projeto não está neste computador</h2><p style="opacity:.8;line-height:1.5">Entre com a SUA conta (a mesma da Vercel) nesta página e abra o projeto de novo — cada sessão tem os próprios projetos e a IA validada.</p><p style="opacity:.6;font-size:12px;margin-top:16px">Detalhe técnico: ${String(previewBuild.error ?? "sem arquivos").slice(0, 160)}</p></div></body></html>`);
             return;
           }
           previewHtml = previewBuild.html;

@@ -635,8 +635,8 @@ async function localRuntimeAvailable(): Promise<boolean> {
 let runtimeUrlTried = false;
 let runtimeUrlCached: string | null = null;
 
-async function remoteRuntimeUrl(): Promise<string | null> {
-  if (runtimeUrlTried) return runtimeUrlCached;
+async function remoteRuntimeUrl(force = false): Promise<string | null> {
+  if (runtimeUrlTried && !force) return runtimeUrlCached;
   const envUrl = import.meta.env.VITE_AGENT_RUNTIME_URL as string | undefined;
   if (envUrl) { runtimeUrlTried = true; runtimeUrlCached = envUrl; return envUrl; }
   try {
@@ -682,6 +682,24 @@ export function setAgentRuntimeMode(mode: AgentRuntimeMode): void {
 /** Saúde do runtime local (para a tela de configuração). */
 export function localRuntimeHealth(): Promise<boolean> {
   return localRuntimeAvailable();
+}
+
+/**
+ * Saúde do runtime na NUVEM (Railway) — usado pelo seletor "Nuvem".
+ * Importante no site publicado (Vercel): lá o navegador NÃO consegue chamar
+ * 127.0.0.1 (bloqueio de rede local do Chrome), então a geração/publicação roda
+ * no runtime da nuvem. Devolve também a URL resolvida para diagnóstico.
+ */
+export async function cloudRuntimeHealth(force = false): Promise<{ ok: boolean; url: string | null }> {
+  const url = await remoteRuntimeUrl(force);
+  if (!url) return { ok: false, url: null };
+  try {
+    const res = await fetch(`${url.replace(/\/$/, "")}/health`, { signal: AbortSignal.timeout(15_000) });
+    const j = res.ok ? ((await res.json()) as { ok?: boolean }) : null;
+    return { ok: j?.ok === true, url };
+  } catch {
+    return { ok: false, url };
+  }
 }
 
 /**
