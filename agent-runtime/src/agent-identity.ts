@@ -197,11 +197,31 @@ SISTEMA PROFISSIONAL DE LOGOMARCA + IDENTIDADE VISUAL (mesmo cérebro — projet
 - Valide com o browser/Playwright (renderize o SVG, browser_measure, visual_analyze se multimodal; limite 3 ciclos) e valide o SVG (válido, vetorial, sem raster, renderiza, monocromáticas presentes). Entregue a marca real no workspace (ex.: assets/brand/*.svg) — nunca um mock de IA no lugar da marca.`;
 
 
+// FONTE ÚNICA das regras de composição (endereço + fotos) — usada na GERAÇÃO e na EDIÇÃO.
+// Não duplicar este texto em nenhum outro lugar: importe/adicione esta constante.
+export const CONTACT_AND_PHOTOS_RULES = `
+
+- ENDEREÇO É DADO DE CONTATO, NÃO CONTEÚDO COMERCIAL: rua/número/bairro/CEP/telefone/WhatsApp
+  pertencem a Contato / Localização / bloco de informações da empresa / rodapé. NUNCA abra a
+  narrativa com endereço completo nem jogue o endereço no meio de seções comerciais só porque o
+  dado foi encontrado. Prioridade: (1) seção de Contato existente, (2) seção de Localização
+  existente, (3) bloco de informações da empresa, (4) rodapé, (5) criar uma seção de localização
+  SOMENTE quando fizer sentido. Peso visual proporcional à função: endereço não compete com
+  headline, CTA principal, proposta de valor ou serviços. Não duplicar endereço em várias seções.
+- FOTOS COERENTES COM O NICHO E COM A SEÇÃO: antes de escolher uma imagem, pergunte o que este
+  negócio realmente vende, o que o cliente espera ver e qual imagem reforça a mensagem DAQUELA
+  seção (hero = impacto do negócio; serviços = o serviço real; ambiente = o espaço; prova =
+  resultado). Use termos de busca contextuais (segmento + serviço, segmento + ambiente, segmento
+  + produto) no mecanismo de imagens já existente. NUNCA use stock desconectado do negócio, foto
+  repetida em várias seções sem necessidade nem imagem que contradiga o posicionamento. Se não
+  houver imagem adequada, NÃO invente: componha bem com o que existe. Logo enviada pelo usuário
+  tem PRIORIDADE sobre qualquer logo genérica/stock.`;
+
 // Prompt-base do modo EDIÇÃO. `branding` inclui a skill de marca só quando a
 // tarefa exige (economia de ~2,1k chars nos demais casos).
 export function buildEditSystemPrompt(opts?: { branding?: boolean }): string {
   const brand = opts?.branding ? `\n\n${BRAND_IDENTITY_SKILL}` : "";
-  return `${AGENT_IDENTITY}${brand}
+  return `${AGENT_IDENTITY}${brand}${CONTACT_AND_PHOTOS_RULES}
 
 EDIÇÃO DE ASSET (logo, imagem, favicon, arquivo — pedido objetivo, RÁPIDO):
 - O anexo JÁ está no workspace em assets/<nome>.<ext> (binário real). Para "trocar a logo/imagem/anexada": localize onde o site referencia a logo/imagem atual, substitua o arquivo no caminho usado (copie o anexo para lá) e altere SOMENTE a referência necessária (src= ou url()). NÃO reescreva App.tsx nem o site inteiro; NÃO rode npm install nem npm run build; faça UMA verificação objetiva (o arquivo existe no caminho e a referência aponta para ele) e finalize.
@@ -328,21 +348,7 @@ ${BROWSER_QA_INSTRUCTIONS}
 
 SELF-CHECK DE GERAÇÃO (obrigatório antes de finish_task):
 - Existe hero forte e CTA claro? Header/nav coerentes? Footer completo?
-- ENDEREÇO É DADO DE CONTATO, NÃO CONTEÚDO COMERCIAL: rua/número/bairro/CEP/telefone/WhatsApp
-  pertencem a Contato / Localização / bloco de informações da empresa / rodapé. NUNCA abra a
-  narrativa com endereço completo nem jogue o endereço no meio de seções comerciais só porque o
-  dado foi encontrado. Prioridade: (1) seção de Contato existente, (2) seção de Localização
-  existente, (3) bloco de informações da empresa, (4) rodapé, (5) criar uma seção de localização
-  SOMENTE quando fizer sentido. Peso visual proporcional à função: endereço não compete com
-  headline, CTA principal, proposta de valor ou serviços. Não duplicar endereço em várias seções.
-- FOTOS COERENTES COM O NICHO E COM A SEÇÃO: antes de escolher uma imagem, pergunte o que este
-  negócio realmente vende, o que o cliente espera ver e qual imagem reforça a mensagem DAQUELA
-  seção (hero = impacto do negócio; serviços = o serviço real; ambiente = o espaço; prova =
-  resultado). Use termos de busca contextuais (segmento + serviço, segmento + ambiente, segmento
-  + produto) no mecanismo de imagens já existente. NUNCA use stock desconectado do negócio, foto
-  repetida em várias seções sem necessidade nem imagem que contradiga o posicionamento. Se não
-  houver imagem adequada, NÃO invente: componha bem com o que existe. Logo enviada pelo usuário
-  tem PRIORIDADE sobre qualquer logo genérica/stock.
+${CONTACT_AND_PHOTOS_RULES}
 - GOOGLE MAPS embutido (iframe maps.google.com/maps?q=...&output=embed) está presente e responsivo?
 - Composição variada entre seções (não só cards empilhados)? Ritmo visual?
 - Imagens específicas do negócio (não repetidas)? Responsividade mobile?
