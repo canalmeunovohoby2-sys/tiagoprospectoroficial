@@ -53,7 +53,7 @@ function load(): PackSkill[] {
 export const PACK_SKILLS: PackSkill[] = load();
 
 /** Verticais por segmento (as que faltavam) — lista curta para o índice do prompt. */
-export const PACK_VERTICALS: PackSkill[] = PACK_SKILLS.filter((s) => s.id.startsWith("site-"));
+export const PACK_VERTICALS: PackSkill[] = PACK_SKILLS.filter((s) => s.group.includes("verticais"));
 
 const normalizar = (v: unknown): string =>
   String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
