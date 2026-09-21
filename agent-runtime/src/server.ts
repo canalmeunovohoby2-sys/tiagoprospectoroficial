@@ -853,6 +853,10 @@ export function startServer(port = PORT, host = HOST) {
           // Permite EMBUTIR este preview no Studio (que roda cross-origin isolated):
           // sem CORP o Chrome bloqueia o iframe sob COEP.
           "Cross-Origin-Resource-Policy": "cross-origin",
+          // O preview é same-origin com o app isolado: precisa do MESMO isolamento,
+          // senão o navegador bloqueia o iframe (COEP herdado do documento pai).
+          "Cross-Origin-Opener-Policy": "same-origin",
+          "Cross-Origin-Embedder-Policy": "credentialless",
         });
         res.end(previewHtml);
       } catch (e) {
@@ -2327,7 +2331,14 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         try {
           if (!existsSync(file) || !statSync(file).isFile()) return false;
           const ext = (file.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
-          res.writeHead(200, { "Content-Type": MIME_STATIC[ext] ?? "application/octet-stream", "Cache-Control": "no-store" });
+          res.writeHead(200, {
+            "Content-Type": MIME_STATIC[ext] ?? "application/octet-stream",
+            "Cache-Control": "no-store",
+            // ISOLAMENTO (como o Vite dev injeta): sem COOP/COEP o navegador não
+            // expõe SharedArrayBuffer e o WebContainer do Studio recusa ("indisponível").
+            "Cross-Origin-Opener-Policy": "same-origin",
+            "Cross-Origin-Embedder-Policy": "credentialless",
+          });
           res.end(readFileSync(file));
           return true;
         } catch { return false; }
