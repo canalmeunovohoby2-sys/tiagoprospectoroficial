@@ -16,10 +16,15 @@ describe("app servido pelo agente: isolamento (WebContainer/SharedArrayBuffer)",
     expect(bloco).toContain('"Cross-Origin-Embedder-Policy": "credentialless"');
   });
 
-  it("a rota de preview (iframe same-origin) também é isolada", () => {
+  it("a rota de preview (site do cliente) NÃO leva COEP e serve os assets do projeto", () => {
     const idx = src.indexOf('url.pathname.startsWith("/preview/")');
-    const bloco = src.slice(idx, idx + 2500);
-    expect(bloco).toContain('"Cross-Origin-Embedder-Policy": "credentialless"');
-    expect(bloco).toContain('"Cross-Origin-Resource-Policy": "cross-origin"');
+    expect(idx).toBeGreaterThan(0);
+    // COEP bloqueava recursos externos (Google Maps, imagens) dentro do site do cliente.
+    const rota = src.slice(idx, idx + 3200);
+    expect(rota).not.toContain('"Cross-Origin-Embedder-Policy"');
+    expect(src).toContain('"Cross-Origin-Resource-Policy": "cross-origin"');
+    // Assets do projeto (/assets/*) servidos do WORKSPACE, com o token do preview.
+    expect(src).toContain('url.pathname.includes("/assets/")');
+    expect(src).toContain("public\", \"assets\"");
   });
 });

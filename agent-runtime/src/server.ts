@@ -817,6 +817,40 @@ export function startServer(port = PORT, host = HOST) {
     // COEP do WebContainer bloqueia o iframe do Google (ERR_BLOCKED_BY_RESPONSE),
     // então abrimos o site fora do isolamento. Auth por JWT na query (?t=), porque
     // uma nova aba não envia o header Authorization.
+    // ASSETS DO PROJETO NO PREVIEW (logo/fotos enviadas pelo usuário).
+    // O `/assets/x.png` do site do cliente tem de sair do WORKSPACE DO PROJETO — antes
+    // o handler genérico servia o dist do PRÓPRIO Prospector e a imagem quebrava no
+    // preview (404 silencioso). Auth: mesmo JWT do preview (?t=), sem rota anônima.
+    if (url.pathname.startsWith("/preview/") && url.pathname.includes("/assets/") && req.method === "GET") {
+      const resto = decodeURIComponent(url.pathname.slice("/preview/".length));
+      const corte = resto.indexOf("/assets/");
+      const assetPid = resto.slice(0, corte).trim() || "default";
+      const rel = resto.slice(corte + "/assets/".length);
+      const assetToken = url.searchParams.get("t") ?? url.searchParams.get("token") ?? "";
+      const assetIdentity = await resolveIdentity(assetToken ? `Bearer ${assetToken}` : null, assetPid);
+      if (!assetIdentity) { send(res, 401, { status: "error", error: "Autenticação necessária para acessar os assets do projeto." }); return; }
+      const assetRoot = resolve(resolveWorkspaceRoot(assetPid));
+      const candidatos = [
+        resolve(join(assetRoot, "public", "assets", rel)),
+        resolve(join(assetRoot, "dist", "assets", rel)),
+        resolve(join(assetRoot, "assets", rel)),
+      ];
+      const alvo = candidatos.find((p) => p.startsWith(assetRoot) && (() => { try { return statSync(p).isFile(); } catch { return false; } })());
+      if (!alvo) { send(res, 404, { status: "error", error: `Asset não encontrado no projeto: assets/${rel}` }); return; }
+      const ext = (alvo.match(/\.[a-z0-9]+$/i)?.[0] ?? "").toLowerCase();
+      const tipos: Record<string, string> = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+        ".gif": "image/gif", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".avif": "image/avif",
+      };
+      res.writeHead(200, {
+        "Content-Type": tipos[ext] ?? "application/octet-stream",
+        "Cache-Control": "no-store",
+        "Cross-Origin-Resource-Policy": "cross-origin",
+      });
+      res.end(readFileSync(alvo));
+      return;
+    }
+
     if (url.pathname.startsWith("/preview/") && req.method === "GET") {
       const pid = decodeURIComponent(url.pathname.slice("/preview/".length)).trim() || "default";
       const token = url.searchParams.get("t") ?? url.searchParams.get("token") ?? "";
@@ -847,25 +881,28 @@ export function startServer(port = PORT, host = HOST) {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "no-store",
               "Cross-Origin-Opener-Policy": "same-origin",
-              "Cross-Origin-Embedder-Policy": "credentialless",
             });
             res.end(`<!doctype html><html><body style="margin:0;background:#0b0b0f;color:#e5e7eb;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh"><div style="max-width:520px;text-align:center;padding:24px"><h2 style="margin:0 0 8px">Este projeto não está neste computador</h2><p style="opacity:.8;line-height:1.5">Entre com a SUA conta (a mesma da Vercel) nesta página e abra o projeto de novo — cada sessão tem os próprios projetos e a IA validada.</p><p style="opacity:.6;font-size:12px;margin-top:16px">Detalhe técnico: ${String(previewBuild.error ?? "sem arquivos").slice(0, 160)}</p></div></body></html>`);
             return;
           }
           previewHtml = previewBuild.html;
         }
+        // O HTML do projeto é servido COMO SITE NORMAL: sem COEP (que bloqueava o
+        // iframe do Google Maps e imagens externas no preview) e com os `/assets/*`
+        // apontando para a rota de assets DO PROJETO (acima).
+        const assetPrefix = `/preview/${encodeURIComponent(pid)}/assets/`;
+        const tok = encodeURIComponent(token);
+        const htmlFinal = previewHtml.replace(/(["'(])\/assets\/([^"'()\s]+)/g, (_m, p1: string, rel: string) =>
+          `${p1}${assetPrefix}${rel}${rel.includes("?") ? "&" : "?"}t=${tok}`);
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
           // Permite EMBUTIR este preview no Studio (que roda cross-origin isolated):
           // sem CORP o Chrome bloqueia o iframe sob COEP.
           "Cross-Origin-Resource-Policy": "cross-origin",
-          // O preview é same-origin com o app isolado: precisa do MESMO isolamento,
-          // senão o navegador bloqueia o iframe (COEP herdado do documento pai).
           "Cross-Origin-Opener-Policy": "same-origin",
-          "Cross-Origin-Embedder-Policy": "credentialless",
         });
-        res.end(previewHtml);
+        res.end(htmlFinal);
       } catch (e) {
         send(res, 500, { status: "error", error: e instanceof Error ? e.message : "Falha no preview." });
       }
