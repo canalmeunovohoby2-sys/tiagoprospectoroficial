@@ -11,8 +11,11 @@ rem ============================================================
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
-rem App publicado (aberto no final). Troque se necessario.
-set "APP_URL=https://tiagoprospectoroficial.vercel.app"
+rem App LOCAL: o Agent Runtime serve o MESMO app na MESMA origem (127.0.0.1:8787) —
+rem e isso que faz o preview, o WebContainer (SharedArrayBuffer) e os scrapers locais
+rem funcionarem SEM permissao de rede e SEM cross-origin. A versao publicada continua
+rem disponivel em https://tiagoprospectoroficial.vercel.app (para o modo Nuvem).
+set "APP_URL=http://127.0.0.1:8787"
 
 rem No BOOT do Windows o atalho chama com --boot: sobe os motores sem abrir o navegador.
 set "ABRIR_APP=1"

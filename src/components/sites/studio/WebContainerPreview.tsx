@@ -166,6 +166,12 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
   const onElementRef = useRef(onElementSelected);
   onElementRef.current = onElementSelected;
 
+  // O iframe só pode apontar para 127.0.0.1 quando o PRÓPRIO app é servido pelo agente
+  // (mesma origem). No app publicado (HTTPS público) o Chrome bloqueia Local Network
+  // Access dentro de subframe — era isso que mostrava "A conexão com 127.0.0.1 foi
+  // recusada" no preview mesmo com o agente no ar.
+  const appServedByAgent = typeof window !== "undefined" && window.location.origin === LOCAL_AGENT_RUNTIME_URL;
+
   // Seleção vinda de DENTRO do app (valida source do iframe + canal/versão/token).
   useEffect(() => {
     const handler = (ev: MessageEvent) => {
@@ -349,8 +355,16 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
         </div>
       )}
 
+      {fullTabUrl && !appServedByAgent && (
+        <div className="shrink-0 border-b border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-700">
+          Este app está no endereço público e o Chrome <b>não permite</b> carregar <b>127.0.0.1</b> dentro do preview.
+          Use <b>Abrir completo</b> (abre em aba, com a permissão de rede local) ou o app do agente em{" "}
+          <b>http://127.0.0.1:8787</b> — nele o preview embutido funciona direto.
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
-        {previewSource === "runtime" && fullTabUrl ? (
+        {previewSource === "runtime" && fullTabUrl && appServedByAgent ? (
           // PADRÃO: site buildado pelo runtime — hidrata sempre (o Vite do WebContainer
           // pode não subir e entregar .tsx cru com MIME inválido → página branca).
           <iframe
@@ -385,7 +399,7 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
                 <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> preparando o preview…</span>
               ) : phase === "unsupported" ? (
                 "Ative o isolamento cross-origin (COOP/COEP) para usar o preview React."
-        ) : fullTabUrl ? (
+        ) : fullTabUrl && appServedByAgent ? (
           // FALLBACK REAL: o Vite do navegador (WebContainer) pode não subir (MIME
           // errado/erro). O runtime serve o site BUILDADO com MIME correto — e é
           // onde o Google Maps real carrega. O painel continua mostrando o site.
