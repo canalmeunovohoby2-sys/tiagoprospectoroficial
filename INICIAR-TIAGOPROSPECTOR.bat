@@ -48,23 +48,18 @@ if not exist "%ROOT%\agent-runtime\node_modules" (
 )
 
 if not defined SEM_PYTHON (
-  if not exist "%ROOT%\mapscraper-service\.deps-ok" (
-    echo  Maps Engine: instalando dependencias ^(primeira execucao^)...
+  rem Dependencias: checagem RAPIDA por import (nunca reinstala em todo boot).
+  python -c "import fastapi, uvicorn, aiohttp" >nul 2>&1
+  if errorlevel 1 (
+    echo  Maps Engine: instalando dependencias ^(so quando faltam^)...
     python -m pip install --quiet --disable-pip-version-check fastapi uvicorn aiohttp Brotli tqdm
-    if errorlevel 1 (
-      echo    FALHOU ao instalar as dependencias do Maps Engine.
-    ) else (
-      >"%ROOT%\mapscraper-service\.deps-ok" echo ok
-    )
+    if errorlevel 1 echo    AVISO: falha ao instalar as dependencias do Maps Engine.
   )
-  if not exist "%ROOT%\gmapsphotos-service\upstream\.deps-ok" (
-    echo  Photos Engine: instalando dependencias ^(primeira execucao^)...
+  python -c "import fastapi, uvicorn, selenium, undetected_chromedriver" >nul 2>&1
+  if errorlevel 1 (
+    echo  Photos Engine: instalando dependencias ^(so quando faltam - pode demorar^)...
     python -m pip install --quiet --disable-pip-version-check fastapi uvicorn selenium undetected-chromedriver beautifulsoup4 lxml openpyxl requests psutil setuptools
-    if errorlevel 1 (
-      echo    FALHOU ao instalar as dependencias do Photos Engine.
-    ) else (
-      >"%ROOT%\gmapsphotos-service\upstream\.deps-ok" echo ok
-    )
+    if errorlevel 1 echo    AVISO: falha ao instalar as dependencias do Photos Engine.
   )
 )
 
@@ -150,7 +145,7 @@ if "%AGENT_OK%"=="1" (
 
 echo   Para encerrar os motores depois: PARAR-TIAGOPROSPECTOR.bat
 echo.
-timeout /t 12 >nul
+ping -n 4 127.0.0.1 >nul
 exit /b 0
 
 rem ============================================================
@@ -167,6 +162,7 @@ if "%~2"=="ok" (
   powershell -NoProfile -Command "try{ if((Invoke-WebRequest 'http://127.0.0.1:%~1/' -UseBasicParsing -TimeoutSec 3).Content -like '*%~2*'){exit 0} }catch{}; exit 1" >nul 2>&1
 )
 if not errorlevel 1 exit /b 0
-if %_t% GEQ 60 exit /b 1
-timeout /t 2 >nul
+if %_t% GEQ 25 exit /b 1
+echo|set /p=.
+ping -n 3 127.0.0.1 >nul
 goto esperar_loop
