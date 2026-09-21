@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/useAuth";
 import { enrichLeadWithScores, sortLeadsByScore } from "@/lib/leadScoring";
+import { localQuery, localScrapersEnabled, mergeLocalPlaces, searchLocalPlaces } from "@/lib/localLeadScrapers";
 
 type LeadInsert = Database["public"]["Tables"]["leads"]["Insert"];
 
@@ -381,7 +382,18 @@ export function LeadSearchForm({
         } as SearchPlacesResponse;
       }
 
-      const rawLeads = data?.leads ?? [];
+      const edgeLeads = data?.leads ?? [];
+      // SCRAPERS LOCAIS (modo "Este computador"): o navegador fala só com 127.0.0.1:8787
+      // (/maps → 8788). Complementam os providers atuais (Google/Geoapify/OSM/Nominatim/
+      // Overpass) e NUNCA quebram a busca: qualquer falha é silenciosa.
+      let rawLeads: SearchPlacesLead[] = edgeLeads;
+      if (localScrapersEnabled()) {
+        const localPlaces = await searchLocalPlaces("maps", localQuery(safeSegment, safeCity, safeState), 40);
+        if (localPlaces.length > 0) {
+          console.info("[LeadSearchForm] scraper local (maps) somou", localPlaces.length, "registro(s)");
+          rawLeads = mergeLocalPlaces(edgeLeads, localPlaces, { city: safeCity, state: safeState });
+        }
+      }
       const enrichedLeads = rawLeads.map((l: SearchPlacesLead) => enrichLeadWithScores(l));
       const realLeads = sortLeadsByScore(enrichedLeads);
       const warnings = uniqueWarnings(data?.warnings ?? []);

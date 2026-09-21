@@ -613,17 +613,19 @@ export async function activeAiProviderId(): Promise<string | null> {
   return activeAiCache.provider;
 }
 
-async function localRuntimeAvailable(): Promise<boolean> {
+async function localRuntimeAvailable(timeoutMs = 8_000): Promise<boolean> {
   try {
-    // SITE PUBLICADO (Vercel/HTTPS) → o agente roda NESTE computador. O Chrome aplica
-    // Local Network Access: na primeira vez ele mostra o prompt de permissão e a
-    // requisição fica pendente — por isso o timeout é folgado (8s) e a tentativa é
-    // disparada por ação do usuário ("Conectar agente"). `targetAddressSpace: "local"`
-    // classifica a requisição como rede local (navegadores que não suportam ignoram).
+    // SITE PUBLICADO (Vercel/HTTPS) → o agente roda NESTE computador (127.0.0.1:8787).
+    // O Chrome trata isso como Local Network Access: na primeira vez ele mostra o prompt
+    // de permissão e a requisição fica PENDENTE até o usuário responder — por isso o
+    // timeout é folgado e a UI orienta a clicar em "Permitir".
+    // NÃO usar `targetAddressSpace`: reproduzido no Chrome 153 que ele faz ESTE fetch
+    // falhar ("TypeError: Failed to fetch") mesmo com a permissão concedida, enquanto o
+    // fetch simples responde 200. Era essa a causa do falso "Agente local não encontrado".
     const res = await fetch(LOCAL_RUNTIME_HEALTH, {
-      signal: AbortSignal.timeout(8_000),
-      targetAddressSpace: "local",
-    } as RequestInit & { targetAddressSpace?: "local" | "private" | "public" });
+      signal: AbortSignal.timeout(timeoutMs),
+      cache: "no-store",
+    });
     if (!res.ok) return false;
     const j = (await res.json()) as { ok?: boolean };
     return j.ok === true;
@@ -679,9 +681,15 @@ export function setAgentRuntimeMode(mode: AgentRuntimeMode): void {
   try { localStorage.setItem(AGENT_RUNTIME_MODE_KEY, mode); } catch { /* noop */ }
 }
 
-/** Saúde do runtime local (para a tela de configuração). */
-export function localRuntimeHealth(): Promise<boolean> {
-  return localRuntimeAvailable();
+/**
+ * Saúde do runtime local para a UI ("Conectar agente").
+ * PACIENTE com o prompt de rede local do Chrome: a 1ª requisição fica pendente até o
+ * usuário clicar "Permitir"; depois disso a requisição seguinte responde na hora — daí a
+ * 2ª tentativa, que evita o falso "Agente local não encontrado".
+ */
+export async function localRuntimeHealth(): Promise<boolean> {
+  if (await localRuntimeAvailable(20_000)) return true;
+  return localRuntimeAvailable(8_000);
 }
 
 /**
@@ -735,7 +743,9 @@ export async function resolveEditorRuntime(): Promise<RuntimeSelection> {
   const mode = getAgentRuntimeMode();
   const provider = await activeAiProviderId();
   // O runtime DESTE COMPUTADOR é o caminho (inclusive no site publicado na Vercel).
-  const localAvailable = await localRuntimeAvailable();
+  // 2 tentativas: se o Chrome acabou de pedir a permissão de rede local, a primeira
+  // pode voltar vazia e a segunda passa — sem travar a UI por dezenas de segundos.
+  const localAvailable = (await localRuntimeAvailable()) || (await localRuntimeAvailable());
   // A nuvem só é consultada quando o usuário escolheu "Nuvem" (modo remote).
   const remoteUrl = mode === "remote" ? await remoteRuntimeUrl() : null;
   return decideRuntimeMode({ mode, provider, localAvailable, remoteUrl });

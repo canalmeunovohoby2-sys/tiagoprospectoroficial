@@ -40,6 +40,7 @@ export function AgentRuntimeSettings() {
 
   const checkLocal = async () => {
     setChecking(true);
+    setLocalOk(null);
     try {
       setLocalOk(await localRuntimeHealth());
     } finally {
@@ -49,6 +50,7 @@ export function AgentRuntimeSettings() {
 
   const checkCloud = async (force = false) => {
     setChecking(true);
+    setCloud(null);
     try {
       setCloud(await cloudRuntimeHealth(force));
     } finally {
@@ -100,11 +102,18 @@ export function AgentRuntimeSettings() {
         {OPTIONS.find((o) => o.id === mode)?.hint}
       </p>
 
+      {checking && mode !== "remote" && (
+        <p className="mt-2 rounded-md border border-border bg-muted/40 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+          Se o Chrome perguntar se o site pode acessar dispositivos da <b>rede local</b>, clique em{" "}
+          <b>Permitir</b> — sem isso o agente do seu computador não responde.
+        </p>
+      )}
+
       <div className="mt-2 flex items-center gap-2 text-xs">
         {mode !== "remote" && (
           <>
             {checking ? (
-              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              <span className="inline-block h-2 w-2 rounded-full bg-amber-400" />
             ) : (
               <span
                 className={`inline-block h-2 w-2 rounded-full ${

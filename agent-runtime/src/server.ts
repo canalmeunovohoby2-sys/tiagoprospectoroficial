@@ -908,6 +908,46 @@ export function startServer(port = PORT, host = HOST) {
         return;
       }
 
+      // PONTE PARA OS SCRAPERS LOCAIS (Maps :8788 / Photos :8789).
+      // A Edge Function do Supabase roda na nuvem e NÃO alcança 127.0.0.1 — então o
+      // navegador fala SOMENTE com o runtime (127.0.0.1:8787) e o runtime encaminha.
+      // Mesma autenticação das outras rotas (JWT do usuário); nunca é anônima.
+      if ((url.pathname === "/maps" || url.pathname === "/photos") && req.method === "POST") {
+        const identity = await resolveIdentity(req.headers.authorization);
+        if (!identity) { sendDenied(res, "Autenticação necessária para consultar os scrapers locais.", 401); return; }
+        const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
+        const query = String(body.query ?? "").trim();
+        const kind = url.pathname === "/maps" ? "maps" : "photos";
+        const baseUrl = kind === "maps"
+          ? (process.env.MAP_SCRAPER_LOCAL_URL ?? "http://127.0.0.1:8788")
+          : (process.env.GMAPS_SCRAPER_LOCAL_URL ?? "http://127.0.0.1:8789");
+        if (!query) { send(res, 400, { ok: false, kind, error: "query é obrigatória", places: [] }); return; }
+        const maxPlaces = Math.max(1, Math.min(200, Number(body.maxPlaces ?? body.max_places ?? 20) || 20));
+        const target = new URL("/scrape-get", baseUrl);
+        target.searchParams.set("query", query);
+        target.searchParams.set("max_places", String(maxPlaces));
+        if (typeof body.lang === "string" && body.lang) target.searchParams.set("lang", body.lang);
+        if (typeof body.country === "string" && body.country) target.searchParams.set("country", body.country);
+        const timeoutMs = Number(process.env.SCRAPER_PROXY_TIMEOUT_MS ?? 280_000) || 280_000;
+        try {
+          const upstream = await fetch(target, { signal: AbortSignal.timeout(timeoutMs) });
+          const text = await upstream.text();
+          const places = (() => {
+            try { const j = JSON.parse(text); return Array.isArray(j) ? j : []; } catch { return []; }
+          })();
+          console.log(`[scraper-proxy] ${kind} query=${JSON.stringify(query)} -> ${places.length} resultado(s) de ${baseUrl}`);
+          send(res, 200, { ok: upstream.ok, kind, source: "local", endpoint: baseUrl.replace(/\/$/, ""), count: places.length, places });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "falha de rede";
+          console.warn(`[scraper-proxy] ${kind} indisponível em ${baseUrl}: ${msg}`);
+          send(res, 502, {
+            ok: false, kind, source: "local", count: 0, places: [],
+            error: `Scraper local (${kind}) não respondeu em ${baseUrl}. Rode INICIAR-TIAGOPROSPECTOR.bat e tente de novo. Detalhe: ${msg}`,
+          });
+        }
+        return;
+      }
+
       if (url.pathname === "/generate" && req.method === "POST") {
         const body = (await readJson(req)) as Record<string, unknown>;
         const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();

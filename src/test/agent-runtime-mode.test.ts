@@ -108,7 +108,9 @@ describe("runtime do agente · fiação no código real", () => {
   });
 
   it("sonda o runtime local em TODOS os modos (é o caminho de produção)", () => {
-    expect(api).toContain("const localAvailable = await localRuntimeAvailable();");
+    // 2 tentativas: se o Chrome está mostrando o prompt de permissão de rede local, a
+    // primeira sonda pode voltar vazia e a segunda passa.
+    expect(api).toMatch(/const localAvailable = \(await localRuntimeAvailable\(\)\) \|\| \(await localRuntimeAvailable\(\)\);/);
     expect(api).toContain('const remoteUrl = mode === "remote" ? await remoteRuntimeUrl() : null;');
   });
 

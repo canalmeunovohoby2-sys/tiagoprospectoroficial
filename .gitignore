@@ -27,3 +27,7 @@ dist-ssr
 agent-runtime/node_modules/
 agent-runtime/.env
 agent-runtime/.env.local
+
+# stack local (launcher): artefatos de execucao
+__pycache__/
+*.deps-ok
