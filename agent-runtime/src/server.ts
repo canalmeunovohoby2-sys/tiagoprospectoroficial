@@ -7,7 +7,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ProspectorSiteAgent, isSurgicalEditTask, type AgentRunOutcome } from "./prospector-site-agent.js";
 import { BrowserSession } from "./browser-session.js";
@@ -2309,7 +2309,37 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
         return;
       }
 
-      send(res, 404, { error: "rota não encontrada" });
+      // ===== APP SERVIDO PELO PRÓPRIO AGENTE (mesma origem) =====
+    // O Chrome bloqueia um site público (Vercel/HTTPS) de acessar 127.0.0.1
+    // (política de Local/Private Network Access — comprovado no Chromium). Servindo
+    // a interface AQUI, o app e o agente ficam na MESMA origem: sem CORS, sem
+    // permissão de rede, sem depender de nada externo.
+    if (req.method === "GET" && !url.pathname.startsWith("/run") && !url.pathname.startsWith("/preview/") && !url.pathname.startsWith("/health")) {
+      const distDir = resolve(process.cwd(), "..", "dist");
+      const rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+      const MIME_STATIC: Record<string, string> = {
+        html: "text/html; charset=utf-8", js: "text/javascript", mjs: "text/javascript", css: "text/css",
+        json: "application/json", svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+        webp: "image/webp", gif: "image/gif", ico: "image/x-icon", woff2: "font/woff2", woff: "font/woff",
+        ttf: "font/ttf", txt: "text/plain; charset=utf-8", map: "application/json",
+      };
+      const tryServe = (file: string): boolean => {
+        try {
+          if (!existsSync(file) || !statSync(file).isFile()) return false;
+          const ext = (file.match(/\.([a-z0-9]+)$/i)?.[1] ?? "").toLowerCase();
+          res.writeHead(200, { "Content-Type": MIME_STATIC[ext] ?? "application/octet-stream", "Cache-Control": "no-store" });
+          res.end(readFileSync(file));
+          return true;
+        } catch { return false; }
+      };
+      if (existsSync(distDir)) {
+        const candidate = rel ? resolve(distDir, rel) : join(distDir, "index.html");
+        if (candidate.startsWith(distDir) && tryServe(candidate)) return;
+        // SPA: qualquer rota desconhecida devolve o index (o router cuida no cliente).
+        if (tryServe(join(distDir, "index.html"))) return;
+      }
+    }
+    send(res, 404, { error: "rota não encontrada" });
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : "erro inesperado";
       if (genStreamStarted && genStreamFinish) {
