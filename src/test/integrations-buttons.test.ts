@@ -21,6 +21,13 @@ describe("Integrações · Vercel e Supabase na linha do GitHub", () => {
     expect((page.match(/<StudioIntegrationsButtons \/>/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
+  it("explica o Local Network Access (não chama de erro do runtime)", () => {
+    const comp = readFileSync(join(process.cwd(), "src/components/app/AgentRuntimeSettings.tsx"), "utf8");
+    expect(comp).toContain("INICIAR-TIAGOPROSPECTOR.bat");
+    expect(comp).toContain("Rede local");
+    expect(comp).toContain("Conectar agente");
+  });
+
   it("conecta e valida de verdade (Vercel e Supabase), guardando no navegador", () => {
     expect(buttons).toContain("https://api.vercel.com/v2/user");
     expect(buttons).toContain("/auth/v1/settings");

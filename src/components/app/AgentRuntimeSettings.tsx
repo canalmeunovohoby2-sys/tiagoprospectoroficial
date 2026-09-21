@@ -114,6 +114,15 @@ export function AgentRuntimeSettings() {
         )}
         {mode === "remote" && <span className="text-muted-foreground">Executando somente na nuvem.</span>}
       </div>
+      {mode !== "remote" && localOk === false && (
+        <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2 text-[11px] leading-relaxed text-amber-700">
+          Não encontrei o agente neste computador. Duas checagens:
+          <br />1) O agente está iniciado? Rode <b>INICIAR-TIAGOPROSPECTOR.bat</b> (pasta do projeto) e deixe a janela aberta.
+          <br />2) Se ele já está rodando, o Chrome precisa de permissão para acessar a rede local: clique no
+          <b> ícone de ajustes/permissões</b> ao lado do endereço → <b>Rede local</b> (Local network) → <b>Permitir</b> — ou
+          responda <b>Permitir</b> quando o Chrome perguntar. Depois clique em <b>Conectar agente</b> de novo.
+        </p>
+      )}
     </div>
   );
 }

@@ -114,7 +114,7 @@ describe("runtime do agente · fiação no código real", () => {
 
   it("os invokes seguem usando runtimeUrl do resolver (sem URL duplicada)", () => {
     expect(api).toMatch(/\$\{runtimeUrl\.replace[^`]*\}\/run/);
-    expect(LOCAL_AGENT_RUNTIME_URL).toBe("http://localhost:8787");
+    expect(LOCAL_AGENT_RUNTIME_URL).toBe("http://127.0.0.1:8787");
   });
 
   it("o seletor de runtime é renderizado na tela de provedores de IA", () => {

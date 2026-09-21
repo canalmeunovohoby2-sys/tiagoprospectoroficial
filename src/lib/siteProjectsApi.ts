@@ -591,7 +591,10 @@ export async function invokeProspectorAgent(input: {
 // Quando o provider ativo do usuário é o Ollama (local), o agente DEVE executar
 // no Agent Runtime Local (http://localhost:8787) — nunca no Railway (que não
 // alcança o localhost do usuário). Providers remotos continuam no Railway.
-export const LOCAL_AGENT_RUNTIME_URL = "http://localhost:8787";
+// IPv4 EXPLÍCITO: no Windows o navegador pode resolver `localhost` para ::1 (IPv6)
+// primeiro — e o runtime escuta em 127.0.0.1 — então `localhost` dava "conexão
+// recusada" no site publicado. 127.0.0.1 é o mesmo computador, sem ambiguidade.
+export const LOCAL_AGENT_RUNTIME_URL = "http://127.0.0.1:8787";
 const LOCAL_RUNTIME_HEALTH = `${LOCAL_AGENT_RUNTIME_URL}/health`;
 
 let activeAiCache: { at: number; provider: string | null } = { at: 0, provider: null };
