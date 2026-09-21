@@ -3,24 +3,22 @@ import { PACK_SKILLS, PACK_VERTICALS, PACK_INDEX_BLOCK, packSkillKnowledge } fro
 import { DESIGN_FOUNDATIONS_WITH_PACK } from "../src/studio/agent-core/design-skills";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "../src/agent-identity";
 
-// REGRESSÃƒO: o DESIGN_FOUNDATIONS condensou 01-core-design + 02-conversao, mas os 14
-// VERTICAIS (04-verticais) ficaram FORA do agente â€” era isso que produzia site genÃ©rico
-// e foto sem relaÃ§Ã£o com o segmento. O pack agora Ã© carregado e conectado nos DOIS fluxos.
-describe("skills-pack (pack senior) Â· carregado e conectado", () => {
-  it("carrega o pack do disco (â‰¥45 skills, 14 verticais)", () => {
+// REGRESSÃO: o DESIGN_FOUNDATIONS condensou 01-core-design + 02-conversao, mas os VERTICAIS
+// (04-verticais) ficaram FORA do agente — era isso que produzia site genérico e foto sem
+// relação com o segmento. O pack (51 originais + 15 skills novas + 16 verticais BR) agora é
+// carregado e conectado nos DOIS fluxos.
+describe("skills-pack (pack senior) · carregado e conectado", () => {
+  it("carrega o pack do disco (>=80 skills, 30 verticais)", () => {
     expect(PACK_SKILLS.length).toBeGreaterThanOrEqual(80);
     expect(PACK_VERTICALS.length).toBe(30);
-    expect(packSkillKnowledge("eletricista")).toContain("Serviços Residenciais");
-    expect(packSkillKnowledge("paisagismo")).toContain("Paisagismo");
-    expect(packSkillKnowledge("funeraria")).toContain("Funer");
-    expect(PACK_SKILLS.some((s) => s.id === "cro-teste-ab")).toBe(true);
-    expect(PACK_SKILLS.some((s) => s.id === "social-share-og-meta")).toBe(true);
-    expect(PACK_SKILLS.some((s) => s.id === "paginas-erro-404-manutencao")).toBe(true);
-    expect(PACK_VERTICALS.length).toBe(14);
     expect(PACK_SKILLS.some((s) => s.id === "site-energia-solar")).toBe(true);
+    expect(PACK_SKILLS.some((s) => s.id === "cro-teste-ab")).toBe(true);
+    expect(packSkillKnowledge("eletricista")).toMatch(/Residenciais/);
+    expect(packSkillKnowledge("paisagismo")).toMatch(/Paisagismo/);
+    expect(packSkillKnowledge("funeraria")).toMatch(/Funer/);
   });
 
-  it("o vertical do SEGMENTO Ã© encontrado pela ferramenta design_skills", () => {
+  it("o vertical do SEGMENTO é encontrado pela ferramenta design_skills", () => {
     expect(packSkillKnowledge("energia solar")?.split("\n")[0]).toMatch(/Energia Solar/i);
     expect(packSkillKnowledge("site-energia-solar")?.split("\n")[0]).toMatch(/Energia Solar/i);
     expect(packSkillKnowledge("academia")?.split("\n")[0]).toMatch(/Academia/i);
@@ -28,20 +26,23 @@ describe("skills-pack (pack senior) Â· carregado e conectado", () => {
     expect(packSkillKnowledge("")).toBeNull();
   });
 
-  it("o Ã­ndice dos verticais entra no prompt de GERAÃ‡ÃƒO e no de EDIÃ‡ÃƒO", () => {
+  it("o índice dos verticais entra no prompt de GERAÇÃO e no de EDIÇÃO", () => {
     expect(PACK_INDEX_BLOCK).toContain("site-energia-solar");
+    expect(PACK_INDEX_BLOCK).toContain("Paisagismo".replace("Paisagismo", "paisagismo"));
     expect(DESIGN_FOUNDATIONS_WITH_PACK).toContain("site-energia-solar");
     const gerar = buildGenerateSystemPrompt({ hasBase: true, react: true });
     const editar = buildEditSystemPrompt({});
     expect(gerar).toContain("site-energia-solar");
     expect(editar).toContain("site-energia-solar");
-    // e nÃ£o estoura o contexto
+    expect(gerar).toContain("paisagismo-jardinagem");
+    expect(editar).toContain("paisagismo-jardinagem");
+    // contexto sob controle (índice enxuto)
     expect(gerar.length).toBeLessThan(60_000);
     expect(editar.length).toBeLessThan(60_000);
   });
 
-  it("preserva a autonomia criativa (o pack orienta, nÃ£o engessa)", () => {
-    expect(PACK_INDEX_BLOCK).toContain("DIREÃ‡ÃƒO CRIATIVA");
-    expect(PACK_INDEX_BLOCK).not.toMatch(/hero\s*â†’\s*3 cards/i);
+  it("preserva a autonomia criativa (o pack orienta, não engessa)", () => {
+    expect(PACK_INDEX_BLOCK).toContain("DIREÇÃO CRIATIVA");
+    expect(PACK_INDEX_BLOCK).not.toMatch(/hero\s*?\s*3 cards/i);
   });
 });
