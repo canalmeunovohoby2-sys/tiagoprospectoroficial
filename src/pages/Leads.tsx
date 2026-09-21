@@ -211,7 +211,7 @@ export default function Leads() {
     setOpeningSiteId(lead.id);
     try {
       const projectId = await openOrCreateSiteProject(user.id, lead);
-      navigate(`/sites/${projectId}`);
+      navigate(`/sites/${projectId}`, { state: { startGeneration: true } });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao criar projeto de site");
     } finally {

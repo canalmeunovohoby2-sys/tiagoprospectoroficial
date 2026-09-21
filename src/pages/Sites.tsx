@@ -121,7 +121,7 @@ export default function Sites() {
       const id = await createSiteProjectFromPrompt(user.id, p, "react");
       setOpenCreate(false);
       setPrompt("");
-      navigate(`/sites/${id}`);
+      navigate(`/sites/${id}`, { state: { startGeneration: true } });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Erro ao criar projeto");
     } finally {
