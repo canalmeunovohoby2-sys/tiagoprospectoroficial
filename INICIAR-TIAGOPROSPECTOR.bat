@@ -33,25 +33,19 @@ goto wait
 
 :jaRodando
 echo  AGENTE LOCAL JA ESTA RODANDO neste computador.
-echo.
-echo  Abra no Chrome:  https://tiagoprospectoroficial.vercel.app
-echo  Configuracoes - Provedores de IA - Runtime do agente - Este computador
-echo  e clique em "Conectar agente". Se o Chrome pedir permissao para acessar
-echo  a rede local, clique em Permitir.
-echo.
-pause
-exit /b 0
+goto abrir
 
 :pronto
 echo.
 echo  AGENTE LOCAL PRONTO.
+
+:abrir
 echo.
-echo  Abrindo o TiagoProspector neste computador...
+echo  Abrindo o TiagoProspector com o agente JA CONECTADO...
 start "" "http://127.0.0.1:8787"
 echo.
 echo  IMPORTANTE: deixe esta janela do runtime aberta enquanto usar o app.
-echo  (O app abre em http://127.0.0.1:8787 com o agente ja conectado.
-echo   A versao publicada na Vercel continua disponivel para uso na nuvem.)
+echo  A versao publicada na Vercel continua disponivel para uso na nuvem.
 echo.
 pause
 exit /b 0
