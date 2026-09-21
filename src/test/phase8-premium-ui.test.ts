@@ -17,14 +17,17 @@ describe("UI/UX · header e toolbar reorganizados (sem perder ações)", () => {
   it("ações secundárias agrupadas no dropdown 'Ferramentas'", () => {
     expect(bar).toContain("DropdownMenuTrigger");
     expect(bar).toContain("Ferramentas");
-    for (const label of ["Histórico", "Build", "Proposta (PDF)", "Vídeo (MP4)"]) {
+    for (const label of ["Histórico", "Build", "Proposta (PDF)"]) {
       expect(bar, label).toContain(label);
     }
+    // VÍDEO FORA DAS FERRAMENTAS (pedido do produto): não aparece mais no menu.
+    expect(bar).not.toContain("Vídeo (MP4)");
+    expect(bar).not.toContain('id: "video"');
   });
 
   it("NENHUM handler foi removido (todos continuam ligados)", () => {
     for (const handler of [
-      "onOpenHistory", "c.onBuild", "c.onProposalPdf", "c.onGenerateVideo",
+      "onOpenHistory", "c.onBuild", "c.onProposalPdf",
       "c.onDownloadZip", "c.onWhatsApp", "c.onPublish", "c.onUnpublish",
       "c.onCopyLink", "c.githubSlot", "c.publishedUrl",
     ]) {

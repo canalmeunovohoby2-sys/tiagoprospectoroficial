@@ -5,7 +5,7 @@
 // SESSÃO PERSISTENTE POR PROJETO: um Agent (Cline) fica vivo por projectId em
 // memória; cada nova mensagem chama agent.continue() para manter o contexto.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -13,7 +13,7 @@ import { ProspectorSiteAgent, isSurgicalEditTask, type AgentRunOutcome } from ".
 import { BrowserSession } from "./browser-session.js";
 import { auditSiteInteractions } from "./interaction-audit.js";
 import { isBugReport, instructionRequestsChange } from "./completion-guard.js";
-import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace, materializeWorkspace, withWorkspaceLock } from "./workspace.js";
+import { ensureWorkspaceDir, readWorkspace, resolveWorkspaceRoot, cleanupWorkspace, materializeWorkspace, withWorkspaceLock, clientSafeFiles } from "./workspace.js";
 import type { BusinessContext } from "./tools.js";
 import { assertGenerationQuality } from "./generation-gate.js";
 import { buildCreativeBrief, formatCreativeBrief } from "./creative-direction.js";
@@ -22,7 +22,10 @@ import { ensureClientFavicon } from "./site-favicon.js";
 import { generateSitePromoVideo } from "./site-video-promo.js";
 import { appendChange, appendMemory, makeChangeEntry, memoryLineFromChange, renderProjectContextBlock, normalizeContext, type ProjectContext } from "./project-context.js";
 import { buildGenerateSystemPrompt, needsBrandIdentity } from "./agent-identity.js";
-import { materializeAttachments, type ChatAttachment } from "./attachments.js";
+import { materializeAttachments, attachmentApplied, type ChatAttachment } from "./attachments.js";
+import { normalizeInitialMessages } from "./conversation-memory.js";
+import { sanitizeUserFacing, EMPTY_REPLY_FALLBACK } from "./user-facing.js";
+import { needsForcedEdit, FORCED_EDIT_INSTRUCTION } from "./run-guards.js";
 import { researchBusiness, formatResearch, type ResearchOutcome } from "./research.js";
 import { trimConversationWindow } from "./conversation-window.js";
 import { createArtifactStore } from "./artifact-store.js";
@@ -41,10 +44,22 @@ import { callModelWithTools } from "./studio/agent-core/model.js";
 import { isBootstrapProject } from "./studio/agent-core/first-message.js";
 import { createLiveStreamBridge } from "./studio/live-events.js";
 import { buildDesignDirection, extractBrandColors, hasArtDirection } from "./studio/agent-core/design-direction.js";
+import { runVisualVerification } from "./studio/agent-core/visual-verify.js";
+import { runFirstGenQaCycle, type FirstGenQaResult } from "./studio/agent-core/firstgen-qa.js";
 import { validateRenderedSite, type DirectionExpectation } from "./studio/visual-validation.js";
 import { EDIT_TOOLS } from "./work-evidence.js";
 import { intentCoverage, type WorkEvidence } from "./work-evidence.js";
 import { syncWorkspaceFromClient, bumpWorkspaceRevision, currentWorkspaceRevision } from "./workspace.js";
+
+// BLINDAGEM DO PROCESSO: um erro assíncrono (ex.: cliente desconecta no meio do
+// stream → ERR_STREAM_WRITE_AFTER_END) NÃO pode derrubar o runtime local. Antes,
+// um write após res.end() matava o processo e o preview caía para o Railway.
+process.on("uncaughtException", (e) => {
+  try { console.error("[runtime] uncaughtException:", e instanceof Error ? e.message : String(e)); } catch { /* noop */ }
+});
+process.on("unhandledRejection", (e) => {
+  try { console.error("[runtime] unhandledRejection:", e instanceof Error ? e.message : String(e)); } catch { /* noop */ }
+});
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -318,7 +333,9 @@ export function buildReactMission(input: {
     "IDIOMA (obrigatório): pense, planeje, narre e responda SEMPRE em português do Brasil. Nomes técnicos/classes de código podem ficar em inglês, mas TUDO o que o usuário lê (análise, plano, comentários de progresso e resposta final) é em pt-BR.",
     input.continuityBlock,
     input.directionBlock,
-    input.instruction,
+    // O PEDIDO ATUAL vem marcado: o histórico/contexto acima é REFERÊNCIA — a
+    // resposta deve atender SOMENTE a esta mensagem (sem herdar assuntos antigos).
+    `PEDIDO ATUAL (responda SOMENTE a isto):\n${input.instruction}`,
     input.creativeBrief ? `BRIEFING CRIATIVO DESTE CLIENTE (decisão da IA — direção principal; implemente isto):\n${input.creativeBrief}` : "",
     input.mediaBlock,
     input.attachBlock,
@@ -365,8 +382,8 @@ export async function answerConversation(input: {
   liveStatus?: string;
 }): Promise<string> {
   const chatUser = input.recent.length
-    ? `CONVERSA RECENTE:\n${input.recent.slice(-6).join("\n")}\n\nMENSAGEM ATUAL DO USUÁRIO:\n${input.instruction}`
-    : input.instruction;
+    ? `CONVERSA RECENTE (contexto de continuidade — NÃO é o pedido):\n${input.recent.slice(-4).join("\n")}\n\nPEDIDO ATUAL (responda SOMENTE a isto; ignore assuntos anteriores que não tenham relação):\n${input.instruction}`
+    : `PEDIDO ATUAL (responda SOMENTE a isto):\n${input.instruction}`;
   const chat = await callModelWithTools({
     providerId: input.exec.providerId,
     modelId: input.exec.modelId,
@@ -378,7 +395,7 @@ export async function answerConversation(input: {
     maxTokens: 800,
     temperature: 0.6,
   }).catch(() => null);
-  return chat?.ok ? (chat.turn?.text ?? "").trim() : "";
+  return chat?.ok ? (sanitizeUserFacing(chat.turn?.text ?? "") || EMPTY_REPLY_FALLBACK) : "";
 }
 
 /** FASE 5 — prompt da conversa pura: a IA conhece o projeto e responde como assistente. */
@@ -672,7 +689,7 @@ function genLog(genId: string, event: string, data: Record<string, unknown> = {}
   } catch { /* noop */ }
 }
 
-async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>, exec?: ResolvedExec, opts?: { hasBase?: boolean; branding?: boolean }): Promise<ProspectorSiteAgent> {
+async function makeAgent(sessionKey: string, projectId: string, files: Record<string, string>, business: BusinessContext, body: Record<string, unknown>, exec?: ResolvedExec, opts?: { hasBase?: boolean; branding?: boolean; autonomy?: "full" | "guarded" }): Promise<ProspectorSiteAgent> {
   const root = ensureWorkspaceDir(projectId, files);
   const resolved = exec ?? await prepareExec(body, undefined);
   const apiKey = resolved.apiKey ?? (typeof body.apiKey === "string" ? body.apiKey : undefined);
@@ -680,7 +697,7 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
   const mode = typeof body.mode === "string" ? (body.mode as "edit" | "generate") : "edit";
   // Em GERAÇÃO, o system prompt precisa saber se há base pré-carregada — senão o
   // modelo é instruído a "criar do zero" e descarta a base (bug de integração).
-  const systemPrompt = mode === "generate" ? buildGenerateSystemPrompt({ hasBase: !!opts?.hasBase, branding: !!opts?.branding }) : undefined;
+  const systemPrompt = mode === "generate" ? buildGenerateSystemPrompt({ hasBase: !!opts?.hasBase, branding: !!opts?.branding, react: String((body.projectKind ?? "")) === "react" }) : undefined;
 
   return new ProspectorSiteAgent({
     workspaceRoot: root,
@@ -696,8 +713,9 @@ async function makeAgent(sessionKey: string, projectId: string, files: Record<st
     mode,
     hasBase: !!opts?.hasBase,
     branding: !!opts?.branding,
+    autonomy: opts?.autonomy,
     enableBrowser: body.enableBrowser !== false,
-    initialMessages: resolved.initialMessages?.length ? trimConversationWindow(resolved.initialMessages) : undefined,
+    initialMessages: resolved.initialMessages?.length ? normalizeInitialMessages(resolved.initialMessages) : undefined,
   });
 }
 
@@ -754,6 +772,10 @@ export function startServer(port = PORT, host = HOST) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    // LOCAL NETWORK ACCESS (Chrome): o site publicado (HTTPS) acessando 127.0.0.1
+    // dispara preflight de rede privada; este header permite a permissão do usuário
+    // (sem ele o navegador bloqueia o agente local mesmo com o runtime no ar).
+    res.setHeader("Access-Control-Allow-Private-Network", "true");
     if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
     // Streaming do /generate (NDJSON + heartbeat): se o streaming já começou, o
@@ -790,7 +812,56 @@ export function startServer(port = PORT, host = HOST) {
       }
 
       // Captura screenshots REAIS (desktop + mobile) do site para o PDF de proposta.
-      if (url.pathname === "/capture" && req.method === "POST") {
+      // PREVIEW COMPLETO EM ABA (sem COEP): serve o site BUILDADO com os headers
+    // normais — é onde o Google Maps embed REAL carrega. No preview do editor o
+    // COEP do WebContainer bloqueia o iframe do Google (ERR_BLOCKED_BY_RESPONSE),
+    // então abrimos o site fora do isolamento. Auth por JWT na query (?t=), porque
+    // uma nova aba não envia o header Authorization.
+    if (url.pathname.startsWith("/preview/") && req.method === "GET") {
+      const pid = decodeURIComponent(url.pathname.slice("/preview/".length)).trim() || "default";
+      const token = url.searchParams.get("t") ?? url.searchParams.get("token") ?? "";
+      const previewIdentity = await resolveIdentity(token ? `Bearer ${token}` : null, pid);
+      if (!previewIdentity) {
+        send(res, 401, { status: "error", error: "Autenticação necessária para abrir o preview." });
+        return;
+      }
+      try {
+        const previewRoot = resolveWorkspaceRoot(pid);
+        const distIndex = join(previewRoot, "dist", "index.html");
+        // Usa o BUILD ATUAL quando ele é mais novo que qualquer fonte (evita
+        // rebuild a cada abertura do preview). `?fresh=1` força recompilar.
+        const fresh = url.searchParams.get("fresh") === "1";
+        let newestSource = 0;
+        for (const rel of Object.keys(readWorkspace(previewRoot))) {
+          try { const st = statSync(join(previewRoot, rel)); if (st.mtimeMs > newestSource) newestSource = st.mtimeMs; } catch { /* sem stat */ }
+        }
+        const distMtime = (() => { try { return statSync(distIndex).mtimeMs; } catch { return 0; } })();
+        let previewHtml: string | null = null;
+        if (!fresh && distMtime > 0 && distMtime >= newestSource) {
+          previewHtml = readFileSync(distIndex, "utf8");
+        } else {
+          const previewBuild = await buildReactProject(previewRoot);
+          if (!previewBuild.ok || !previewBuild.html) {
+            send(res, 500, { status: "error", error: previewBuild.error || "Falha ao compilar o projeto." });
+            return;
+          }
+          previewHtml = previewBuild.html;
+        }
+        res.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          // Permite EMBUTIR este preview no Studio (que roda cross-origin isolated):
+          // sem CORP o Chrome bloqueia o iframe sob COEP.
+          "Cross-Origin-Resource-Policy": "cross-origin",
+        });
+        res.end(previewHtml);
+      } catch (e) {
+        send(res, 500, { status: "error", error: e instanceof Error ? e.message : "Falha no preview." });
+      }
+      return;
+    }
+
+    if (url.pathname === "/capture" && req.method === "POST") {
         const identity = await resolveIdentity(req.headers.authorization);
         if (!identity) { sendDenied(res, "Autenticação necessária para capturar screenshots.", 401); return; }
         const body = (await readJson(req).catch(() => ({}))) as Record<string, unknown>;
@@ -1583,7 +1654,12 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           if (synced.stale && stream) {
             try { res.write(`${JSON.stringify({ type: "workspace_snapshot_ignored", reason: "stale_revision", revision: synced.revision })}\n`); } catch { /* noop */ }
           }
-          const writeLine = (obj: unknown) => { if (!stream) return; try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ } };
+          // Nunca derruba o runtime por cliente que caiu: erros do stream viram no-op.
+          try { res.on("error", () => { /* cliente desconectou */ }); } catch { /* noop */ }
+          const writeLine = (obj: unknown) => {
+            if (!stream || !res || res.writableEnded || res.destroyed) return;
+            try { res.write(`${JSON.stringify(obj)}\n`); } catch { /* cliente desconectou */ }
+          };
           // ATIVIDADE REAL para o card do chat: cada evento do time (ferramenta
           // chamada pelo modelo / frase do próprio modelo) vira uma linha
           // humanizada com a AÇÃO e o ARQUIVO daquele momento — nada de texto
@@ -1600,6 +1676,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
             // Nome REAL do motor (era "studio-team", que não roda neste caminho).
             writeLine({ type: "start", runtime: "prospector-site-agent" });
+            // Atividade imediata e VERDADEIRA: cobre o intervalo entre o envio e o
+            // primeiro turno do modelo (o frontend fica sem "Entendendo o pedido…"
+            // parado — agora mostra o que realmente está acontecendo).
+            writeLine({ type: "activity", phase: "analyzing", detail: "Lendo o projeto e preparando a execução…" });
           }
           try {
             // IMAGENS REAIS: valida as URLs (HTTP) antes de levá-las ao site — mas
@@ -1610,7 +1690,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // fica como referência). Nunca embute data URL gigante no chat.
             const attachResult = materializeAttachments(root, (body.attachments ?? []) as ChatAttachment[]);
             const attachBlock = attachResult.attachments.length || attachResult.errors.length
-              ? `\nANEXOS DO USUÁRIO (arquivos reais no workspace):\n${attachResult.attachments.map((a) => `- ${a.path} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nImagens estão no seu contexto visual; PDFs/binários são referência de arquivo (se não puder interpretar, diga isso — nunca invente).\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
+              ? `\nANEXOS DO USUÁRIO (arquivos REAIS no workspace):\n${attachResult.attachments.map((a) => `- ${a.path}${a.publicPath ? ` → no site use "${a.publicPath}"` : ""} (${a.mediaType}, ${a.bytes} bytes)`).join("\n")}\nSão arquivos binários válidos (assets/ e public/assets/): no código do site referencie o caminho PÚBLICO — ex.: <img src="/assets/<nome>"> — porque o Vite serve public/. Use EXATAMENTE o caminho informado acima: NUNCA renomeie o arquivo nem invente outro nome (ex.: "logo.png") — se a referência apontar para um arquivo que não existe, a imagem fica quebrada. Se você tem visão (provider multimodal), as imagens estão no seu contexto visual; se NÃO tem, você NÃO vê o conteúdo — use o arquivo pelo caminho e NUNCA invente o que ele mostra. PDFs/binários são referência de arquivo (se não puder interpretar, diga isso).\n${attachResult.errors.length ? `Anexos rejeitados (segurança):\n- ${attachResult.errors.join("\n- ")}\n` : ""}`
               : "";
             // ===== MOTOR ANTIGO (ProspectorSiteAgent) NO COMANDO DO CAMINHO REACT =====
             // Recuperado do commit 652dd1d: UM único agente, loop próprio, até
@@ -1619,9 +1699,25 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // replyAsksForCode). O StudioTeam (Coder/Planner/selector) e os guards de
             // conclusão deixam de controlar este fluxo; `design_skills`/`visual_verify`
             // seguem disponíveis como FERRAMENTAS para o agente decidir quando usar.
-            const currentFiles = readWorkspace(root);
+            // Se o sync foi julgado STALE (ou o disco ficou vazio), o payload do
+            // cliente é a verdade: materializamos para o agente NÃO tratar um site
+            // existente como bootstrap (isso reescrevia o site inteiro e, sem
+            // alteração, devolvia a mensagem genérica de "geração").
+            const diskNow = readWorkspace(root);
+            const clientFiles = (files ?? {}) as Record<string, string>;
+            if (Object.keys(diskNow).length === 0 && Object.keys(clientFiles).length > 0) {
+              try { materializeWorkspace(root, clientFiles); } catch { /* noop */ }
+            }
+            const currentFiles = Object.keys(readWorkspace(root)).length ? readWorkspace(root) : clientFiles;
             const firstGen = isBootstrapProject(currentFiles) || Object.keys(currentFiles).length === 0;
-            const runKind = reactRunKind({ firstGen, instruction });
+            // ANEXO NUNCA É CONVERSA: mandar um arquivo/logo é pedido de uso —
+            // entra em edição (ou geração, se o projeto ainda for bootstrap).
+            const hasAttachments = Array.isArray(body.attachments) && (body.attachments as unknown[]).length > 0;
+            const runKind = hasAttachments ? (firstGen ? "generate" : "edit") : reactRunKind({ firstGen, instruction });
+            // AUTONOMIA TOTAL (padrão): a IA decide tudo — arquitetura, design,
+            // arquivos, ferramentas e o momento de concluir. Nenhum guard bloqueia.
+            // `AGENT_AUTONOMY=guarded` restaura o comportamento antigo.
+            const autonomy: "full" | "guarded" = process.env.AGENT_AUTONOMY === "guarded" ? "guarded" : "full";
             // ===== CONVERSA PURA ("oi, boa tarde", "tudo bem?") =====
             // Vale TAMBÉM em projeto bootstrap: saudação/cortesia NUNCA inicia geração.
             // O agente apenas RESPONDE (sem ferramentas, sem edição, sem automação).
@@ -1682,14 +1778,20 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                   baseDirectionBlock: direction.block,
                 }).catch(() => "")
               : "";
-            const mission = buildReactMission({
-              continuityBlock,
-              directionBlock: direction.block,
-              instruction,
-              creativeBrief,
-              mediaBlock: mediaBlockForRun,
-              attachBlock,
-            });
+              const missionBase = buildReactMission({
+                continuityBlock,
+                directionBlock: direction.block,
+                instruction,
+                creativeBrief,
+                mediaBlock: mediaBlockForRun,
+                attachBlock,
+              });
+              // AUTONOMIA TOTAL: as diretrizes/direções são REFERÊNCIA — a IA decide.
+              const autonomyBlock = autonomy === "full"
+                ? "\n\nAUTONOMIA TOTAL (você decide): você é a autoridade final desta execução — arquitetura, design, estrutura, arquivos, ferramentas e o momento de concluir. As diretrizes/direções acima são REFERÊNCIA (adapte ou substitua conforme seu julgamento). Nenhum guard vai bloquear sua conclusão: execute as mudanças com as ferramentas e finalize quando considerar pronto."
+                  + "\nVELOCIDADE (o usuário vê a mudança em SEGUNDOS, sem esperar o fim): o preview recompila sozinho a cada arquivo salvo. NÃO rode `npm install`/`npm run build` em edições — reserve build para quando o usuário pedir publicar/exportar ou quando for indispensável. Verifique o resultado UMA vez (browser_open + uma inspeção) e finalize; não repita inspeções nem abra o navegador várias vezes."
+                : "";
+              const mission = missionBase + autonomyBlock;
             // ===== SESSÃO POR PROJETO (continuidade cognitiva real) =====
             // Reaproveita o agente VIVO do projeto (chave isolada por usuário+projeto+
             // conversa). Projeto A nunca compartilha sessão com B; trocar de IA recria.
@@ -1712,7 +1814,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 businessForRun,
                 { ...body, mode: runKind === "generate" ? "generate" : "edit" },
                 exec,
-                { hasBase: !firstGen },
+                { hasBase: !firstGen, autonomy },
               );
               sessions.set(sessionKey, { agent: oldAgent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
             }
@@ -1721,7 +1823,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // tool_call/tool_response, thought do texto do modelo, files_ready).
             const liveBridge = createLiveStreamBridge({
               writeLine,
-              readFiles: () => readWorkspace(root),
+              readFiles: () => clientSafeFiles(readWorkspace(root)),
               messageText,
               truncateText,
               editTools: EDIT_TOOLS,
@@ -1733,31 +1835,52 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             let outcome: AgentRunOutcome;
             // FASE 7.4 — CORTA A RUN NO TEMPO LIMITE: aborta o agente e devolve o
             // que já foi aplicado, com resposta honesta (nunca fica "infinito").
-            const runTimeoutMs = resolveRunTimeoutMs();
+            const runTimeoutMs = runKind === "generate" ? resolveRunTimeoutMs() : Math.min(resolveRunTimeoutMs(), 120_000);
             let timedOut = false;
-            const runTimer = runTimeoutMs > 0
-              ? setTimeout(() => {
-                  timedOut = true;
-                  try { oldAgent.abort("timeout"); } catch { /* noop */ }
-                  try { writeLine({ type: "activity", phase: "analyzing", detail: "Tempo limite atingido — encerrando…" }); } catch { /* noop */ }
-                }, runTimeoutMs)
-              : null;
-            try {
-              outcome = await oldAgent.runTask(mission, { continueSession: resumed });
-            } catch (e) {
-              if (!timedOut) throw e;
-              // Abortado pelo tempo: resultado PARCIAL honesto (diff real do disco).
-              const afterTimeout = readWorkspace(root);
-              const touchedTimeout = Object.keys(afterTimeout).filter((p) => filesBeforeRun[p] !== afterTimeout[p]);
-              outcome = {
+            // Resultado PARCIAL honesto (diff real do disco) — usado pelo watchdog.
+            const partialAfterTimeout = (): AgentRunOutcome => {
+              const after = readWorkspace(root);
+              const touchedTimeout = Object.keys(after).filter((p) => filesBeforeRun[p] !== after[p]);
+              return {
                 ok: true,
-                reply: `⏱ Atingi o tempo limite desta execução (${Math.round(runTimeoutMs / 60000)} min). Apliquei o que deu até aqui (${touchedTimeout.length} arquivo(s)). Me diga "continue" que eu retomo exatamente de onde parei.`,
-                files: afterTimeout,
+                reply: `⏱ Encerrei no tempo limite desta edição (${Math.round(runTimeoutMs / 60000)} min). O que deu tempo ficou salvo (${touchedTimeout.length} arquivo(s)). Peça o próximo passo que eu continuo daqui.`,
+                files: after,
                 touched: touchedTimeout,
                 iterations: 0,
                 events: [],
                 activity: [],
               } as unknown as AgentRunOutcome;
+            };
+            // WATCHDOG: garante ENCERRAMENTO mesmo se o SDK não reagir ao abort (era a
+            // causa das execuções que ficavam abertas "para sempre": preview piscando
+            // e nenhuma conclusão). Sempre resolve — nunca deixa a run pendurada.
+            const watchdog: Promise<AgentRunOutcome> | null = runTimeoutMs > 0
+              ? new Promise<AgentRunOutcome>((resolve) => {
+                  setTimeout(() => {
+                    timedOut = true;
+                    try { oldAgent.abort("timeout"); } catch { /* noop */ }
+                    try { if (!res.writableEnded && !res.destroyed) writeLine({ type: "activity", phase: "analyzing", detail: "Tempo limite atingido — encerrando…" }); } catch { /* noop */ }
+                    setTimeout(() => { try { resolve(partialAfterTimeout()); } catch { /* nunca rejeita */ } }, 1500);
+                  }, runTimeoutMs);
+                })
+              : null;
+            const runTimer = null;
+            try {
+              outcome = watchdog
+                ? await Promise.race([oldAgent.runTask(mission, { continueSession: resumed }), watchdog])
+                : await oldAgent.runTask(mission, { continueSession: resumed });
+            } catch (e) {
+              if (timedOut) {
+                // Abortado pelo tempo: resultado PARCIAL honesto (diff real do disco).
+                outcome = partialAfterTimeout();
+              } else {
+                // ROBUSTEZ (falha transitória do provider): UMA retomada determinística
+                // da MESMA execução/sessão — sem duplicar arquivos nem cobranças.
+                // Se falhar de novo, a exceção propaga e o fluxo encerra honestamente
+                // (nunca loop infinito, nunca "sucesso" fabricado).
+                try { writeLine({ type: "activity", phase: "analyzing", detail: "Provedor instável — retomando a execução…" }); } catch { /* noop */ }
+                outcome = await oldAgent.runTask(mission, { continueSession: true });
+              }
             } finally {
               if (runTimer) clearTimeout(runTimer);
               try { unsubscribeLive(); } catch { /* noop */ }
@@ -1772,10 +1895,83 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 exec.modelId, exec.providerId, identity,
               );
             }
+            // ===== CORREÇÃO Nº2 · QA VISUAL OBRIGATÓRIO NA PRIMEIRA GERAÇÃO REACT =====
+            // GERAR → build/preview → QA Chromium real → [no máx. 1 rodada de correção
+            // com os problemas devolvidos ao agente] → QA final. Falha técnica do QA
+            // NUNCA vira sucesso silencioso (ressalva explícita no payload).
+            const firstGenQa: FirstGenQaResult = runKind === "generate" && firstGen && !timedOut && autonomy !== "full"
+              ? await runFirstGenQaCycle({
+                  root,
+                  instruction,
+                  business: businessForRun,
+                  buildProject: buildReactProject,
+                  runVisualVerification,
+                  correctWithAgent: async (issues) => {
+                    try {
+                      const fix = await oldAgent.runTask(
+                        `CORREÇÃO PÓS-QA (obrigatória): a verificação visual real encontrou estes problemas. Corrija SOMENTE estes problemas nos arquivos reais (preserve o que está certo) e confirme com finish_task:\n- ${issues}`,
+                        { continueSession: true },
+                      );
+                      return fix.ok !== false;
+                    } catch {
+                      return false;
+                    }
+                  },
+                  onStep: (s) => { try { writeLine({ type: "activity", phase: s.phase, detail: s.detail }); } catch { /* noop */ } },
+                  preCheck: () => {
+                    // Guard determinístico: o rascunho bootstrap NUNCA pode
+                    // permanecer montado após a primeira geração React.
+                    const app = String(readWorkspace(root)["src/App.tsx"] ?? "");
+                    return app.includes("prospector-bootstrap")
+                      ? ["src/App.tsx ainda é o RASCUNHO bootstrap (tela de rascunho/branca no preview). Monte o site REAL em App.tsx importando todos os componentes criados — o preview deve mostrar o site completo imediatamente."]
+                      : [];
+                  },
+                })
+              : { executed: false, pass: false, correctionRound: false, technicalFailure: "", final: null };
+            if (firstGenQa.correctionRound) emitFiles();
             const mapFixed = (() => { try { return normalizeWorkspaceMapEmbeds(root, business); } catch { return [] as string[]; } })();
-            const finalFiles = readWorkspace(root);
+            let finalFiles = readWorkspace(root);
             if (mapFixed.length > 0) emitFiles();
             const touched = [...new Set([...(outcome.touched ?? []), ...mapFixed])];
+            let touchedAll = touched;
+            // ===== ANEXO OBRIGATÓRIO (imagem/logo enviada) — SEM LOOP =====
+            // Se o usuário enviou uma imagem, ela PRECISA aparecer no site. Se o agente
+            // não referenciou o arquivo, fazemos UMA rodada de correção determinística
+            // e re-checamos; persistindo, a resposta leva RESSALVA honesta (nunca "feito"
+            // sem referência real).
+            let attachmentNote = "";
+            if (attachResult.attachments.length && !attachmentApplied(finalFiles, attachResult.attachments)) {
+              const alvo = attachResult.attachments.find((a) => /^image\//i.test(a.mediaType) && !/svg/i.test(a.mediaType)) ?? attachResult.attachments[0];
+              try {
+                writeLine({ type: "activity", phase: "editing", detail: `Aplicando ${alvo.publicPath ?? alvo.path} no site…` });
+                const fix = await oldAgent.runTask(
+                  `O usuário enviou o arquivo ${alvo.path}${alvo.publicPath ? ` — no código use EXATAMENTE "${alvo.publicPath}"` : ""} e ele NÃO está referenciado no site. Aplique-o AGORA no ponto pedido (substituindo a imagem/logo provisória), alterando o MÍNIMO necessário, e confirme com finish_task.`,
+                  { continueSession: true },
+                );
+                if (fix.ok !== false) finalFiles = readWorkspace(root);
+              } catch { /* mantém a checagem abaixo */ }
+              if (!attachmentApplied(finalFiles, attachResult.attachments)) {
+                attachmentNote = `\n\n⚠ Ressalva: o arquivo enviado (${alvo.name}) não foi referenciado no site — não encontrei nenhuma referência a ele no código.`;
+              }
+              emitFiles();
+              // A rodada do anexo pode ter alterado arquivos: reflete no resultado real.
+              touchedAll = [...new Set([...touchedAll, ...Object.keys(finalFiles).filter((p) => filesBeforeRun[p] !== finalFiles[p])])];
+            }
+            // ===== AÇÃO OBRIGATÓRIA: pedido de alteração SEM nenhum arquivo alterado =====
+            // (o agente costumava só ler/listar e responder). UMA rodada forçada, sem loop;
+            // persistindo o "nada feito", a resposta leva ressalva honesta.
+            if (needsForcedEdit(runKind, touchedAll.length) && !timedOut) {
+              try {
+                writeLine({ type: "activity", phase: "editing", detail: "Nenhum arquivo foi alterado — executando a edição pedida…" });
+                const forced = await oldAgent.runTask(FORCED_EDIT_INSTRUCTION, { continueSession: true });
+                if (forced.ok !== false) finalFiles = readWorkspace(root);
+              } catch { /* segue para a checagem/ressalva */ }
+              touchedAll = [...new Set([...touchedAll, ...Object.keys(finalFiles).filter((p) => filesBeforeRun[p] !== finalFiles[p])])];
+              if (touchedAll.length === 0) {
+                attachmentNote += "\n\n⚠ Ressalva: não consegui aplicar nenhuma alteração neste pedido — nenhum arquivo foi modificado.";
+              }
+              emitFiles();
+            }
             // FASE 2 — o workspace MUDOU (agente e/ou normalização): nova revisão.
             // O cliente recebe este número e o devolve; snapshots antigos passam a
             // ser ignorados em /run, /build, /git e /visual-edit.
@@ -1785,20 +1981,32 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // última edição). Nada de "tool rodou = sucesso".
             const evidence = outcome.evidence ?? { inspectedBeforeEdit: false, verifiedAfterLastEdit: false, editActionCount: 0, editedPaths: touched, visualEdit: false, assetEdit: false, renderVerifiedAfterLastEdit: false };
             const coverage = intentCoverage(instruction, filesBeforeRun, finalFiles, touched);
-            const verified = outcome.completion?.verification_passed === true || evidence.renderVerifiedAfterLastEdit === true;
+            const verified = outcome.completion?.verification_passed === true || evidence.renderVerifiedAfterLastEdit === true || (firstGenQa.executed && firstGenQa.pass);
             const resultState = honestRunResult({ ok: outcome.ok, touched, verified, intentConfirmed: coverage.confirmed });
+            const replyWithQa = !firstGenQa.executed
+              ? outcome.reply
+              : firstGenQa.technicalFailure
+                ? `${outcome.reply}\n\n⚠ Ressalva: a verificação visual automática não pôde ser executada (${firstGenQa.technicalFailure}). Esta geração NÃO foi validada visualmente.`
+                : !firstGenQa.pass && firstGenQa.final
+                  ? `${outcome.reply}\n\n⚠ Ressalva: o QA visual encontrou problemas que permanecem após a rodada de correção (${(firstGenQa.final.problems?.length ?? 0) + (firstGenQa.final.criticalErrors?.length ?? 0)} item(ns)).`
+                  : outcome.reply;
+            // CONTEXTO INTERNO NUNCA VAI AO USUÁRIO (barreira de saída): remove os
+            // blocos internos que o modelo tenha ecoado; se sobrar nada, resposta
+            // honesta em vez de despejar prompt/contexto no chat.
+            const replySafe = (sanitizeUserFacing(replyWithQa) || EMPTY_REPLY_FALLBACK) + attachmentNote;
             const payload = {
               status: outcome.ok ? "ok" : "error",
-              reply: outcome.reply,
+              reply: replySafe,
               error: outcome.error,
               errors: outcome.error ? [outcome.error] : undefined,
-              changed: touched.length > 0,
-              no_file_changes: touched.length === 0,
-              touched,
-              files: finalFiles,
+              changed: touchedAll.length > 0,
+              no_file_changes: touchedAll.length === 0,
+              touched: touchedAll,
+              files: clientSafeFiles(finalFiles),
               plan: null,
               iterations: outcome.iterations ?? 0,
               result_state: resultState,
+              qa: { executed: firstGenQa.executed, pass: firstGenQa.pass, correction_round: firstGenQa.correctionRound, technical_failure: firstGenQa.technicalFailure || undefined, problems: firstGenQa.final?.problems ?? [] },
               workspace_rev: workspaceRevision,
               direction: {
                 seed: direction.seed,
@@ -1829,7 +2037,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               orchestrated: false,
             };
             if (stream) {
-              writeLine({ type: "files_ready", files: finalFiles });
+              writeLine({ type: "files_ready", files: clientSafeFiles(finalFiles) });
               writeLine({ type: "complete", ...payload, timestamp: Date.now() });
               writeLine({ type: "result", ...payload });
               res.end();
@@ -2072,7 +2280,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
           interaction_blocked: interactionBlocked || undefined,
           changed,
           touched,
-          files: finalFiles,
+          files: clientSafeFiles(finalFiles),
           model: exec.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
           provider: exec.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
           config_source: exec.source,

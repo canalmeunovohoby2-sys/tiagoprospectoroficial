@@ -126,7 +126,7 @@ export function normalizeMapEmbedUrls(text: string, canonicalEmbedUrl: string): 
  * quando houver + link real do Google Maps) ou simplesmente removido.
  */
 function replaceBrokenMapEmbeds(root: string, business: BusinessContext): string[] {
-  const IFRAME = /<iframe\b[^>]*\bsrc\s*=\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*'|\{\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*')\s*\})[^>]*(?:\/>|>[\s\S]*?<\/iframe>)/gi;
+  const IFRAME = /<iframe\b(?=[^>]*(?:google|maps|data-pf-gmap|\bsrc\s*=\s*\{))[^>]*(?:\/>|>[\s\S]*?<\/iframe>)/gi;
   const address = cleanText(business.address);
   const name = cleanText(business.name);
   const city = cleanText(business.city);
@@ -168,7 +168,7 @@ export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessCont
   // removemos o iframe quebrado — NUNCA deixamos a área branca.
   if (!block) return replaceBrokenMapEmbeds(root, business);
   const changed: string[] = [];
-  const IFRAME = /<iframe\b[^>]*\bsrc\s*=\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*'|\{\s*(?:"[^"]*google\.[^"]*\/maps[^"]*"|'[^']*google\.[^']*\/maps[^']*')\s*\})[^>]*(?:\/>|>[\s\S]*?<\/iframe>)/gi;
+  const IFRAME = /<iframe\b(?=[^>]*(?:google|maps|data-pf-gmap|\bsrc\s*=\s*\{))[^>]*(?:\/>|>[\s\S]*?<\/iframe>)/gi;
   const files = readWorkspace(root);
   let needsRuntime = false;
   // O runtime do mapa é necessário SEMPRE que houver um bloco de mapa (escrito pelo
@@ -177,11 +177,17 @@ export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessCont
   for (const [rel, content] of Object.entries(files)) {
     if (!/\.(tsx|jsx|ts|js|html?)$/i.test(rel)) continue;
     let next = content;
-    // IDEMPOTENTE: o NOSSO iframe do Google (data-pf-gmap) não pode ser trocado de
-    // novo — senão a normalização se repetiria a cada run (bloco dentro de bloco).
+    // Troca QUALQUER iframe de mapa — inclusive src={variavel} (ex.: const mapSrc
+    // = "...google.com/maps...") e o bloco ANTIGO marcado data-pf-gmap, que trazia
+    // iframe e escondia o mosaico. Antes a proteção do data-pf-gmap preservava o
+    // bloco velho e o mapa nunca era atualizado.
     const repl = /\.html?$/i.test(rel) ? (blockHtml ?? block) : block;
-    if (/google\./i.test(content) && /maps/i.test(content)) {
-      next = content.replace(IFRAME, (match) => (/data-pf-gmap/i.test(match) ? match : repl));
+    const looksGoogle = /data-pf-gmap/i.test(content) || /google\.com\/maps|maps\.google\./i.test(content);
+    if (looksGoogle) {
+      IFRAME.lastIndex = 0;
+      // O NOSSO iframe (data-pf-gmap, dentro do bloco com data-pf-map) NÃO é
+      // trocado — idempotência: senão a normalização duplicaria o bloco.
+      next = content.replace(IFRAME, (m) => (/data-pf-gmap/i.test(m) ? m : repl));
     }
     if (next.includes("data-pf-map") || next.includes("data-pf-map-ready")) needsRuntime = true;
     if (next === content) continue;
@@ -195,10 +201,13 @@ export function normalizeWorkspaceMapEmbeds(root: string, business: BusinessCont
   // O mapa INTERATIVO precisa do runtime (vanilla, sem dependências) no index.html
   // — funciona no preview E no publicado (tiles são imagens; iframe é bloqueado).
   const html = readWorkspace(root)["index.html"];
-  if (needsRuntime && typeof html === "string" && !html.includes("prospector-map-runtime")) {
+  if (needsRuntime && typeof html === "string") {
     const abs = safeWorkspaceJoin(root, "index.html");
     if (abs) {
-      try { writeFileSync(abs, injectMapRuntimeIntoHtml(html), "utf8"); changed.push("index.html"); } catch { /* noop */ }
+      try {
+        const out = injectMapRuntimeIntoHtml(html);
+        if (out !== html) { writeFileSync(abs, out, "utf8"); changed.push("index.html"); }
+      } catch { /* noop */ }
     }
   }
   return changed;

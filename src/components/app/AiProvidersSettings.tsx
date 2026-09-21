@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { KeyRound, Plug, Trash2, RefreshCw, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { AgentRuntimeSettings } from "./AgentRuntimeSettings";
 
 const AI_PROVIDERS: Array<{ id: string; label: string; defaultModel: string; local?: boolean }> = [
   { id: "deepseek", label: "DeepSeek", defaultModel: "deepseek-chat" },
@@ -387,6 +388,8 @@ export function AiProvidersSettings() {
           )}
         </div>
       ))}
+
+      <AgentRuntimeSettings />
     </div>
   );
 }

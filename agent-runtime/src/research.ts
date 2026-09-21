@@ -92,6 +92,94 @@ export async function runSearchQuery(query: string, maxResults = 5): Promise<{ o
   return { ok: false, results: [], error: lastError || "sem resultados" };
 }
 
+// ===== FIRECRAWL (search + scrape) — mesmo padrão de failover do Tavily =====
+// Chaves: FIRECRAWL_API_KEY_01..08 ou FIRECRAWL_API_KEY. Quando uma chave falha
+// (saldo/quota/limite/erro), a próxima é usada — nunca trava no primeiro erro.
+const FIRECRAWL_SEARCH_ENDPOINT = "https://api.firecrawl.dev/v1/search";
+const FIRECRAWL_SCRAPE_ENDPOINT = "https://api.firecrawl.dev/v1/scrape";
+
+function firecrawlKeys(): string[] {
+  const keys: string[] = [];
+  for (let i = 1; i <= 8; i++) {
+    const k = process.env[`FIRECRAWL_API_KEY_${String(i).padStart(2, "0")}`] ?? process.env[`FIRECRAWL_API_KEY_${i}`];
+    if (k && !keys.includes(k)) keys.push(k);
+  }
+  const single = process.env.FIRECRAWL_API_KEY;
+  if (single && !keys.includes(single)) keys.push(single);
+  return keys;
+}
+
+/** Existe algum provedor de pesquisa configurado (Tavily OU Firecrawl)? */
+export function webResearchEnabled(): boolean {
+  return envKeys().length > 0 || firecrawlKeys().length > 0;
+}
+
+export function firecrawlEnabled(): boolean {
+  return firecrawlKeys().length > 0;
+}
+
+/** Busca no Firecrawl (usada quando o Tavily falha ou não está configurado). */
+export async function runFirecrawlSearch(query: string, maxResults = 5): Promise<{ ok: boolean; results: ResearchSnippet["results"]; error?: string }> {
+  const keys = firecrawlKeys();
+  if (keys.length === 0) return { ok: false, results: [], error: "firecrawl indisponível (nenhuma chave configurada)." };
+  if (!query.trim()) return { ok: false, results: [], error: "query vazia" };
+  const limit = Math.max(1, Math.min(10, maxResults));
+  let lastError = "";
+  for (const key of keys) {
+    try {
+      const res = await fetch(FIRECRAWL_SEARCH_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ query: query.slice(0, 400), limit }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (res.status !== 200) { lastError = `HTTP ${res.status}`; continue; }
+      const data = (await res.json().catch(() => null)) as { data?: Array<{ title?: string; url?: string; description?: string }> } | null;
+      if (!data || !Array.isArray(data.data)) { lastError = "resposta inválida"; continue; }
+      const results = data.data
+        .filter((r) => typeof r?.url === "string")
+        .slice(0, limit)
+        .map((r) => ({
+          title: String(r.title ?? "").slice(0, 160),
+          url: String(r.url ?? "").slice(0, 300),
+          description: String(r.description ?? "").slice(0, 600),
+        }));
+      if (results.length) return { ok: true, results };
+      lastError = "sem resultados";
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : "erro de rede";
+    }
+  }
+  return { ok: false, results: [], error: lastError || "sem resultados" };
+}
+
+/** ABRE uma página real (scrape → markdown) para o agente LER a fonte. */
+export async function runPageFetch(url: string): Promise<{ ok: boolean; content: string; error?: string }> {
+  const keys = firecrawlKeys();
+  if (keys.length === 0) return { ok: false, content: "", error: "abertura de página indisponível (nenhuma chave Firecrawl configurada)." };
+  if (!/^https?:\/\//i.test(url)) return { ok: false, content: "", error: "url inválida" };
+  let lastError = "";
+  for (const key of keys) {
+    try {
+      const res = await fetch(FIRECRAWL_SCRAPE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (res.status !== 200) { lastError = `HTTP ${res.status}`; continue; }
+      const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      const item = data && typeof data.data === "object" && data.data ? (data.data as Record<string, unknown>) : data;
+      const md = item && typeof item.markdown === "string" ? item.markdown : item && typeof item.content === "string" ? item.content : "";
+      if (!md || md.trim().length < 40) { lastError = "conteúdo vazio"; continue; }
+      return { ok: true, content: md.slice(0, 20_000) };
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : "erro de rede";
+    }
+  }
+  return { ok: false, content: "", error: lastError || "não foi possível abrir a página" };
+}
+
 // Executa as pesquisas (best-effort, com timeout). Nunca lança.
 export async function researchBusiness(opts: {
   businessName?: string | null;

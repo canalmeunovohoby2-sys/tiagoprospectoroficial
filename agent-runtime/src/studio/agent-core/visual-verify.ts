@@ -269,7 +269,7 @@ export function resetVisualState(root: string): void { VISUAL_STATE.delete(root)
  * sem depender do server.ts (evita ciclo de import). Mesma estratégia do /capture.
  */
 export async function prepareServeDirForRoot(root: string, buildReactProject: (root: string) => Promise<{ ok: boolean; html?: string; error?: string }>): Promise<{ dir: string; temp?: string }> {
-  const { existsSync, mkdtempSync, writeFileSync } = await import("node:fs");
+  const { existsSync, mkdtempSync, writeFileSync, cpSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const isReact = existsSync(join(root, "package.json")) && (existsSync(join(root, "src")) || existsSync(join(root, "vite.config.ts")) || existsSync(join(root, "vite.config.js")));
@@ -278,5 +278,11 @@ export async function prepareServeDirForRoot(root: string, buildReactProject: (r
   if (!built.ok || !built.html) throw new Error(built.error || "Falha ao compilar o site para verificação visual.");
   const dir = mkdtempSync(join(tmpdir(), "prospector-visual-"));
   writeFileSync(join(dir, "index.html"), built.html, "utf8");
+  // ASSETS PÚBLICOS: copia `public/` para o diretório servido — senão a logo/imagem
+  // do projeto (ex.: /assets/logo.png) não apareceria no site verificado/visualizado.
+  try {
+    const pub = join(root, "public");
+    if (existsSync(pub)) cpSync(pub, dir, { recursive: true });
+  } catch { /* sem public/ ou cópia falhou: segue com o HTML */ }
   return { dir, temp: dir };
 }

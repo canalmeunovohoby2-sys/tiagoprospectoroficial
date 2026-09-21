@@ -26,3 +26,4 @@ dist-ssr
 # Agent runtime (Node separado) — deps instaladas localmente
 agent-runtime/node_modules/
 agent-runtime/.env
+agent-runtime/.env.local

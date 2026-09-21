@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { AGENT_IDENTITY, buildEditSystemPrompt, buildGenerateSystemPrompt, BRAND_IDENTITY_SKILL, needsBrandIdentity } from "../src/agent-identity";
 
 describe("Agent Identity central (5.27) — profissional permanente", () => {
@@ -116,5 +118,43 @@ describe("ECONOMIA — BRAND IDENTITY condicional", () => {
   it("AGENT_IDENTITY não contém mais o bloco de marca (base enxuta)", () => {
     expect(AGENT_IDENTITY).not.toContain("BRAND IDENTITY / LOGOMARCA");
     expect(BRAND_IDENTITY_SKILL).toContain("BRAND IDENTITY / LOGOMARCA");
+  });
+});
+
+describe("Correção nº1 · firstGen de projeto React usa o fluxo React (não o estático)", () => {
+  it("firstGen React recebe instruções React e NÃO a estratégia estática como principal", () => {
+    const p = buildGenerateSystemPrompt({ react: true });
+    expect(p).toContain("PROJETO REACT");
+    expect(p).toContain("src/App.tsx");
+    expect(p).toContain("PROIBIDO substituir a aplicação por um site HTML estático");
+    expect(p).toContain("PRINCÍPIOS DE DESIGN PREMIUM"); // DESIGN_FOUNDATIONS segue presente
+    expect(p).toContain("SELF-CHECK DE GERAÇÃO");
+    expect(p).not.toContain("MISSÃO AGORA: criar o site do zero");
+    expect(p).not.toContain("um write_file por arquivo (index.html, src/site.css, src/main.js, src/site.json)");
+  });
+
+  it("caso não-firstGen (sem react) preserva o comportamento anterior", () => {
+    const p = buildGenerateSystemPrompt();
+    expect(p).toContain("MISSÃO AGORA: criar o site do zero");
+    expect(p).toContain("index.html, src/site.css, src/main.js, src/site.json");
+    expect(p).not.toContain("PROJETO REACT (obrigatório");
+  });
+
+  it("react COM base existente não ativa a variante firstGen (fora do escopo)", () => {
+    const p = buildGenerateSystemPrompt({ react: true, hasBase: true });
+    expect(p).toContain("BASE JÁ NO WORKSPACE");
+    expect(p).not.toContain("PROJETO REACT (obrigatório");
+  });
+
+  it("firstGen React manda o MAPA para dentro do componente (nunca só no index.html)", () => {
+    const p = buildGenerateSystemPrompt({ react: true });
+    expect(p).toContain("MAPA/LOCALIZAÇÃO");
+    expect(p).toMatch(/NUNCA deixe o mapa só no index\.html/);
+    expect(p).toContain("src/components/Location.tsx");
+  });
+
+  it("makeAgent liga projectKind react ao prompt de geração (condição já usada pelo Studio)", () => {
+    const src = readFileSync(join(process.cwd(), "src/server.ts"), "utf8");
+    expect(src).toContain('react: String((body.projectKind ?? "")) === "react"');
   });
 });

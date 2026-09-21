@@ -10,7 +10,6 @@ import { VoiceRecordingBar } from "./VoiceRecordingBar";
 import { useVoiceRecorder } from "@/hooks/studio/useVoiceRecorder";
 import { PHASE_LABEL, type ChatAttachmentRef, type StudioPhase, type UnifiedChatItem } from "@/lib/studio/chatModel";
 import { thoughtsOf } from "@/lib/studio/reasoning";
-import { latestLiveLabel } from "@/lib/agentWorkActivity";
 
 export interface UnifiedChatPanelProps {
   items: UnifiedChatItem[];
@@ -48,11 +47,11 @@ function ProgressBlock({ item }: { item: Extract<UnifiedChatItem, { kind: "activ
       ? "border-emerald-500/25 bg-emerald-500/5 text-emerald-700"
       : "border-primary/25 bg-primary/[0.04] text-foreground";
   return (
-    <div role="status" aria-live="polite" className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 ${tone}`}>
+    <div role="status" aria-live="polite" className={`flex min-w-0 items-center gap-2 rounded-lg border px-2.5 py-1.5 ${tone}`}>
       {!done && !errored
         ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
         : <span className="shrink-0 text-[13px] leading-none">{done ? "✅" : "⚠️"}</span>}
-      <span className="text-[12px] font-medium">{p.message}</span>
+      <span className="min-w-0 text-[12px] font-medium [overflow-wrap:anywhere] break-words">{p.message}</span>
     </div>
   );
 }
@@ -187,7 +186,7 @@ export function UnifiedChatPanel({
         </div>
       </div>
 
-      <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-2.5 py-2.5 [scrollbar-width:thin]">
+        <div ref={scrollRef} onScroll={handleScroll} className="min-h-0 min-w-0 flex-1 space-y-2.5 overflow-y-auto overflow-x-hidden px-2.5 py-2.5 [scrollbar-width:thin]">
         {items.length === 0 && (
           <p className="px-1 py-6 text-center text-[12px] text-muted-foreground">
             Descreva o que você quer criar ou alterar. O agente trabalha no projeto real e você acompanha aqui.
@@ -283,24 +282,6 @@ export function UnifiedChatPanel({
       </div>
 
       <div className="shrink-0 border-t border-border/60 p-2.5">
-        {running && (
-          // CARD de atividade (como sempre foi): emoji da ação + o que o agente
-          // está fazendo AGORA, logo acima do campo de digitar.
-          <div className="mb-2 shrink-0 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-primary/90">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
-              </span>
-              Executando agora
-            </div>
-            <p className="mt-1 flex items-center gap-1.5 text-xs font-medium leading-snug text-foreground">
-              <span className="min-w-0 break-words">
-                {latestLiveLabel(liveActivity) ?? `${PHASE_LABEL[phase]}…`}
-              </span>
-            </p>
-          </div>
-        )}
         {rec.recording ? (
           <VoiceRecordingBar
             seconds={rec.seconds}
@@ -331,16 +312,16 @@ export function UnifiedChatPanel({
                 ))}
               </div>
             )}
-            <div className="flex items-end gap-2">
+            <div className="flex items-end gap-1.5">
             <textarea
               ref={textRef}
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={onKeyDown}
-              rows={2}
+              rows={3}
               disabled={disabled || running}
               placeholder={running ? "Executando…" : "Peça uma criação ou alteração (Enter envia, Shift+Enter quebra linha)"}
-              className="max-h-32 min-h-[2.5rem] flex-1 resize-none rounded-xl border border-border/70 bg-background px-3 py-2 text-[13px] outline-none focus:border-primary/50 disabled:opacity-60"
+              className="max-h-44 min-h-[3.5rem] flex-1 resize-none rounded-xl border border-border/70 bg-background px-3 py-2.5 text-[13px] leading-relaxed outline-none focus:border-primary/50 disabled:opacity-60"
             />
             <input
               ref={fileRef}
@@ -350,8 +331,8 @@ export function UnifiedChatPanel({
               className="hidden"
               onChange={(e) => { attach(e.target.files); e.target.value = ""; }}
             />
-            <Button type="button" size="icon" variant="outline" className="h-9 w-9 shrink-0" disabled={running || disabled} onClick={() => fileRef.current?.click()} title="Anexar">
-              <Paperclip className="h-4 w-4" />
+            <Button type="button" size="icon" variant="outline" className="h-8 w-8 shrink-0" disabled={running || disabled} onClick={() => fileRef.current?.click()} title="Anexar">
+              <Paperclip className="h-3.5 w-3.5" />
             </Button>
             {running ? (
               <Button type="button" size="icon" variant="destructive" className="h-9 w-9 shrink-0" onClick={onCancel} title="Cancelar execução">
@@ -365,12 +346,12 @@ export function UnifiedChatPanel({
                   type="button"
                   size="icon"
                   variant="outline"
-                  className="h-9 w-9 shrink-0"
+                  className="h-8 w-8 shrink-0"
                   disabled={disabled}
                   onClick={() => { setMicNotice(null); rec.start(); }}
                   title="Gravar com voz"
                 >
-                  <Mic className="h-4 w-4" />
+                  <Mic className="h-3.5 w-3.5" />
                 </Button>
                 {(text.trim() || pending.length > 0) && (
                   <Button type="button" size="icon" className="h-9 w-9 shrink-0" disabled={!canSend} onClick={submit} title="Enviar">

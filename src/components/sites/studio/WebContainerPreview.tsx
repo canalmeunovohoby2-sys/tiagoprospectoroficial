@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PERF, markPerf } from "@/lib/studio/perf";
 import { isBootstrapFiles } from "@/lib/studio/reactTemplate";
-import { AlertTriangle, Crosshair, FileCode2, Loader2, RefreshCw, ShieldAlert, Terminal } from "lucide-react";
+import { AlertTriangle, Crosshair, ExternalLink, FileCode2, Loader2, RefreshCw, ShieldAlert, Terminal } from "lucide-react";
 import { useWebContainerPreview } from "@/hooks/studio/useWebContainerPreview";
+import { LOCAL_AGENT_RUNTIME_URL, localRuntimeHealth, resolveEditorRuntime } from "@/lib/siteProjectsApi";
+import { supabase } from "@/integrations/supabase/client";
 import { injectReactVisualHelper } from "@/lib/studio/reactVisualHelper";
 import { inlineRemoteImagesInFiles } from "@/lib/studio/previewImages";
 import { fitDeviceScale } from "@/lib/studio/deviceFrame";
@@ -129,6 +131,38 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
   }, [wcFiles]);
   const { phase, url, logs, error, reload } = useWebContainerPreview({ files: projected, projectId, enabled: true });
 
+  // PREVIEW COMPLETO EM ABA: o runtime serve o site sem COEP — é onde o Google Maps
+  // embed REAL carrega (no preview do editor o isolamento do WebContainer bloqueia).
+  const [fullTabUrl, setFullTabUrl] = useState<string | null>(null);
+  // FONTE do preview: o BUILD do runtime (MIME correto, sempre hidrata) é o padrão.
+  // O Vite dentro do WebContainer fica como alternativa (inspeção visual) — quando
+  // ele não sobe, a página aparecia em branco ("nada se move") porque o container
+  // servia os .tsx crus (application/octet-stream).
+  const [previewSource, setPreviewSource] = useState<"runtime" | "vite">("runtime");
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const t = data.session?.access_token;
+        if (!t || !alive) return;
+        const pid = encodeURIComponent(projectId ?? "default");
+        // LOCAL PRIMEIRO: o preview é do ambiente do usuário — 127.0.0.1:8787 é o
+        // runtime local (build real). O remoto (Railway) só entra se o local não
+        // responder (antes o resolver escolhia o Railway e a conexão era recusada).
+        if (await localRuntimeHealth()) {
+          if (!alive) return;
+          setFullTabUrl(`${LOCAL_AGENT_RUNTIME_URL.replace(/\/$/, "")}/preview/${pid}?t=${encodeURIComponent(t)}`);
+          return;
+        }
+        const sel = await resolveEditorRuntime();
+        if (sel.state !== "remote" || !alive) return;
+        setFullTabUrl(`${sel.url.replace(/\/$/, "")}/preview/${pid}?t=${encodeURIComponent(t)}`);
+      } catch { /* sem preview do runtime */ }
+    })();
+    return () => { alive = false; };
+  }, [projectId]);
+
   const onElementRef = useRef(onElementSelected);
   onElementRef.current = onElementSelected;
 
@@ -182,12 +216,18 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
 
   // Reload do iframe após mudanças (debounce para não remontar várias vezes numa
   // mesma execução). Garante que o site REAL apareça mesmo se o HMR não aplicar.
+  // IMPORTANTE: depende também dos ARQUIVOS (`projected`) — sem isso, mudanças do
+  // agente que o HMR não aplicasse ficavam invisíveis no preview até um refreshKey
+  // externo chegar (o "não aparece no preview" relatado).
   useEffect(() => {
     if (firstRefresh.current) { firstRefresh.current = false; return; }
     if (phase !== "ready") return;
-    const t = setTimeout(() => setFrameKey((k) => k + 1), 700);
+    // Debounce MAIOR (1,5s) + coalescing: uma rajada de arquivos durante a edição
+    // gera UMA atualização do preview no fim — antes cada arquivo remontava o
+    // iframe e a tela "piscava" durante toda a execução.
+    const t = setTimeout(() => setFrameKey((k) => k + 1), 1500);
     return () => clearTimeout(t);
-  }, [refreshKey, phase]);
+  }, [refreshKey, phase, projected]);
 
   // FASE 5.1 — T8: Preview REAL visível (Vite rodando + iframe carregado).
   useEffect(() => {
@@ -223,6 +263,26 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
         </div>
       )}
       <div className="flex shrink-0 flex-nowrap items-center justify-between gap-2 overflow-hidden border-b border-border/60 bg-card px-2.5 py-1">
+        {fullTabUrl && (
+          <span className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPreviewSource((s) => (s === "runtime" ? "vite" : "runtime"))}
+              title="Alternar a fonte do preview: build do runtime (sempre funciona) × Vite do navegador"
+              className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium hover:bg-accent"
+            >
+              {previewSource === "runtime" ? "Preview: build (runtime)" : "Preview: Vite (navegador)"}
+            </button>
+            <button
+              type="button"
+              onClick={() => window.open(fullTabUrl, "_blank")}
+              title="Abrir o site em aba completa — é aqui que o Google Maps real carrega (o preview do editor bloqueia o Google por isolamento)"
+              className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border px-2 text-[11px] font-medium hover:bg-accent"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> Abrir completo
+            </button>
+          </span>
+        )}
         <p className="flex min-w-0 items-center gap-2 whitespace-nowrap text-[11px] font-medium text-muted-foreground">
           {/* UMA barra só: arquivo · Preview do site · status real do Vite. */}
           {entryFile && (
@@ -290,7 +350,16 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
       )}
 
       <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
-        {phase === "ready" && url ? (
+        {previewSource === "runtime" && fullTabUrl ? (
+          // PADRÃO: site buildado pelo runtime — hidrata sempre (o Vite do WebContainer
+          // pode não subir e entregar .tsx cru com MIME inválido → página branca).
+          <iframe
+            title="Preview do site (runtime)"
+            src={fullTabUrl}
+            className="h-full w-full border-0"
+            style={{ background: "#fff" }}
+          />
+        ) : phase === "ready" && url ? (
           <DeviceFrame device={device}>
             <iframe
               key={`${frameKey}-${device}`}
@@ -316,7 +385,23 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
                 <span className="flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> preparando o preview…</span>
               ) : phase === "unsupported" ? (
                 "Ative o isolamento cross-origin (COOP/COEP) para usar o preview React."
-              ) : (
+        ) : fullTabUrl ? (
+          // FALLBACK REAL: o Vite do navegador (WebContainer) pode não subir (MIME
+          // errado/erro). O runtime serve o site BUILDADO com MIME correto — e é
+          // onde o Google Maps real carrega. O painel continua mostrando o site.
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/5 px-3 py-1 text-[11px] text-amber-700">
+              <AlertTriangle className="h-3 w-3" />
+              Preview servido pelo runtime (o Vite do navegador não subiu). O site real aparece aqui.
+            </div>
+            <iframe
+              title="Preview do site (runtime)"
+              src={fullTabUrl}
+              className="min-h-0 flex-1 border-0"
+              style={{ background: "#fff" }}
+            />
+          </div>
+        ) : (
                 "Preview indisponível."
               )}
             </div>

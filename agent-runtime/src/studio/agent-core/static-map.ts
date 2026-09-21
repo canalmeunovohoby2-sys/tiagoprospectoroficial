@@ -91,21 +91,35 @@ export function buildMapRuntimeScript(): string {
   function lngLatFromTile(x,y,z){ var n=Math.pow(2,z); var lng=x/n*360-180; var lat=Math.atan(Math.sinh(Math.PI*(1-2*y/n)))*180/Math.PI; return {lat:lat,lng:lng}; }
   function init(el){
     if(el.getAttribute("data-pf-map-ready")==="1") return; el.setAttribute("data-pf-map-ready","1");
-    // FASE 7.10 — GOOGLE MAPS PRIMEIRO: quando o navegador permite (site publicado
-    // sem COEP), o iframe oficial output=embed é o mapa (interativo). Quando o
-    // COEP do editor bloqueia, o iframe não carrega a tempo e o mosaico interativo
-    // OSM assume (nunca fica em branco).
-    var gframe=el.parentElement && el.parentElement.querySelector("[data-pf-gmap]");
-    if(gframe){ (function(fr,host){
-      var ok=false;
-      fr.addEventListener("load",function(){ ok=true; host.style.visibility="hidden"; var z=host.parentElement && host.parentElement.querySelector("[data-pf-zoom]"); if(z) z.style.display="none"; });
-      setTimeout(function(){ if(ok) return; try{ fr.remove(); }catch(e){} host.style.visibility="visible"; },3500);
-    })(gframe, el); }
+    // MAPA ÚNICO E CONFIÁVEL: o mosaico OSM interativo (tiles + marcador + pan/zoom).
+    // Removido o iframe do Google: ele dispara "load" mesmo quando o mapa NÃO
+    // aparece (embed vazio/bloqueado) e o runtime escondia o mosaico por causa
+    // disso — resultado: mapa invisível em todos os sites. Quem quiser o Google
+    // Maps usa o botão "Abrir no Google Maps".
     var lat=parseFloat(el.getAttribute("data-lat")), lng=parseFloat(el.getAttribute("data-lng"));
     var z=parseInt(el.getAttribute("data-zoom")||"15",10);
     if(!isFinite(lat)||!isFinite(lng)) return;
+    // GOOGLE MAPS REAL (embed interativo) POR CIMA do mosaico OSM, que fica por
+    // baixo como FALLBACK: onde o Google for bloqueado (COEP do preview do editor)
+    // o OSM aparece; no site publicado o mapa do Google domina. Criado em runtime
+    // para valer também em sites antigos que não traziam o iframe no HTML.
+    try {
+      var host=el.parentElement;
+      if (host && !host.querySelector("[data-pf-gmap]")) {
+        var ifr=document.createElement("iframe");
+        ifr.setAttribute("data-pf-gmap","1"); ifr.setAttribute("title","Mapa");
+        ifr.setAttribute("loading","lazy"); ifr.setAttribute("referrerpolicy","no-referrer-when-downgrade");
+        ifr.setAttribute("allowfullscreen","");
+        // credentialless: permite embutir o Google Maps mesmo sob COEP (preview do
+        // editor) — sem isso o Chrome devolve ERR_BLOCKED_BY_RESPONSE e sobra o OSM.
+        ifr.setAttribute("credentialless","");
+        ifr.src="https://maps.google.com/maps?q="+encodeURIComponent(lat+","+lng)+"&z=16&output=embed";
+        ifr.style.cssText="position:absolute;inset:0;width:100%;height:100%;border:0;z-index:5;background:transparent";
+        host.appendChild(ifr);
+      }
+    } catch(e){ /* nunca quebra o mapa por causa do embed */ }
     el.style.position="relative"; el.style.width="100%"; el.style.height="100%"; el.style.minHeight="240px"; el.style.overflow="hidden"; el.style.touchAction="none"; el.style.cursor="grab"; el.style.background="#e5e7eb";
-    var stage=document.createElement("div"); stage.style.cssText="position:absolute;left:0;top:0;will-change:transform"; el.appendChild(stage);
+    var stage=document.createElement("div"); stage.style.cssText="position:absolute;left:0;top:0;width:100%;height:100%;will-change:transform"; el.appendChild(stage);
     var dx=0, dy=0, dragging=false, moved=false, startX=0, startY=0;
     function render(){
       stage.innerHTML="";
@@ -118,12 +132,12 @@ export function buildMapRuntimeScript(): string {
       for(var j=0;j<rows;j++){ for(var i=0;i<cols;i++){
         var X=sx+i, Y=sy+j; if(X<0||Y<0||X>=n||Y>=n) continue;
         var img=document.createElement("img"); img.alt=""; img.loading="lazy"; img.draggable=false;
-        // COEP (o site roda isolado por COOP/COEP no Vercel): imagens no-cors são
-        // BLOQUEADAS. O tile do OSM manda Access-Control-Allow-Origin:*, então
-        // carregar em modo CORS (crossOrigin=anonymous) faz o mapa aparecer.
-        img.crossOrigin="anonymous";
+        // Tiles OSM carregam em modo NO-CORS: o tile.openstreetmap.org NÃO envia
+        // Access-Control-Allow-Origin (só Cross-Origin-Resource-Policy: cross-origin).
+        // Forçar crossOrigin="anonymous" (modo CORS) faz o navegador BLOQUEAR os
+        // tiles → o mapa ficava só com o marcador. No-cors + CORP funciona sob COEP.
         img.src="https://tile.openstreetmap.org/"+z+"/"+X+"/"+Y+".png";
-        img.style.cssText="position:absolute;left:"+(i*TILE)+"px;top:"+(j*TILE)+"px;width:"+TILE+"px;height:"+TILE+"px";
+        img.style.cssText="position:absolute;left:"+(i*TILE)+"px;top:"+(j*TILE)+"px;width:"+TILE+"px;height:"+TILE+"px;max-width:none;max-height:none;display:block";
         stage.appendChild(img);
       }}
       var m=document.createElement("div");
@@ -131,6 +145,10 @@ export function buildMapRuntimeScript(): string {
       stage.appendChild(m);
       el.setAttribute("data-pf-zoom",String(z));
     }
+    // Re-renderiza quando o container ganhar/ mudar de tamanho (ex.: seção revelada
+    // depois, ou layout que muda) — sem isso os tiles ficam posicionados com 0×0.
+    var lastW=0,lastH=0;
+    if (typeof ResizeObserver!=="undefined"){ try{ new ResizeObserver(function(){ var w=el.clientWidth,h=el.clientHeight; if(w===lastW&&h===lastH) return; lastW=w; lastH=h; render(); }).observe(el); }catch(e){} }
     function apply(){ var c=tileXY(lat,lng,z); var sx=c.x-dx/TILE, sy=c.y-dy/TILE; var p=lngLatFromTile(sx,sy,z); lat=p.lat; lng=p.lng; dx=0; dy=0; render(); }
     el.addEventListener("pointerdown",function(e){ if(e.target&&e.target.getAttribute&&e.target.getAttribute("data-pf-ui")) return; dragging=true; moved=false; startX=e.clientX; startY=e.clientY; try{ el.setPointerCapture(e.pointerId); }catch(_){ } el.style.cursor="grabbing"; });
     el.addEventListener("pointermove",function(e){ if(!dragging) return; dx=e.clientX-startX; dy=e.clientY-startY; if(Math.abs(dx)+Math.abs(dy)>3) moved=true; stage.style.transform=stage.style.transform.replace(/translate\\([^)]*\\)/,"translate(0px,0px)"); var c=tileXY(lat,lng,z); var w=el.clientWidth||640,h=el.clientHeight||320; var cols=Math.ceil(w/TILE)+2,rows=Math.ceil(h/TILE)+2; var sx=Math.floor(c.x-cols/2),sy=Math.floor(c.y-rows/2); var baseX=-((c.x-sx)*TILE-w/2),baseY=-((c.y-sy)*TILE-h/2); stage.style.transform="translate("+(baseX+dx)+"px,"+(baseY+dy)+"px)"; });
@@ -151,10 +169,18 @@ export function buildMapRuntimeScript(): string {
 
 /** Injeta o runtime do mapa no index.html (idempotente). */
 export function injectMapRuntimeIntoHtml(html: string): string {
-  if (!html || html.includes("prospector-map-runtime")) return html;
+  if (!html) return html;
+  const anyRuntime = /<script\b[^>]*>(?:(?!<\/script>)[\s\S])*?(?:prospector-map-runtime|data-pf-map-ready)(?:(?!<\/script>)[\s\S])*?<\/script>/gi;
+  const encontrados = html.match(anyRuntime) ?? [];
+  // Já existe UM runtime e ele é o ATUAL (não esconde o mapa) → nada a fazer.
+  if (encontrados.length === 1 && !/visibility\s*=\s*["']?hidden/i.test(encontrados[0])) return html;
   const tag = `<script>${buildMapRuntimeScript()}</script>`;
-  const idx = html.toLowerCase().lastIndexOf("</body>");
-  return idx >= 0 ? `${html.slice(0, idx)}${tag}\n${html.slice(idx)}` : `${html}\n${tag}`;
+  // Remove TODAS as cópias (versões antigas escondiam o mosaico e deixavam
+  // data-pf-map-ready=1, o que fazia o script novo PULAR o elemento) e injeta UM
+  // runtime atual no fim do body.
+  const cleaned = html.replace(anyRuntime, "");
+  const idx = cleaned.toLowerCase().lastIndexOf("</body>");
+  return idx >= 0 ? `${cleaned.slice(0, idx)}${tag}\n${cleaned.slice(idx)}` : `${cleaned}\n${tag}`;
 }
 
 export interface StaticMapBlockOptions {
@@ -183,13 +209,16 @@ export function buildStaticMapBlock(business: BusinessContext, opts: StaticMapBl
   const address = (opts.address ?? (typeof business.address === "string" ? business.address : "")) || "";
   // FASE 7.10 — HTML usa atributos nativos e fecha TODAS as tags (iframe incluído).
   if (opts.syntax === "html" && point) {
-    const embedHtml = buildMapEmbedUrl(business);
     const dirs = mapsDirectionsUrl(business);
+    const embedHtml = buildMapEmbedUrl(business);
     const addr = address ? `<p style="margin:0 0 8px;font-size:13px">📍 ${esc(address)}</p>` : "";
     return [
       `<div class="relative w-full ${heightClass}" style="position:relative;width:100%;height:320px;overflow:hidden;border:1px solid rgba(0,0,0,.1);border-radius:12px;background:#e5e7eb">`,
-      embedHtml ? `  <iframe data-pf-gmap title="Mapa do negocio" src="${esc(embedHtml)}" loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" style="position:absolute;inset:0;width:100%;height:100%;border:0"></iframe>` : "",
       `  <div data-pf-map data-lat="${point.lat}" data-lng="${point.lng}" data-zoom="15" style="position:absolute;inset:0"></div>`,
+      // GOOGLE MAPS REAL: iframe oficial (`output=embed`) POR CIMA do mosaico OSM,
+      // que fica por baixo como fallback — quando o Google é bloqueado (COEP do
+      // preview) o mapa OSM aparece; no site publicado o Google interativo domina.
+      embedHtml ? `  <iframe data-pf-gmap title="Mapa do negocio" src="${esc(embedHtml)}" loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" style="position:absolute;inset:0;width:100%;height:100%;border:0;z-index:5;background:transparent"></iframe>` : "",
       `  <div data-pf-zoom style="position:absolute;right:8px;top:8px;z-index:10;display:flex;flex-direction:column;overflow:hidden;border:1px solid rgba(0,0,0,.1);border-radius:8px;background:rgba(255,255,255,.95);box-shadow:0 1px 3px rgba(0,0,0,.15)">`,
       `    <button type="button" data-pf-zoom-step="1" data-pf-ui="1" aria-label="Aproximar" style="height:32px;width:32px;font-size:18px;line-height:1;color:#262626;background:transparent;border:0">+</button>`,
       `    <button type="button" data-pf-zoom-step="-1" data-pf-ui="1" aria-label="Afastar" style="height:32px;width:32px;font-size:18px;line-height:1;color:#262626;background:transparent;border:0;border-top:1px solid rgba(0,0,0,.1)">−</button>`,
@@ -215,8 +244,9 @@ export function buildStaticMapBlock(business: BusinessContext, opts: StaticMapBl
 
   return [
     `<div className="relative w-full ${heightClass} overflow-hidden rounded-xl border border-black/10 bg-neutral-200" style={{ position: "relative", width: "100%", height: "320px", overflow: "hidden" }}>`,
-    `  <iframe data-pf-gmap title="Mapa do negocio" src="${esc(buildMapEmbedUrl(business) ?? "")}" loading="lazy" allowFullScreen referrerPolicy="no-referrer-when-downgrade" className="absolute inset-0 h-full w-full border-0" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }} />`,
     `  <div data-pf-map data-lat="${point.lat}" data-lng="${point.lng}" data-zoom="15" className="absolute inset-0" style={{ position: "absolute", inset: 0 }} />`,
+    // GOOGLE MAPS REAL por cima (mesma estratégia do bloco HTML): OSM por baixo.
+    buildMapEmbedUrl(business) ? `  <iframe data-pf-gmap title="Mapa do negocio" src="${esc(buildMapEmbedUrl(business) ?? "")}" loading="lazy" allowFullScreen referrerPolicy="no-referrer-when-downgrade" className="absolute inset-0 h-full w-full border-0" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0, zIndex: 5, background: "transparent" }} />` : "",
     `  <div data-pf-zoom className="absolute right-2 top-2 z-10 flex flex-col overflow-hidden rounded-lg border border-black/10 bg-white/95 shadow">`,
     `    <button type="button" data-pf-zoom-step="1" data-pf-ui="1" aria-label="Aproximar" className="h-8 w-8 text-lg leading-none text-neutral-800 hover:bg-neutral-100">+</button>`,
     `    <button type="button" data-pf-zoom-step="-1" data-pf-ui="1" aria-label="Afastar" className="h-8 w-8 border-t border-black/10 text-lg leading-none text-neutral-800 hover:bg-neutral-100">−</button>`,

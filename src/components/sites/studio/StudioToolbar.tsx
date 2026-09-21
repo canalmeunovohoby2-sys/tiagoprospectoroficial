@@ -31,6 +31,8 @@ export interface StudioCommercialActions {
   onCopyLink?: () => void;
   /** Botão de GitHub já existente (integração). */
   githubSlot?: ReactNode;
+  /** Botões de conexão (Vercel/Supabase) — renderizados na MESMA linha do GitHub. */
+  integrationsSlot?: ReactNode;
 }
 
 export interface StudioToolbarProps {

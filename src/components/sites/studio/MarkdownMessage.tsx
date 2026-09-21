@@ -24,7 +24,7 @@ export function MarkdownMessage({ text }: { text: string }) {
     table: ({ children }) => <table className="my-2 w-full border-collapse text-[12px]">{children}</table>,
     th: ({ children }) => <th className="border border-border/60 px-2 py-1 text-left font-semibold">{children}</th>,
     td: ({ children }) => <td className="border border-border/60 px-2 py-1">{children}</td>,
-    pre: ({ children }) => <pre className="my-2 overflow-x-auto rounded-lg bg-zinc-950 p-3 text-[12px] leading-relaxed text-emerald-100">{children}</pre>,
+          pre: ({ children }) => <pre className="my-2 max-w-full overflow-x-auto rounded-lg bg-zinc-950 p-3 text-[12px] leading-relaxed text-emerald-100">{children}</pre>,
     code: ({ className, children }) => {
       const block = typeof className === "string" && className.includes("language-");
       if (block) return <code className="font-mono">{children}</code>;

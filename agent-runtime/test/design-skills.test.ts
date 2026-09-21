@@ -3,9 +3,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  DESIGN_SKILLS, DESIGN_SKILLS_FULL, DESIGN_SKILL_TOPICS, designSkillsKnowledge,
+  DESIGN_SKILLS, DESIGN_SKILLS_FULL, DESIGN_SKILL_TOPICS, designSkillsKnowledge, DESIGN_FOUNDATIONS,
 } from "../src/studio/agent-core/design-skills";
 import { buildCoderTools } from "../src/studio/agent-core/agent-tools";
+
+describe("DESIGN_FOUNDATIONS · padrão premium determinístico (agência)", () => {
+  it("cobre hero como direção de arte, tipografia, jornada do negócio, mobile projetado e diferenciação", () => {
+    for (const k of ["HERO COMO PEÇA DE DIREÇÃO DE ARTE", "TIPOGRAFIA COM PRESENÇA", "ARQUITETURA NASCE DO NEGÓCIO", "MOBILE PROJETADO", "remover o NOME da empresa", "font-size grande NÃO substitui direção de arte", "PROFUNDIDADE PROPORCIONAL AO NEGÓCIO", "RITMO VISUAL"]) {
+      expect(DESIGN_FOUNDATIONS, k).toContain(k);
+    }
+  });
+});
 
 describe("design-skills · conhecimento INSTALADO (consultado sob demanda, sem prompt)", () => {
   it("cobre as técnicas-chave do brief", () => {

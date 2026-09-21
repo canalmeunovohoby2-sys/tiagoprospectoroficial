@@ -1,5 +1,5 @@
-import { ReactNode } from "react";
-import { Outlet, useNavigate } from "react-router-dom";
+import { useEffect, useState, ReactNode } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Moon, Sun, LogOut } from "lucide-react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
@@ -20,6 +20,12 @@ export function AppShell({ children }: { children?: ReactNode }) {
   const { user, signOut } = useAuth();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
+  // EDITOR DE SITES (/sites/:id): o menu lateral RECOLHE sozinho — a tela fica
+  // só com o chat e o preview. Fora do editor, o menu volta aberto.
+  const isSiteEditor = /^\/sites\/[^/]+\/?$/.test(location.pathname);
+  const [sidebarOpen, setSidebarOpen] = useState(!isSiteEditor);
+  useEffect(() => { setSidebarOpen(!isSiteEditor); }, [isSiteEditor]);
 
   const displayName = user?.email || user?.user_metadata?.full_name || "Tiago";
 
@@ -37,7 +43,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
   };
 
   return (
-    <SidebarProvider defaultOpen>
+    <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
       <div className="min-h-screen flex w-full">
         <AppSidebar />
         <div className="flex-1 flex flex-col min-w-0">

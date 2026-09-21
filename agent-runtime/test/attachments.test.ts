@@ -11,13 +11,25 @@ beforeAll(() => { root = mkdtempSync(join(tmpdir(), "prospector-attach-")); });
 afterAll(() => { rmSync(root, { recursive: true, force: true }); });
 
 describe("Attachments (5.26)", () => {
-  it("materializa imagem no workspace como data URL texto", () => {
+  it("copia o anexo para public/assets e expõe o caminho PÚBLICO (site realmente usa)", () => {
+    const r = materializeAttachments(root, [{ name: "logo.png", mediaType: "image/png", dataUrl: `data:image/png;base64,${png.toString("base64")}` }]);
+    expect(r.ok).toBe(true);
+    const a = r.attachments[0] as { name: string; publicPath?: string };
+    expect(a.publicPath).toBe(`/assets/${a.name}`);
+    expect(existsSync(join(root, "public", "assets", a.name))).toBe(true);
+    const buf = readFileSync(join(root, "public", "assets", a.name));
+    expect(buf.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+  });
+
+  it("materializa imagem no workspace como ARQUIVO BINÁRIO real (não a data URL em texto)", () => {
     const r = materializeAttachments(root, [{ name: "meu-pet.png", mediaType: "image/png", dataUrl: `data:image/png;base64,${png.toString("base64")}` }]);
     expect(r.ok).toBe(true);
     expect(r.attachments.length).toBe(1);
     expect(r.attachments[0].path).toMatch(/^assets\/meu-pet-\d+\.png$/);
-    const content = readFileSync(join(root, r.attachments[0].path), "utf8");
-    expect(content.startsWith("data:image/png;base64,")).toBe(true); // texto (sobrevive ao workspace)
+    const buf = readFileSync(join(root, r.attachments[0].path));
+    expect(buf.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a"); // PNG REAL no disco
+    expect(buf.length).toBe(png.length); // bytes reais (não o tamanho da data URL)
+    expect(r.attachments[0].bytes).toBe(png.length);
     expect(existsSync(join(root, "assets"))).toBe(true);
   });
 

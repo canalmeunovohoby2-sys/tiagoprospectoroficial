@@ -8,9 +8,20 @@ import { classifyToolResultFailure } from "../src/completion-guard";
 const mapSrc = readFileSync(join(process.cwd(), "src/studio/agent-core/static-map.ts"), "utf8");
 
 describe("FASE 7.9 · mapa sob COEP (fim do mapa branco)", () => {
-  it("os tiles do OSM são carregados em modo CORS (crossOrigin=anonymous)", () => {
-    // sem isso o browser bloqueia a imagem no site isolado (COOP/COEP) e o mapa fica branco
-    expect(mapSrc).toMatch(/img\.crossOrigin="anonymous"/);
+  it("o runtime cria o iframe do GOOGLE MAPS real por cima do mosaico (fallback OSM)", () => {
+    const mapSrc = readFileSync(join(process.cwd(), "src/studio/agent-core/static-map.ts"), "utf8");
+    expect(mapSrc).toContain("maps.google.com/maps");
+    expect(mapSrc).toContain("output=embed");
+    expect(mapSrc).toContain('data-pf-gmap');
+    // e a normalização NÃO troca o NOSSO iframe (idempotência)
+    const media = readFileSync(join(process.cwd(), "src/studio/agent-core/site-media.ts"), "utf8");
+    expect(media).toContain('/data-pf-gmap/i.test(m) ? m : repl');
+  });
+
+  it("os tiles do OSM são carregados em modo NO-CORS (CORP permite sob COEP; CORS forçado bloqueia)", () => {
+    // OSM NÃO envia Access-Control-Allow-Origin (só CORP) — forçar crossOrigin
+    // bloqueava os tiles e sobrava apenas o marcador. No-cors + CORP funciona.
+    expect(mapSrc).not.toMatch(/img\.crossOrigin="anonymous"/);
     expect(mapSrc).toContain("tile.openstreetmap.org");
   });
 

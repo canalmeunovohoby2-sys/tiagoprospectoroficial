@@ -4,9 +4,11 @@
 // assets/) são servidos como bytes decodificados — permite o Cline referenciar
 // <img src="assets/foto.png"> no browser QA de verdade.
 import { createServer } from "node:http";
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync, statSync, rmSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
+import { prepareServeDirForRoot } from "./studio/agent-core/visual-verify.js";
+import { buildReactProject } from "./studio/build.js";
 import { chromium, type Browser, type Page } from "playwright";
 import { MEASURE_STYLE_PROPS, type MeasuredElement, type ViewportInfo } from "./geometry.js";
 
@@ -48,6 +50,9 @@ export class BrowserSession {
   private page: Page | null = null;
   private server: ReturnType<typeof createServer> | null = null;
   private root: string;
+  /** Raiz REALMENTE servida: em React aponta para o build (HTML único). */
+  private serveRoot = "";
+  private tempServeDir = "";
   private currentPort = 0;
   private consoleLogs: string[] = [];
   private requestErrors: string[] = [];
@@ -55,6 +60,7 @@ export class BrowserSession {
 
   constructor(workspaceRoot: string) {
     this.root = resolve(workspaceRoot);
+    this.serveRoot = this.root;
     // Screenshots sempre em diretório temporário (nunca no workspace do projeto).
     this.screenshotDir = process.env.PROSPECTOR_SHOTS && process.env.PROSPECTOR_SHOTS.trim()
       ? resolve(process.env.PROSPECTOR_SHOTS)
@@ -83,14 +89,26 @@ export class BrowserSession {
   // Inicia servidor estático servindo apenas o workspace root.
   async startServer(): Promise<string> {
     if (this.server && this.currentPort) return `http://127.0.0.1:${this.currentPort}/`;
+    // PROJETO REACT: servir o BUILD REAL (HTML único) — os fontes `.tsx` crus são
+    // entregues como application/octet-stream e o navegador NÃO executa o site
+    // (era a tela branca que o agente via e ficava re-inspecionando). Reusa
+    // prepareServeDirForRoot (mesmo caminho determinístico do QA).
+    try {
+      const prepared = await prepareServeDirForRoot(this.root, buildReactProject);
+      if (prepared.dir !== this.root) {
+        this.serveRoot = prepared.dir;
+        this.tempServeDir = prepared.temp ?? "";
+      }
+    } catch { /* não é React ou build falhou: segue servindo o workspace */ }
+    const serveBase = this.serveRoot;
     const server = createServer((req, res) => {
       try {
         const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0]);
         let rel = urlPath.replace(/^\/+/, "");
         if (!rel) rel = "index.html";
         // Previna path traversal e acesso fora do root.
-        const target = resolve(this.root, rel);
-        if (target !== this.root && !target.startsWith(this.root + sep)) {
+        const target = resolve(serveBase, rel);
+        if (target !== serveBase && !target.startsWith(serveBase + sep)) {
           res.writeHead(403); res.end("forbidden"); return;
         }
         if (/\.env($|\.)/.test(target)) { res.writeHead(403); res.end("forbidden"); return; }
@@ -146,7 +164,7 @@ export class BrowserSession {
     this.page.on("requestfailed", (req) => {
       this.requestErrors.push(`${req.method()} ${req.url()} (${req.failure()?.errorText ?? "failed"})`);
     });
-    await this.page.goto(fullUrl, { waitUntil: "networkidle", timeout: 30_000 });
+    await this.page.goto(fullUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
     return this.inspectCurrent();
   }
 
@@ -381,7 +399,7 @@ export class BrowserSession {
     if (!this.page) throw new Error("Página não aberta.");
     this.consoleLogs = [];
     this.requestErrors = [];
-    await this.page.reload({ waitUntil: "networkidle", timeout: 30_000 });
+    await this.page.reload({ waitUntil: "domcontentloaded", timeout: 30_000 });
     return this.inspectCurrent();
   }
 
@@ -490,6 +508,8 @@ export class BrowserSession {
   async close(): Promise<void> {
     try { await this.page?.close(); } catch { /* noop */ }
     try { await this.browser?.close(); } catch { /* noop */ }
+    // Limpa o diretório do build temporário (quando servimos React buildado).
+    if (this.tempServeDir) { try { rmSync(this.tempServeDir, { recursive: true, force: true }); } catch { /* noop */ } this.tempServeDir = ""; this.serveRoot = this.root; }
     this.page = null;
     this.browser = null;
     if (this.server) {

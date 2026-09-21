@@ -15,11 +15,53 @@ export interface ChatAttachment {
   label?: string;
 }
 
+/** Dimensões reais do PNG/JPG (o agente dimensiona o layout sem precisar "ver"). */
+function imageSize(buf: Buffer, mediaType: string): { width: number; height: number } | null {
+  try {
+    if (/png$/i.test(mediaType) && buf.length >= 24 && buf.readUInt32BE(0) === 0x89504e47) {
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+    if (/jpe?g$/i.test(mediaType)) {
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xff) { i += 1; continue; }
+        const marker = buf[i + 1];
+        const len = buf.readUInt16BE(i + 2);
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+        }
+        i += 2 + len;
+      }
+    }
+  } catch { /* ignora */ }
+  return null;
+}
+
+/**
+ * O anexo foi REALMENTE usado no projeto? Verdadeiro quando o caminho público (ou o
+ * nome do arquivo) aparece em algum arquivo de código do site. Usado para exigir a
+ * aplicação (1 rodada de correção) e para NUNCA dizer "feito" sem referência real.
+ */
+export function attachmentApplied(files: Record<string, string>, attachments: MaterializedAttachment[]): boolean {
+  const images = attachments.filter((a) => /^image\//i.test(a.mediaType) && !/svg/i.test(a.mediaType));
+  if (!images.length) return true; // só imagens entram nesta exigência
+  const code = Object.entries(files ?? {})
+    .filter(([p]) => /\.(tsx|jsx|ts|js|html?|css)$/i.test(p))
+    .map(([, c]) => c)
+    .join("\n");
+  return images.some((a) => code.includes(a.publicPath ?? a.path) || code.includes(a.name));
+}
+
 export interface MaterializedAttachment {
   name: string;
   path: string;      // caminho real dentro do workspace (ex.: assets/meu-pet.png)
+  /** Caminho servido pelo site (/assets/<nome>, via public/). Use ESTE no código. */
+  publicPath?: string;
   mediaType: string;
   bytes: number;     // tamanho decodificado (para validação)
+  /** Dimensões reais (PNG/JPG) — ajuda o agente a dimensionar sem "ver". */
+  width?: number;
+  height?: number;
   dataUrl: string;   // conteúdo materializado (texto) — guardado no arquivo
 }
 
@@ -84,15 +126,42 @@ export function materializeAttachments(
     const safeName = `${slug}-${idx + 1}.${ext}`;
     if (!isAllowedName(safeName)) { errors.push(`Anexo ${idx}: nome não permitido.`); return; }
 
-    // Garante dataUrl com mediaType correto e grava como TEXTO no workspace.
-    const normalizedDataUrl = dataUrl.startsWith("data:") ? dataUrl : `data:${mediaType};base64,${m[3]}`;
+    // Grava o arquivo REAL no workspace (bytes decodificados), não a data URL como
+    // texto: o site referencia `assets/<nome>` e o agente lê o conteúdo de verdade.
+    // (Antes gravava a data URL em utf8 — o arquivo em disco era texto "data:image/…",
+    // o que corrompia a logo/foto e impedia o uso real no projeto.)
+    const isB64 = !!m[2];
+    const payload = m[3] ?? "";
+    let fileBuf: Buffer;
+    try {
+      fileBuf = isB64 ? Buffer.from(payload, "base64") : Buffer.from(decodeURIComponent(payload), "utf8");
+    } catch {
+      errors.push(`Anexo ${idx} ("${rawName || "?"}"): conteúdo inválido.`);
+      return;
+    }
+    if (fileBuf.length === 0 || fileBuf.length > MAX_BYTES) { errors.push(`Anexo ${idx} ("${rawName || "?"}"): vazio ou grande demais (>~2MB).`); return; }
+    const normalizedDataUrl = `data:${mediaType};base64,${isB64 ? payload : fileBuf.toString("base64")}`;
     const filePath = join(assetsDir, safeName);
-    writeFileSync(filePath, normalizedDataUrl, "utf8");
+    writeFileSync(filePath, fileBuf);
+    // CÓPIA PÚBLICA: o Vite serve `public/` na raiz, então `/assets/<nome>` funciona
+    // no site real (build/preview). Sem isso a logo existia no workspace mas NÃO
+    // aparecia no site renderizado.
+    let publicPath: string | undefined;
+    try {
+      const pubDir = join(workspaceRoot, "public", "assets");
+      mkdirSync(pubDir, { recursive: true });
+      writeFileSync(join(pubDir, safeName), fileBuf);
+      publicPath = `/assets/${safeName}`;
+    } catch { /* sem public/: segue apenas com o caminho do workspace */ }
+    const imgSize = imageSize(fileBuf, mediaType);
     out.push({
       name: safeName,
       path: `assets/${safeName}`,
+      publicPath,
       mediaType,
-      bytes: approx,
+      bytes: fileBuf.length,
+      width: imgSize?.width,
+      height: imgSize?.height,
       dataUrl: normalizedDataUrl,
     });
   });

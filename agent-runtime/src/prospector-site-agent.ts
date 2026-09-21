@@ -15,7 +15,7 @@ import { analyzeVisualEvidence } from "./visual-analysis.js";
 import { hasImageReferenceChange, requestsImageSwap, requestsFramingFix, editRegressionIssues } from "./regression-guard.js";
 import { buildEditSystemPrompt, buildGenerateSystemPrompt } from "./agent-identity.js";
 import { computeWorkEvidence, verificationToolsAfterLastEdit, EDIT_TOOLS, INSPECT_TOOLS, VERIFY_TOOLS, type WorkEvidence, type WorkEventLike } from "./work-evidence.js";
-import { researchEnabled, runSearchQuery, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
+import { researchEnabled, runSearchQuery, runFirecrawlSearch, runPageFetch, firecrawlEnabled, type ResearchOutcome, type ResearchTraceItem } from "./research.js";
 import { designSkillsKnowledge } from "./studio/agent-core/design-skills.js";
 import { runVisualVerification, prepareServeDirForRoot } from "./studio/agent-core/visual-verify.js";
 import { buildReactProject } from "./studio/build.js";
@@ -211,6 +211,9 @@ export interface ProspectorAgentOptions {
   branding?: boolean;
   /** habilita browser tools (Playwright) — browser real para QA do site. */
   enableBrowser?: boolean;
+  /** AUTONOMIA: "full" = o MODELO decide tudo (nenhum guard bloqueia a conclusão);
+   *  "guarded" = comportamento anterior (guards de conclusão/visual). */
+  autonomy?: "full" | "guarded";
   /** habilita a tool web_search (quando há chave de pesquisa configurada). */
   enableResearch?: boolean;
   /** pesquisa web de referência executada antes da missão (só quando disponível). */
@@ -370,24 +373,49 @@ export class ProspectorSiteAgent {
       },
     });
 
-    // web_search (5.26): pesquisa externa de referência/tendências — opcional e
-    // disponível apenas quando há chave configurada (nunca bloqueia o trabalho).
+    // web_search (5.26): pesquisa externa — Tavily e/ou Firecrawl (pool de chaves com
+    // failover). Vale para REFERÊNCIA de design E para informação ATUAL: o agente
+    // deve pesquisar antes de responder quando o dado pode ter mudado (hoje, agora,
+    // últimas notícias, preço atual, situação atual). NUNCA dizer que não tem acesso
+    // à web sem antes tentar esta ferramenta.
     const researchTools: unknown[] = [];
-    if (options.enableResearch !== false && researchEnabled()) {
+    if (options.enableResearch !== false && (researchEnabled() || firecrawlEnabled())) {
       researchTools.push(createTool({
         name: "web_search",
         description:
-          "Pesquisa na web por referências, tendências e técnicas de design do segmento (ex.: 'melhores sites de restaurante premium 2026', 'tendências web design gastronomia'). Use quando a pesquisa agregar valor à direção criativa ou à copy. NUNCA copie sites/layouts/textos encontrados — use apenas como referência para criar algo próprio e contextualizado.",
+          "Pesquisa na web (Tavily e/ou Firecrawl) e devolve resultados com título, URL e trecho. USE SEMPRE que a resposta depender de informação ATUAL ou verificável (hoje, agora, últimas notícias, recentemente, preço/situação atual, fatos recentes) e também para referências/tendências do segmento. Nunca diga que não tem acesso à web sem chamar esta ferramenta. Compare ao menos 2 fontes quando a informação for controversa e cite as URLs consultadas. NUNCA copie sites/layouts/textos encontrados — use como referência.",
         inputSchema: z.object({ query: z.string().describe("consulta curta e específica (máx. ~60 palavras)") }),
         execute: async (input: { query: string }) => {
-          const r = await runSearchQuery(input.query);
-          // Prova real de execução (sem expor secrets/conteúdo sensível).
-          this.researchTrace.push({ query: input.query.slice(0, 200), ok: r.ok, resultsCount: r.results.length, source: "tavily" });
+          // Tavily primeiro; se falhar (saldo/quota/erro) ou não houver chave →
+          // Firecrawl (provedor alternativo real). Nunca cai para resposta inventada.
+          let r = await runSearchQuery(input.query);
+          let used = "tavily";
+          if (!r.ok && firecrawlEnabled()) {
+            const fc = await runFirecrawlSearch(input.query);
+            if (fc.ok) { r = fc; used = "firecrawl"; }
+          }
+          this.researchTrace.push({ query: input.query.slice(0, 200), ok: r.ok, resultsCount: r.results.length, source: used });
           return r.ok
-            ? JSON.stringify({ ok: true, query: input.query, results: r.results })
-            : JSON.stringify({ ok: false, error: r.error ?? "web_search indisponível" });
+            ? JSON.stringify({ ok: true, query: input.query, provider: used, results: r.results })
+            : JSON.stringify({ ok: false, error: r.error ?? "pesquisa indisponível" });
         },
       }));
+      // web_fetch: ABRE uma página/fonte real e devolve o conteúdo (markdown) para o
+      // agente LER e comparar com outras fontes.
+      if (firecrawlEnabled()) {
+        researchTools.push(createTool({
+          name: "web_fetch",
+          description:
+            "Abre uma URL pública e devolve o conteúdo principal em texto (markdown) para leitura. Use para LER a fonte encontrada no web_search, seguir links, comparar páginas e extrair a informação relevante antes de responder.",
+          inputSchema: z.object({ url: z.string().describe("URL http(s) da página a abrir") }),
+          execute: async (input: { url: string }) => {
+            const r = await runPageFetch(input.url);
+            return r.ok
+              ? JSON.stringify({ ok: true, url: input.url, content: r.content })
+              : JSON.stringify({ ok: false, url: input.url, error: r.error ?? "não foi possível abrir a página" });
+          },
+        }));
+      }
     }
 
     // Hook antes do modelo: se houver visão real e um screenshot pendente,
@@ -436,7 +464,7 @@ export class ProspectorSiteAgent {
           };
         }
       }
-      if (name === "write_file" && (options.mode !== "generate" || options.hasBase) && !REBUILD_RE.test(this.currentInstruction) && this.writeSkips < 4) {
+      if (options.autonomy !== "full" && name === "write_file" && (options.mode !== "generate" || options.hasBase) && !REBUILD_RE.test(this.currentInstruction) && this.writeSkips < 4) {
         const path = typeof input?.path === "string" ? input.path : "";
         const content = typeof input?.content === "string" ? input.content : "";
         const clean = path.replace(/^\/+/, "").replace(/\.\//, "");
@@ -452,8 +480,9 @@ export class ProspectorSiteAgent {
       }
 
       // GUARDA ESTRUTURAL (FASE 7): reescrever um ARQUIVO EXISTENTE removendo
-      // stylesheet/scripts/estrutura/imagens sem intenção explícita é bloqueado.
-      if (name === "write_file" && (options.mode !== "generate" || options.hasBase) && !REBUILD_RE.test(this.currentInstruction) && this.writeSkips < 4) {
+      // stylesheet/scripts/estrutura/imagens sem intenção explícita é bloqueado
+      // (desativado em AUTONOMIA TOTAL: lá quem decide é o modelo).
+      if (options.autonomy !== "full" && name === "write_file" && (options.mode !== "generate" || options.hasBase) && !REBUILD_RE.test(this.currentInstruction) && this.writeSkips < 4) {
         const path = typeof input?.path === "string" ? input.path : "";
         const content = typeof input?.content === "string" ? input.content : "";
         const clean = path.replace(/^\/+/, "").replace(/\.\//, "");
@@ -482,6 +511,7 @@ export class ProspectorSiteAgent {
         work: this.currentToolEvents.length ? computeWorkEvidence(this.currentToolEvents) : undefined,
         visualIterations: this.visualCycles,
         maxVisualIterations: MAX_VISUAL_ITERATIONS_DEFAULT,
+        autonomy: options.autonomy === "full" ? "full" : "guarded",
         consoleErrors: this.lastConsoleErrors,
         brokenImages: this.lastBrokenImages,
       });
@@ -543,7 +573,10 @@ export class ProspectorSiteAgent {
     kind: string;
   }): Promise<string> {
     const modelText = String(input.modelReply ?? "").trim();
-    const needsRewrite = !modelText || input.unverified || !input.ok;
+    // AUTONOMIA TOTAL: a resposta do MODELO é a voz do chat — não reescrevemos por
+    // "não verificada" (o compositor só entra quando não há texto nenhum).
+    const autonomyFull = this.options.autonomy === "full";
+    const needsRewrite = !modelText || (!autonomyFull && (input.unverified || !input.ok));
     if (!needsRewrite) return modelText;
     const facts = [
       `PEDIDO DO USUARIO: ${input.instruction}`,

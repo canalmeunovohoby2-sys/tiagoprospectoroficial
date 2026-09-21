@@ -57,6 +57,16 @@ export function materializeWorkspace(root: string, files: FileMap): void {
     if (!abs || !existsSync(root)) continue;
     if (typeof content !== "string" || content.length > MAX_FILE_BYTES) continue;
     mkdirSync(join(abs, ".."), { recursive: true });
+    // ASSET como DATA URL (vindo da árvore/persistência) → grava os BYTES REAIS:
+    // o site (Vite/build) precisa de imagem de verdade no disco; texto `data:` no
+    // arquivo quebraria a renderização fora da sessão do browser do agente.
+    const dataUrl = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/s.exec(content.trim());
+    if (dataUrl && /\.(png|jpe?g|gif|webp|avif|ico|bmp|tiff?|pdf|woff2?|ttf|otf|mp4|webm|mp3|wav|ogg)$/i.test(path)) {
+      try {
+        const bytes = Buffer.from(dataUrl[2].replace(/\s+/g, ""), "base64");
+        if (bytes.length > 0 && bytes.length <= MAX_FILE_BYTES) { writeFileSync(abs, bytes); continue; }
+      } catch { /* grava como texto */ }
+    }
     writeFileSync(abs, content, "utf8");
   }
 }
@@ -75,6 +85,20 @@ export function readWorkspace(root: string): FileMap {
       } else if (entry.isFile()) {
         const rel = relative(root, full).split(sep).join("/");
         if (rel.length > 500 || isSensitivePath(rel)) continue;
+        // BINÁRIOS: ler como BYTES e expor como DATA URL — ler utf8 corrompia a
+        // imagem (todo byte inválido virava EF BF BD) e o arquivo salvo deixava de
+        // ser um JPEG/PNG válido. O data URL (ASCII) é o que o cliente persiste.
+        if (BINARY_ASSET_RE.test(rel)) {
+          try {
+            const bytes = readFileSync(full);
+            if (bytes.length > 0 && bytes.length <= MAX_FILE_BYTES) {
+              const ext = (rel.match(/\.[a-z0-9]+$/i)?.[0] ?? "").toLowerCase();
+              const mime = MIME_BY_EXT[ext] ?? "application/octet-stream";
+              out[rel] = `data:${mime};base64,${bytes.toString("base64")}`;
+            }
+          } catch { /* ignora */ }
+          continue;
+        }
         const content = readFileSync(full, "utf8");
         if (content.length <= MAX_FILE_BYTES) out[rel] = content;
       }
@@ -190,3 +214,43 @@ export function syncWorkspaceFromClient(
 }
 
 export { existsSync, statSync };
+
+/** Extensões que são assets binários (viram data URL na saída para o cliente). */
+const BINARY_ASSET_RE = /\.(png|jpe?g|gif|webp|avif|ico|bmp|tiff?|pdf|zip|gz|7z|woff2?|ttf|otf|eot|mp4|webm|mov|mp3|wav|ogg|wasm|psd)$/i;
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+  ".webp": "image/webp", ".avif": "image/avif", ".ico": "image/x-icon", ".bmp": "image/bmp",
+  ".svg": "image/svg+xml", ".pdf": "application/pdf", ".woff2": "font/woff2", ".woff": "font/woff",
+  ".ttf": "font/ttf", ".otf": "font/otf", ".mp4": "video/mp4", ".webm": "video/webm",
+  ".mp3": "audio/mpeg", ".wav": "audio/wav", ".zip": "application/zip",
+};
+
+/**
+ * Prepara o mapa de arquivos para o CLIENTE (NDJSON/`files` → árvore do Studio e
+ * persistência). Assets binários NÃO podem ir como texto cru (o PNG quebrava o
+ * Postgres: "unsupported Unicode escape sequence"), mas também NÃO podem sumir —
+ * senão o arquivo não aparece na árvore do projeto. Solução: binário vira
+ * **data URL (base64, ASCII)**; a materialização no runtime converte de volta para
+ * bytes reais no disco a cada execução. Strings com NUL são descartadas.
+ */
+export function clientSafeFiles(files: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [p, c] of Object.entries(files ?? {})) {
+    if (typeof c !== "string") continue;
+    if (BINARY_ASSET_RE.test(p)) {
+      if (c.startsWith("data:")) { out[p] = c; continue; }          // já é ASCII seguro
+      const ext = (p.match(/\.[a-z0-9]+$/i)?.[0] ?? "").toLowerCase();
+      const mime = MIME_BY_EXT[ext] ?? "application/octet-stream";
+      try {
+        // Converte os BYTES (lidos como utf8) para base64 — NÃO checamos NUL aqui:
+        // todo binário contém NUL e precisa chegar à árvore como data URL.
+        out[p] = `data:${mime};base64,${Buffer.from(c, "utf8").toString("base64")}`;
+      } catch { /* ignora */ }
+      continue;
+    }
+    if (c.includes("\u0000")) continue;
+    out[p] = c;
+  }
+  return out;
+}

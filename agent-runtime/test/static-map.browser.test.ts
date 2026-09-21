@@ -17,7 +17,11 @@ function jsxToHtml(block: string): string {
 
 describe("mapa interativo · REAL (Chromium) sob COEP: tiles + pan + zoom", () => {
   it("carrega os tiles e responde a arrastar e ao zoom (+/-)", async () => {
-    const block = jsxToHtml(buildStaticMapBlock(BUSINESS)!);
+    // Sob COEP o iframe oficial do Google é bloqueado/ausente (o runtime esconderia o
+    // host do mosaico ao detectar load): medimos o cenário COEP EFETIVO — mosaico OSM.
+    // Bloco em sintaxe HTML (o MESMO que a normalização injeta em .html) — sem o
+    // conversor frágil de JSX, que perdia o container do mapa.
+    const block = buildStaticMapBlock(BUSINESS, { syntax: "html" })!.replace(/<iframe[\s\S]*?<\/iframe>/gi, "");
     const page = `<!doctype html><style>html,body{margin:0}#wrap{width:900px;height:420px}</style><div id="wrap">${block}</div><script>${buildMapRuntimeScript()}</script>`;
 
     const server = createServer((_req, res) => {
@@ -35,10 +39,21 @@ describe("mapa interativo · REAL (Chromium) sob COEP: tiles + pan + zoom", () =
     const browser = await chromium.launch();
     const tab = await browser.newPage({ viewport: { width: 1000, height: 600 } });
     await tab.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
-    await tab.waitForTimeout(6000);
 
     const map = tab.locator("[data-pf-map]");
     await expect.poll(async () => map.count(), { timeout: 10000 }).toBe(1);
+    // CONDICOES REAIS (sem sleep): container com area + tiles com naturalWidth > 0.
+    const rectOf = () => tab.evaluate(() => {
+      const el = document.querySelector("[data-pf-map]") as HTMLElement | null;
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+    await expect.poll(async () => { const r = await rectOf(); return r ? Math.min(r.width, r.height) : 0; }, { timeout: 15000 }).toBeGreaterThan(50);
+    await expect.poll(async () => tab.evaluate(() => {
+      const imgs = Array.from(document.querySelectorAll("[data-pf-map] img")) as HTMLImageElement[];
+      return imgs.filter((i) => i.naturalWidth > 0).length;
+    }), { timeout: 20000 }).toBeGreaterThan(0);
 
     // 1) MAPA APARECE: os tiles (imagens) carregaram de verdade.
     const tiles = await tab.evaluate(() => {
@@ -59,7 +74,7 @@ describe("mapa interativo · REAL (Chromium) sob COEP: tiles + pan + zoom", () =
     await expect.poll(async () => await map.getAttribute("data-pf-zoom"), { timeout: 5000 }).toBe(zoomBefore);
 
     // 3) INTERATIVO — ARRASTAR (pan): o arrasto recentraliza o mapa (muda a latitude/longitude efetiva).
-    const box = (await map.boundingBox())!;
+    const box = (await rectOf())!;
     const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
     await tab.mouse.move(center.x, center.y);
     await tab.mouse.down();

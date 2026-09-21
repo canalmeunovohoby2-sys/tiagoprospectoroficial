@@ -52,7 +52,6 @@ export function StudioCommercialBar({ commercial: c, onOpenHistory, onGenerateSi
     { id: "history", label: "Histórico", hint: "Histórico de versões", icon: <History className="h-3.5 w-3.5" />, onClick: onOpenHistory ?? (() => {}), show: !!onOpenHistory },
     { id: "build", label: "Build", hint: "Build de produção (React)", icon: c.building ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Hammer className="h-3.5 w-3.5" />, onClick: c.onBuild ?? (() => {}), disabled: !!c.building, show: c.canBuild },
     { id: "pdf", label: "Proposta (PDF)", hint: "Gerar proposta em PDF", icon: c.busyAction === "pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />, onClick: c.onProposalPdf, disabled: !!c.busyAction || !c.canPublish, show: true },
-    { id: "video", label: "Vídeo (MP4)", hint: "Gerar vídeo de apresentação (MP4)", icon: c.generatingVideo ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Video className="h-3.5 w-3.5" />, onClick: c.onGenerateVideo, disabled: c.generatingVideo || !c.canVideo, show: true },
   ].filter((i) => i.show);
 
   return (
@@ -147,6 +146,7 @@ export function StudioCommercialBar({ commercial: c, onOpenHistory, onGenerateSi
         <span>{c.canUnpublish && c.canPublish ? "Publicar versão" : "Publicar"}</span>
       </button>
 
+      {c.integrationsSlot}
       {c.githubSlot}
     </div>
   );

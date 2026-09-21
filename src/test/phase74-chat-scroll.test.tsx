@@ -90,4 +90,22 @@ describe("FASE 7.4 · auto-scroll preso ao fim (stick to bottom)", () => {
     const preview = read("src/components/sites/studio/WebContainerPreview.tsx");
     expect(preview).toMatch(/device === "desktop" \? \{ width: "100%", height: "100%" \} : \{ width: frameSize\.width/);
   });
+
+  it("ROLAGEM: o chat tem SOMENTE rolagem vertical (sem barra horizontal)", () => {
+    const chat = read("src/components/sites/studio/UnifiedChatPanel.tsx");
+    // o scroller do chat clipe horizontalmente e quebra palavras longas (caminhos/URLs)
+    expect(chat).toMatch(/overflow-y-auto overflow-x-hidden/);
+    expect(chat).toContain("[overflow-wrap:anywhere]");
+    // nenhum scroller do chat usa overflow-x-auto (isso é só para blocos de código)
+    const scrollers = chat.match(/className="[^"]*overflow-y-auto[^"]*"/g) ?? [];
+    expect(scrollers.length).toBeGreaterThan(0);
+    for (const cls of scrollers) expect(cls).not.toContain("overflow-x-auto");
+  });
+
+  it("CHAT-DECISÃO: mensagem genérica de espera foi eliminada e há resultado real por tool", () => {
+    const live = read("agent-runtime/src/studio/live-events.ts");
+    expect(live).not.toContain("Analisando a próxima etapa");
+    expect(live).toContain("resultForTool");
+    expect(live).toContain("Verificação visual concluída.");
+  });
 });

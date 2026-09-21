@@ -11,13 +11,16 @@
 // pensou (resumido), sem expor nomes de ferramentas nem passos internos.
 
 import type { StudioInteractionItem, StudioThoughtItem } from "./interactions";
+import { looksInternalContext } from "./internalContext";
 
 const MAX_THOUGHT_CHARS = 1_200;
 
 /** Pensamentos reais do agente, na ordem em que aconteceram (vazios descartados). */
 export function thoughtsOf(items: StudioInteractionItem[] | undefined): StudioThoughtItem[] {
   return (items ?? []).filter(
-    (i): i is StudioThoughtItem => i.kind === "thought" && !!i.content.trim(),
+    // Contexto interno NUNCA é exibido como pensamento (defesa em profundidade —
+    // o runtime já bloqueia na origem).
+    (i): i is StudioThoughtItem => i.kind === "thought" && !!i.content.trim() && !looksInternalContext(i.content),
   );
 }
 

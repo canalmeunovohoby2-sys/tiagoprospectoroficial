@@ -164,3 +164,55 @@ export function designSkillsKnowledge(topic?: string | null): string {
   if (partial.length > 0 && partial.length <= 4) return render(partial);
   return `TÓPICOS DISPONÍVEIS: ${DESIGN_SKILL_TOPICS.join(", ")}\n\n${DESIGN_SKILLS_FULL}`;
 }
+
+/**
+ * FUNDAÇÕES DE DESIGN — injetadas DETERMINISTICAMENTE no prompt de geração.
+ * Diferente da tool `design_skills` (consulta sob demanda), este bloco SEMPRE
+ * chega ao modelo quando um site novo vai ser gerado: princípios e critérios de
+ * qualidade, NUNCA um template. A direção criativa específica do projeto (que
+ * vem na missão) tem precedência estética — aqui está apenas a EXECUÇÃO premium.
+ * Fonte: skills-pack-agente-senior (01-core-design + 02-conversao-conteudo +
+ * orquestração), condensado para não inchar o contexto.
+ */
+export const DESIGN_FOUNDATIONS = `PRINCÍPIOS DE DESIGN PREMIUM (base de qualidade obrigatória — princípios, NUNCA template):
+A DIREÇÃO CRIATIVA DESTE PROJETO (paleta, arquétipo, tipografia, composição) vem na missão e TEM PRECEDÊNCIA estética. Estes princípios garantem a EXECUÇÃO premium de qualquer direção.
+
+1. DESIGN SYSTEM ANTES DE CODAR: tokens primeiro (1 cor de marca + 1 accent reservado ao CTA + neutros; escala de 5–9 tons da primária). Máx. 2 famílias tipográficas (1 display com personalidade + 1 corpo legível), escala modular (14/16/18/20/24/32/40/56), espaçamento em base 4/8, respiro generoso entre seções, raio de borda e sombras consistentes e sutis. Nunca cores default de framework sem intenção.
+
+2. HIERARQUIA E COMPOSIÇÃO: em 3s o visitante entende (1) o que é o negócio, (2) por que confiar, (3) onde clicar. Um elemento dominante por seção; a cor de destaque é exclusiva do CTA principal; espaço negativo agrupa/separa; alinhamento a uma grade invisível; ritmo visual variado (grids assimétricos, split, full-bleed, editorial) — NUNCA a sequência genérica navbar→hero→3 cards→…→footer por inércia.
+
+3. HERO COMO PEÇA DE DIREÇÃO DE ARTE: responda em segundos quem é a empresa, o que ela oferece, por que isso importa e a ação principal — sem parede de texto. PROIBIDO o padrão automático "título centralizado + texto + botão + imagem abaixo". Compose de verdade: assimetria, imagem dominante (ou de fundo com overlay legível), divisão editorial, camadas, tipografia expressiva, blocos de informação, CTA integrado à composição.
+
+4. COPY DE CONVERSÃO: escreva sobre o RESULTADO do cliente, não sobre a empresa. Especificidade vence generalidade (números/prazos/garantias reais); banir jargão vazio ("compromisso com a qualidade"); PAS (problema→agitação→solução) para dores; falar com "você"; um CTA por seção no tom do funil.
+
+5. PROVA SOCIAL (somente dados reais): hierarquia — números concretos > selos/certificações > depoimentos específicos (nome/foto/resultado) > avaliações externas. Nunca inventar depoimentos, números ou estrelas.
+
+6. FAQ COMO QUEBRA DE OBJEÇÃO (quando o segmento exigir): perguntas na linguagem real do cliente cobrindo preço, garantia, segurança e prazo; respostas curtas; <details>/accordion leve.
+
+7. MOBILE PROJETADO (não versão reduzida do desktop): reavalie ordem dos elementos, densidade, hero, tipografia fluida (clamp), imagens, navegação, espaçamento e CTAs em 390px — o resultado precisa continuar premium. Alvos de toque ≥44–48px; menu mobile com toggle seguro (abre, link fecha, Esc fecha); nunca overflow horizontal; evitar 100vh (usar 100dvh); testar mobile, tablet e desktop.
+
+8. ACESSIBILIDADE (WCAG 2.1 AA): contraste ≥4.5:1 (≥3:1 texto grande); HTML semântico (header/nav/main/footer, <button> real, hierarquia h1–h6 sem pular); alt descritivo (decorativas alt=""); :focus-visible estilizado; <label> em todo input.
+
+9. PERFORMANCE (Core Web Vitals): toda imagem com width/height e loading="lazy" (hero eager); font-display: swap; animar apenas transform/opacity; scripts de terceiros adiados; nenhuma biblioteca pesada sem necessidade.
+
+10. MICROINTERAÇÕES/MOTION: sutis e funcionais (hover 150–250ms, reveal com stagger 60–100ms, easing suave); respeitar prefers-reduced-motion; decorativos com pointer-events:none atrás do conteúdo.
+
+11. IMAGENS: derive a INTENÇÃO da imagem da direção (sujeito, atmosfera, tratamento, enquadramento); prioridade: foto real do negócio > imagem do sistema > ilustrativa coerente; trate na composição (crop, object-position, overlay); nunca imagem quebrada nem placeholder evidente.
+
+12. SEO ON-PAGE: um único <h1>; <title> único e persuasivo + meta description; JSON-LD LocalBusiness (quando houver NAP real); NAP consistente com cidade/UF.
+
+13. PERCEPÇÃO PREMIUM: espaçamento generoso e consistente; coerência total (1 estilo de borda, 1 linguagem de ícones, mesmo tratamento fotográfico); micro-detalhes resolvidos; o site parece feito PARA ESTA empresa.
+
+14. EXPERIÊNCIA POR SEGMENTO: cada vertical tem expectativas, seções e objeções próprias — derive a arquitetura do SEGMENTO + DIREÇÃO do projeto, nunca de uma estrutura fixa.
+
+15. ANTI-TEMPLATE: dois clientes nunca recebem a mesma estrutura, paleta, ordem ou textos. Efeitos (glass/glow/marquee/parallax/dark mode) são FERRAMENTAS OPCIONAIS: só entram quando a DIREÇÃO do projeto pedir — nunca automaticamente. Qualidade = direção de arte + composição + hierarquia + execução.
+
+16. TIPOGRAFIA COM PRESENÇA: escolha pares coerentes com o segmento (display + corpo; serifada editorial, geométrica, grotesk…) — nunca a mesma fonte neutra para tudo. Trabalhe escala, peso, line-height, tracking, quebra de linha e ritmo vertical; títulos com presença visual. font-size grande NÃO substitui direção de arte.
+
+17. ARQUITETURA NASCE DO NEGÓCIO: a ordem das seções segue a JORNADA do segmento (ex.: indústria → capacidade/aplicações/processo/prova; clínica → especialidades/profissionais/estrutura/dúvidas/agendamento; serviço premium → posicionamento/portfólio/processo/prova). NUNCA a sequência fixa hero→3 cards→sobre→serviços→depoimentos→FAQ→contato→footer por inércia.
+
+18. DIFERENCIAÇÃO (pergunta obrigatória antes de finalizar): "se eu remover o NOME da empresa, este site ainda parece desenhado especificamente para ESTE segmento?" Se a resposta for não, refine direção, composição e conteúdo antes de finalizar.
+
+19. PROFUNDIDADE PROPORCIONAL AO NEGÓCIO: antes de finalizar, avalie "este site explica suficientemente POR QUE esta empresa merece atenção e oferece informação suficiente para gerar confiança e conversão?" Se não, desenvolva a experiência usando o material real: proposta de valor, diferenciais, serviços/produtos, aplicações, benefícios, processo, estrutura, portfólio/cases, área de atendimento, FAQ/objeções, localização — SOMENTE o que fizer sentido para o negócio. Uma indústria comunica mais que hero→serviços→sobre→contato; um negócio pequeno pode ser naturalmente menor. NUNCA criar conteúdo falso (números, clientes, depoimentos, prêmios) para preencher espaço.
+
+20. RITMO VISUAL (nenhuma monotonia): seções nunca em sequência interminável de cards idênticos ou três colunas repetidas — alterne composição (editorial, imagem+conteúdo, grids assimétricos, números/informações, cases, blocos de destaque, full-width, cards só quando úteis). Cada seção pertence ao MESMO projeto (mesmo sistema) com ritmo e hierarquia próprios.`;

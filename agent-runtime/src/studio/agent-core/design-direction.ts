@@ -261,9 +261,14 @@ const PERSONALITIES: Array<{ match: RegExp; p: Personality }> = [
   },
 ];
 
-export function personalityFor(segment: string): Personality {
-  for (const { match, p } of PERSONALITIES) if (match.test(segment)) return p;
-  return DEFAULT_PERSONALITY;
+export function personalityFor(segment: string, seed?: string): Personality {
+  const compat = PERSONALITIES.filter(({ match }) => match.test(segment));
+  if (compat.length === 0) return DEFAULT_PERSONALITY;
+  // DETERMINÍSTICO POR CLIENTE (não por segmento): dois clientes do MESMO segmento
+  // podem receber personalidades diferentes (dentro das compatíveis com o segmento)
+  // — evita que todos os sites do mesmo ramo tenham a mesma "cara".
+  if (!seed || compat.length === 1) return compat[0].p;
+  return pick(compat, seed, "personality").p;
 }
 
 // FASE 3 — hero/estratégia quando existem FOTOS REAIS (o negócio é o visual).
@@ -332,7 +337,7 @@ export function buildDesignDirection(business: DesignBusiness, seedSource?: stri
   const city = String(business?.city ?? "").trim();
   const seed = String(seedSource ?? `${name}|${segment}|${city}`).trim() || "prospector";
 
-  const p = personalityFor(`${segment} ${business?.category ?? ""}`);
+  const p = personalityFor(`${segment} ${business?.category ?? ""}`, seed);
   const realPhotos = Array.isArray(business?.photos) && business.photos.length > 0;
   const brandColors = (business?.brandColors ?? []).map((c) => String(c).toLowerCase()).filter((c) => /^#[0-9a-f]{3,6}$/.test(c));
 
@@ -364,6 +369,7 @@ export function buildDesignDirection(business: DesignBusiness, seedSource?: stri
 
   const block = [
     "DIREÇÃO CRIATIVA DESTE NEGÓCIO (consequência dos DADOS REAIS deste cliente — obrigatória; NÃO é template e NÃO use a mesma para outro cliente):",
+    "- Esta direção é o PONTO DE PARTIDA da SUA análise, não uma ordem fixa: VOCÊ decide a identidade visual (paleta, tipografia, composição, ritmo, imagens e estrutura) a partir do segmento, público, posicionamento e material REAL deste negócio. Ela deve parecer própria deste cliente e DIFERENTE de qualquer outro — inclusive de outro cliente do mesmo segmento.",
     `- Conceito visual: ${visualConcept}.`,
     `- Personalidade da marca: ${p.label} — ${p.traits}.`,
     p.palette ? `- Paleta: ${p.palette}.` : "",

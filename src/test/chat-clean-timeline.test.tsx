@@ -75,6 +75,14 @@ describe("FASE UX · nada de jargão técnico no chat", () => {
     expect(page).toContain("Não consegui aplicar essa alteração no site");
   });
 
+  it("o erro sem arquivos aplicados traz a CAUSA REAL (fim do 'Diga continue')", () => {
+    const guard = read("agent-runtime/src/completion-guard.ts");
+    expect(guard).not.toContain('Diga \\"continue\\"');
+    expect(guard).toContain("A execução terminou sem aplicar nenhum arquivo");
+    const page = read("src/pages/SiteProjectPage.tsx");
+    expect(page).toContain('const real = String(agentRes.errors?.[0] ?? "").trim();');
+  });
+
   it("o card 'Executando agora' é limpo no fim da execução", () => {
     const page = read("src/pages/SiteProjectPage.tsx");
     // a ocorrência de LIMPEZA é a do finally (a última do arquivo)

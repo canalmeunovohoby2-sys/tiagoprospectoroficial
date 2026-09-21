@@ -411,7 +411,7 @@ export async function generateSiteVideo(input: {
   const sel = await resolveEditorRuntime();
   if (sel.state === "none") return { ok: false, status: "error", error: "not_configured" };
   if (sel.state === "ollama_local_missing") {
-    return { ok: false, status: "error", error: "Agent Runtime Local não está em execução neste computador." };
+    return { ok: false, status: "error", error: "O agente local não está iniciado neste computador. Inicie o Agent Runtime (INICIAR-TIAGOPROSPECTOR.bat) e tente novamente." };
   }
   if (!input.files || !Object.keys(input.files).some((k) => k.endsWith("index.html"))) {
     return { ok: false, status: "error", error: "O projeto não tem index.html — não há site para gravar." };
@@ -612,7 +612,15 @@ export async function activeAiProviderId(): Promise<string | null> {
 
 async function localRuntimeAvailable(): Promise<boolean> {
   try {
-    const res = await fetch(LOCAL_RUNTIME_HEALTH, { signal: AbortSignal.timeout(1_500) });
+    // SITE PUBLICADO (Vercel/HTTPS) → o agente roda NESTE computador. O Chrome aplica
+    // Local Network Access: na primeira vez ele mostra o prompt de permissão e a
+    // requisição fica pendente — por isso o timeout é folgado (8s) e a tentativa é
+    // disparada por ação do usuário ("Conectar agente"). `targetAddressSpace: "local"`
+    // classifica a requisição como rede local (navegadores que não suportam ignoram).
+    const res = await fetch(LOCAL_RUNTIME_HEALTH, {
+      signal: AbortSignal.timeout(8_000),
+      targetAddressSpace: "local",
+    } as RequestInit & { targetAddressSpace?: "local" | "private" | "public" });
     if (!res.ok) return false;
     const j = (await res.json()) as { ok?: boolean };
     return j.ok === true;
@@ -648,15 +656,68 @@ export type RuntimeSelection =
   | { state: "ollama_local_missing"; provider: string }
   | { state: "none"; provider: string | null };
 
+// ===== ONDE o Agent Runtime roda — preferência EXPLÍCITA, independente do provider =====
+// O provider de IA (DeepSeek/Gemini/Ollama…) e o local de execução do runtime são
+// conceitos separados. Padrão "auto" = comportamento histórico (Ollama exige local).
+export type AgentRuntimeMode = "auto" | "local" | "remote";
+const AGENT_RUNTIME_MODE_KEY = "prospector.agentRuntimeMode";
+
+/** Preferência salva neste navegador ("auto" quando não houver nada salvo). */
+export function getAgentRuntimeMode(): AgentRuntimeMode {
+  try {
+    const raw = localStorage.getItem(AGENT_RUNTIME_MODE_KEY);
+    return raw === "local" || raw === "remote" ? raw : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+export function setAgentRuntimeMode(mode: AgentRuntimeMode): void {
+  try { localStorage.setItem(AGENT_RUNTIME_MODE_KEY, mode); } catch { /* noop */ }
+}
+
+/** Saúde do runtime local (para a tela de configuração). */
+export function localRuntimeHealth(): Promise<boolean> {
+  return localRuntimeAvailable();
+}
+
+/**
+ * Decisão PURA (testável) entre runtime LOCAL e REMOTO.
+ * - "auto" (histórico): Ollama → local (e erro explícito se estiver fora do ar);
+ *   qualquer outro provider → nuvem.
+ * - "local": QUALQUER provider usa o runtime local; se ele não estiver no ar,
+ *   cai para a nuvem quando existir (nunca travar o fluxo do usuário).
+ * - "remote": força a nuvem (mesmo com Ollama).
+ */
+export function decideRuntimeMode(input: {
+  mode: AgentRuntimeMode;
+  provider: string | null;
+  localAvailable: boolean;
+  remoteUrl: string | null;
+}): RuntimeSelection {
+  const { mode, provider, localAvailable, remoteUrl } = input;
+  const asRemote = (): RuntimeSelection =>
+    remoteUrl ? { state: "remote", url: remoteUrl, provider: provider ?? "remote" } : { state: "none", provider };
+  const asLocal = (): RuntimeSelection => ({ state: "local", url: LOCAL_AGENT_RUNTIME_URL, provider: provider ?? "local" });
+  // NUVEM só quando o usuário ESCOLHE "Nuvem" explicitamente.
+  if (mode === "remote") return asRemote();
+  // PADRÃO (inclusive produção/Vercel): o agente roda NESTE COMPUTADOR. Se o runtime
+  // local não estiver no ar, devolve "none" (a UI orienta a iniciar o agente) — NUNCA
+  // cai silenciosamente para a nuvem/Railway.
+  if (localAvailable) return asLocal();
+  if (provider === "ollama") return { state: "ollama_local_missing", provider };
+  return { state: "none", provider };
+}
+
 /** Decide qual runtime o agente DEVE usar nesta request. */
 export async function resolveEditorRuntime(): Promise<RuntimeSelection> {
+  const mode = getAgentRuntimeMode();
   const provider = await activeAiProviderId();
-  if (provider === "ollama") {
-    if (await localRuntimeAvailable()) return { state: "local", url: LOCAL_AGENT_RUNTIME_URL, provider };
-    return { state: "ollama_local_missing", provider };
-  }
-  const remote = await remoteRuntimeUrl();
-  return remote ? { state: "remote", url: remote, provider: provider ?? "remote" } : { state: "none", provider };
+  // O runtime DESTE COMPUTADOR é o caminho (inclusive no site publicado na Vercel).
+  const localAvailable = await localRuntimeAvailable();
+  // A nuvem só é consultada quando o usuário escolheu "Nuvem" (modo remote).
+  const remoteUrl = mode === "remote" ? await remoteRuntimeUrl() : null;
+  return decideRuntimeMode({ mode, provider, localAvailable, remoteUrl });
 }
 
 /** URL do Agent Runtime (editor completo/Cline). Roteia Local quando Ollama. */

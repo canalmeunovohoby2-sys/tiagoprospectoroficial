@@ -40,6 +40,7 @@ import { isConversationResult, type RunResultLike } from "@/lib/studio/runOutcom
 import { useStudioChat } from "@/hooks/studio/useStudioChat";
 import type { StudioStreamEvent, StudioFilesReadyEvent } from "@/lib/studio/streamEvents";
 import { GitHubProjectButton } from "@/components/app/GitHubProjectButton";
+import { StudioIntegrationsButtons } from "@/components/sites/studio/StudioIntegrationsButtons";
 import { buildStrategyInstruction, strategyById } from "@/lib/siteStrategies";
 import { extractSitePalette } from "@/lib/sitePalette";
 import { ProposalWhatsAppDialog } from "@/components/app/ProposalWhatsAppDialog";
@@ -912,9 +913,10 @@ export default function SiteProjectPage() {
           }
         }
         if (!agentErr && agentRes && agentRes.status === "error" && (agentRes.errors?.length ?? 0) > 0 && !agentRes.changed) {
-          // O agente reportou BLOQUEIO real sem alterar nada. Honestidade sem jargão:
-          // o detalhe técnico fica nos logs/payloads internos — aqui vai só o humano.
-          pushReply("⚠ Não consegui aplicar essa alteração no site — nada foi modificado. Me diga o que deseja de outro jeito (ou confira o nome/imagem exatos) que eu tento novamente.");
+          // Mostra a CAUSA REAL reportada pelo runtime (mensagem já humanizada lá);
+          // a mensagem genérica fica apenas como último recurso.
+          const real = String(agentRes.errors?.[0] ?? "").trim();
+          pushReply(real || "⚠ Não consegui aplicar essa alteração no site — nada foi modificado. Me diga o que deseja de outro jeito (ou confira o nome/imagem exatos) que eu tento novamente.");
           stopProgress();
           setAgentStep(null);
           setAiRunning(false);
@@ -1087,10 +1089,8 @@ export default function SiteProjectPage() {
         summary,
         workspaceRevision: workspaceRevRef.current ?? undefined,
       });
-      // C2: representa o commit na conversa quando disponível (sem C4 novo pipeline).
-      if (res?.ok && res.committed) {
-        studioChat.appendCommit({ message: res.message ?? summary ?? "Snapshot do projeto", hash: res.short });
-      }
+      // O checkpoint Git continua sendo criado (histórico no diálogo de versões),
+      // mas NÃO é mais exibido como item no chat da conversa.
     } catch {
       /* git indisponível não impede salvar */
     }
@@ -1138,19 +1138,28 @@ export default function SiteProjectPage() {
     summary?: string,
   ): Promise<{ ok: boolean; created: boolean; error?: string }> {
     if (!project?.id) return { ok: false, created: false, error: "Projeto não carregado." };
-    if (isReactProject) return persistReactAutosave(filesToSave, summary);
-    const hasFiles = filesToSave && Object.keys(filesToSave).length > 0;
+    // DEFESA: strings com NUL nunca vão ao banco. Assets binários chegam do runtime
+    // como DATA URL (ASCII/base64) e PRECISAM ser salvos — senão o arquivo não
+    // aparece na árvore do projeto (regra por CONTEÚDO, não por extensão).
+    const safeFiles: Record<string, string> = {};
+    for (const [p, c] of Object.entries(filesToSave ?? {})) {
+      if (typeof c !== "string") continue;
+      if (c.includes("\u0000")) continue;
+      safeFiles[p] = c;
+    }
+    if (isReactProject) return persistReactAutosave(safeFiles, summary);
+    const hasFiles = Object.keys(safeFiles).length > 0;
     try {
-      await updateProjectSpec(project.id, specToSave, hasFiles ? filesToSave : undefined);
+      await updateProjectSpec(project.id, specToSave, hasFiles ? safeFiles : undefined);
       // Sincroniza o estado local com o que foi salvo (para reload não perder).
-      setProject((p) => (p ? { ...p, spec: specToSave as never, generated_code: hasFiles ? filesToSave as never : p.generated_code } : p));
+      setProject((p) => (p ? { ...p, spec: specToSave as never, generated_code: hasFiles ? safeFiles as never : p.generated_code } : p));
       if (!user?.id) return { ok: true, created: false };
-      const created = await createSiteVersion(project.id, user.id, specToSave, summary, hasFiles ? filesToSave : undefined).catch(() => false);
+      const created = await createSiteVersion(project.id, user.id, specToSave, summary, hasFiles ? safeFiles : undefined).catch(() => false);
       if (created) {
         setDirty(false);
         setPendingSummary(undefined);
         // Fase 6: registra um checkpoint Git por mudança real (assíncrono).
-        void commitGitCheckpoint(filesToSave, summary);
+        void commitGitCheckpoint(safeFiles, summary);
       }
       return { ok: true, created };
     } catch (e) {
@@ -1407,6 +1416,7 @@ export default function SiteProjectPage() {
                   publishedUrl: project.published_status === "published" ? publicUrl() : null,
                   onCopyLink: copyPublicLink,
                   githubSlot: <StudioGitConfigDialog projectId={project.id} userId={user?.id} />,
+                  integrationsSlot: <StudioIntegrationsButtons />,
                 }}
                 onOpenHistory={() => (studioEnabled || isReactProject ? setGitHistoryOpen(true) : setVersionsOpen(true))}
                 // FASE 7.9 — "Gerar site" no TOPO para projeto React em rascunho:
@@ -1499,36 +1509,8 @@ export default function SiteProjectPage() {
               Baixar projeto
             </Button>
             <GitHubProjectButton projectId={project.id} userId={user?.id} />
+            <StudioIntegrationsButtons />
           </div>
-        </Card>
-      )}
-
-      {hasSpec && (!studioEnabled || generatingVideo || !!videoBlobUrl || !!videoError) && (
-        <Card className={studioEnabled ? "fixed bottom-10 right-4 z-40 w-[400px] border-primary/20 bg-background shadow-xl" : "p-3.5 border-primary/20 bg-primary/5"}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold">Vídeo de apresentação</p>
-              <p className="text-xs text-muted-foreground">Grava o site real no navegador (Chromium) e gera um MP4 H.264 para enviar ao cliente.</p>
-            </div>
-            <Button size="sm" onClick={handleGenerateVideo}
-              disabled={generatingVideo || !(draftFiles && Object.keys(draftFiles).some((p) => p.endsWith("index.html")))}>
-              {generatingVideo ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Video className="h-3.5 w-3.5 mr-1" />}
-              {generatingVideo ? "Gerando vídeo…" : videoBlobUrl ? "Gerar novamente" : "Gerar vídeo"}
-            </Button>
-          </div>
-          {generatingVideo && videoPhase && <p className="text-xs text-muted-foreground mt-3">{videoPhase}</p>}
-          {videoError && !generatingVideo && <p className="text-xs text-destructive mt-3">⚠ {videoError}</p>}
-          {videoBlobUrl && videoInfo && (
-            <div className="mt-3 space-y-2">
-              <video src={videoBlobUrl} controls className="w-full max-w-xl rounded-lg border bg-black" />
-              <p className="text-[11px] text-muted-foreground">
-                {videoInfo.duration}s · {videoInfo.width}×{videoInfo.height} · {(videoInfo.fileSize / (1024 * 1024)).toFixed(1)} MB · {videoInfo.codec}
-              </p>
-              <Button asChild size="sm" variant="outline">
-                <a href={videoBlobUrl} download={videoFileName()}><Download className="h-3.5 w-3.5 mr-1" /> Baixar MP4</a>
-              </Button>
-            </div>
-          )}
         </Card>
       )}
 

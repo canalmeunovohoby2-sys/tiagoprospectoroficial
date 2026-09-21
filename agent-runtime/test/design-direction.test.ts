@@ -60,12 +60,52 @@ describe("design-direction · direção de arte determinística por negócio", (
 
   it("o briefing proíbe o padrão de blocos e exige autocrítica + marcador", () => {
     const d = buildDesignDirection(DENTISTA, "proj-1");
-    expect(d.block).toContain("BRIEFING DE DIREÇÃO DE ARTE");
+    expect(d.block).toContain("DIREÇÃO CRIATIVA DESTE NEGÓCIO");
     expect(d.block).toContain("navbar");
     expect(d.block).toContain("AUTOCRÍTICA");
     expect(d.block).toContain(ART_DIRECTION_MARKER);
     expect(d.block).toMatch(/hero/i);
     expect(d.avoid.join(" ")).toMatch(/cards idênticos|site de blocos|navbar/);
+  });
+});
+
+describe("design-direction · direção POR CLIENTE (mesmo segmento ≠ mesmo site)", () => {
+  const odonto = (i: number) => ({ name: `Clinica ${i}`, segment: "Odontologia", city: "Bauru", state: "SP" });
+
+  it("é determinística por cliente (mesma fonte → mesmo bloco)", () => {
+    const a = buildDesignDirection(odonto(1), "projeto-1");
+    const b = buildDesignDirection(odonto(1), "projeto-1");
+    expect(a.personality).toBe(b.personality);
+    expect(a.archetype).toBe(b.archetype);
+    expect(a.block).toBe(b.block);
+  });
+
+  it("clientes do MESMO segmento não recebem todos a mesma personalidade (quando há mais de uma compatível)", () => {
+    const labels = new Set<string>();
+    for (let i = 0; i < 24; i++) {
+      labels.add(buildDesignDirection({ name: `Studio ${i}`, segment: "Clínica de Estética", city: "Bauru", state: "SP" }, `projeto-${i}`).personality);
+    }
+    expect(labels.size).toBeGreaterThan(1); // nunca a mesma "cara" para todos
+  });
+
+  it("a composição varia por cliente mesmo com UMA só personalidade compatível", () => {
+    const combos = new Set<string>();
+    for (let i = 0; i < 12; i++) {
+      const d = buildDesignDirection(odonto(i), `projeto-${i}`);
+      combos.add([d.archetype, d.heroComposition, d.grid, d.typeScale, d.rhythm].join("|"));
+    }
+    expect(combos.size).toBeGreaterThan(1);
+  });
+
+  it("a personalidade continua COMPATÍVEL com o segmento (nunca cai no default)", () => {
+    const p = buildDesignDirection(odonto(3), "projeto-3").personality;
+    expect(p).not.toBe("profissional e claro");
+  });
+
+  it("o bloco declara que a direção é PONTO DE PARTIDA e que a IA decide a identidade", () => {
+    const b = buildDesignDirection(odonto(2), "projeto-2").block;
+    expect(b).toMatch(/PONTO DE PARTIDA da SUA análise/i);
+    expect(b).toMatch(/VOCÊ decide a identidade visual/i);
   });
 });
 
@@ -96,8 +136,8 @@ describe("auditoria · direção de arte é CONTEXTO (não template disfarçado)
 
   it("o briefing se declara GUIA e pede decisão própria (não impõe layout)", () => {
     const b = buildDesignDirection(ODONTO, "proj-a").block;
-    expect(b).toMatch(/N[ÃO]O é layout pronto/i);
-    expect(b).toMatch(/decida a partir do negócio/i);
+    expect(b).toMatch(/NÃO é template e NÃO use a mesma para outro cliente/i);
+    expect(b).toMatch(/pode ajustar se os dados pedirem/i);
     expect(b).toMatch(/ANTES de codar/i);
     expect(b).toMatch(/AUTOCR[ÍI]TICA/i);       // o modelo julga e reestrutura
     // NÃO contém estrutura pronta (nenhum código/JSX nem ordem fixa obrigatória)

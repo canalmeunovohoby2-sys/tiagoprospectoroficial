@@ -123,7 +123,7 @@ describe("site-media · fotos reais vs ilustrativas", () => {
       // Os DOIS são trocados: mesmo com output=embed, iframe cross-origin é bloqueado sob COEP.
       expect(changed).toEqual(["App.tsx", "ok.tsx"]);
       const app = readFileSync(join(root, "App.tsx"), "utf8");
-      expect(app).not.toMatch(/<iframe/i);
+      expect(app).toContain("data-pf-gmap");
       expect(app).toContain("data-pf-map");
       expect(app).toContain("Abrir no Google Maps");
     } finally {
@@ -135,7 +135,8 @@ describe("site-media · fotos reais vs ilustrativas", () => {
     const root = mkdtempSync(join(tmpdir(), "map-fix2-"));
     try {
       writeFileSync(join(root, "App.tsx"), `<iframe src="https://maps.google.com/maps?q=Bauru" />`, "utf8");
-      expect(normalizeWorkspaceMapEmbeds(root, {})).toEqual([]);
+      // Sem geo: o iframe quebrado é REMOVIDO do React (nunca área branca) e nenhum mapa é inventado.
+      expect(normalizeWorkspaceMapEmbeds(root, {})).toEqual(["App.tsx"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -159,9 +159,12 @@ export function instructionRequestsChange(instruction: string): boolean {
   // Análise/relatório SOMENTE LEITURA → não é pedido de alteração.
   if (READ_ONLY.test(text)) return false;
   if (ANALYZE_LEAD.test(text) && !ACTION_HINT.test(text)) return false;
-  // Pergunta/explicação SEM sinal de ação → não é pedido de alteração.
+  // Pergunta/explicação SEM sinal de ação → não é pedido de alteração. Mas se a
+  // pergunta traz VERBO DE AÇÃO ("pode trocar a logo?", "consegue aplicar essa
+  // logo?"), é TRABALHO: o usuário está pedindo a mudança, não só perguntando.
+  const ACTION_VERB = /\b(troque|trocar|trocou|coloque|colocar|aplique|aplicar|use|usar|utilize|mude|mudar|altere|alterar|ajuste|ajustar|melhore|melhorar|adicione|adicionar|insira|inserir|corrija|corrigir|remova|remover|atualize|atualizar|deixe|deixar|reorganize|reorganizar|redesenhe|redesenhar|substitua|substituir)\b/i;
   const looksQuestion = /\?\s*$/.test(text) || EXPLAIN_ASK.test(text);
-  if (looksQuestion && !ACTION_HINT.test(text)) return false;
+  if (looksQuestion && !ACTION_HINT.test(text) && !ACTION_VERB.test(text)) return false;
   // Qualquer outra instrução é tratada como pedido de alteração.
   return true;
 }
@@ -214,6 +217,8 @@ export function decideFinishBlock(opts: {
   businessHasHours?: boolean;
   finishSkips: number;
   maxFinishSkips?: number;
+  /** AUTONOMIA TOTAL: a decisão de concluir é do MODELO — o guard não bloqueia. */
+  autonomy?: "full" | "guarded";
   /** Evidência real de inspeção/verificação da run (Depth Guard 5.28). */
   work?: WorkEvidence;
   /** Iterações do ciclo visual já realizadas (verificação por renderização). */
@@ -225,6 +230,8 @@ export function decideFinishBlock(opts: {
   /** Nº de imagens que falharam ao carregar no último inspect (real, se houver). */
   brokenImages?: number | null;
 }): FinishDecision {
+  // AUTONOMIA TOTAL: a IA decide quando concluir — o guard não bloqueia nada.
+  if (opts.autonomy === "full") return { block: false, terminal: false } as FinishDecision;
   const max = opts.maxFinishSkips ?? MAX_FINISH_SKIPS_DEFAULT;
   const terminal = opts.finishSkips >= max;
   const blocked = (kind: FinishBlockKind, reason: string): FinishDecision => ({ block: true, kind, reason, terminal });
@@ -588,7 +595,10 @@ export function classifyCompletion(s: CompletionState): CompletionVerdict {
     if (s.changeApplied) {
       return { ok: true, reply: null, error: null, unverified: true, states };
     }
-    const msg = "Não consegui aplicar a geração nesta execução (nenhum arquivo foi alterado). Foi um problema do provedor de IA ou a execução foi interrompida. Diga \"continue\" que eu tento de novo a partir daqui.";
+    // Sem finish_task e SEM nenhum arquivo aplicado. A causa real pode ser queda
+    // de conexão com a IA OU interrupção antes da primeira escrita — nunca sabemos
+    // qual sem o log interno, então a mensagem é honesta e o projeto fica íntegro.
+    const msg = "A execução terminou sem aplicar nenhum arquivo — a conexão com a IA pode ter caído ou a execução foi interrompida antes da escrita. Nada do seu site foi perdido: o projeto permanece como estava. Tente novamente (a próxima execução parte do estado atual).";
     return { ok: false, reply: msg, error: msg, unverified, states };
   }
 

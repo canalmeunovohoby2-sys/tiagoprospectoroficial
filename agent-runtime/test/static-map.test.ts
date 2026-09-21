@@ -7,7 +7,10 @@ describe("static-map · mapa INTERATIVO sem iframe (tiles + pan/zoom) — funcio
   it("o bloco é um contêiner interativo (sem <iframe> e sem imagem estática)", () => {
     const block = buildStaticMapBlock(BAURU)!;
     expect(block).toBeTruthy();
-    expect(block).not.toMatch(/<iframe/i);
+    // GOOGLE MAPS REAL (embed interativo) POR CIMA + mosaico OSM por baixo (fallback).
+    expect(block).toContain("data-pf-gmap");
+    expect(block).toContain("data-pf-map");
+    expect(block).toContain("Abrir no Google Maps");
     expect(block).toContain('data-pf-map');
     expect(block).toContain('data-lat="-22.315"');
     expect(block).toContain('data-lng="-49.06"');
