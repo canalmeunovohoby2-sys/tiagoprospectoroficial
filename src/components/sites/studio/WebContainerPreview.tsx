@@ -227,13 +227,13 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
   // externo chegar (o "não aparece no preview" relatado).
   useEffect(() => {
     if (firstRefresh.current) { firstRefresh.current = false; return; }
-    if (phase !== "ready") return;
-    // Debounce MAIOR (1,5s) + coalescing: uma rajada de arquivos durante a edição
-    // gera UMA atualização do preview no fim — antes cada arquivo remontava o
-    // iframe e a tela "piscava" durante toda a execução.
-    const t = setTimeout(() => setFrameKey((k) => k + 1), 1500);
+    // NÃO exigir `phase === "ready"`: no PREVIEW SERVIDO PELO RUNTIME (modo local) o
+    // WebContainer pode nunca ficar "ready" — e era exatamente isso que deixava a
+    // edição salva invisível na tela ("no preview não aparece as modificações").
+    // Debounce menor (1s) com coalescing: rajada de arquivos = 1 recarga só.
+    const t = setTimeout(() => setFrameKey((k) => k + 1), 1000);
     return () => clearTimeout(t);
-  }, [refreshKey, phase, projected]);
+  }, [refreshKey, projected]);
 
   // FASE 5.1 — T8: Preview REAL visível (Vite rodando + iframe carregado).
   useEffect(() => {
@@ -360,8 +360,9 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
           // PADRÃO: site buildado pelo runtime — hidrata sempre (o Vite do WebContainer
           // pode não subir e entregar .tsx cru com MIME inválido → página branca).
           <iframe
+            key={`rt-${frameKey}`}
             title="Preview do site (runtime)"
-            src={fullTabUrl}
+            src={`${fullTabUrl}${fullTabUrl.includes("?") ? "&" : "?"}k=${frameKey}`}
             className="h-full w-full border-0"
             style={{ background: "#fff" }}
           />
@@ -401,8 +402,9 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
               Preview servido pelo runtime (o Vite do navegador não subiu). O site real aparece aqui.
             </div>
             <iframe
+              key={`rt-fallback-${frameKey}`}
               title="Preview do site (runtime)"
-              src={fullTabUrl}
+              src={`${fullTabUrl}${fullTabUrl.includes("?") ? "&" : "?"}k=${frameKey}`}
               className="min-h-0 flex-1 border-0"
               style={{ background: "#fff" }}
             />

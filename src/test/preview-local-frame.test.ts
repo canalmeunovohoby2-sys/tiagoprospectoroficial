@@ -28,3 +28,23 @@ describe("preview · iframe para o runtime local", () => {
     expect(src).not.toContain("não permite carregar");
   });
 });
+
+// BUG CORRIGIDO: a edição salva não aparecia no preview do runtime — o `frameKey`
+// só era aplicado no iframe do WebContainer e a recarga exigia `phase === "ready"`.
+describe("preview · recarrega após edição (runtime)", () => {
+  const src = readFileSync(join(process.cwd(), "src/components/sites/studio/WebContainerPreview.tsx"), "utf8");
+
+  it("a recarga não depende do WebContainer estar ready", () => {
+    const idx = src.indexOf("const t = setTimeout(() => setFrameKey");
+    expect(idx).toBeGreaterThan(0);
+    const bloco = src.slice(idx - 500, idx);
+    expect(bloco).not.toContain('phase !== "ready"');
+    expect(bloco).toContain("refreshKey, projected");
+  });
+
+  it("os DOIS iframes do runtime remontam com cache-buster `k=`", () => {
+    const usos = src.match(/key=\{`rt-/g) ?? [];
+    expect(usos.length).toBe(2);
+    expect((src.match(/\?k=\$\{frameKey\}|&k=\$\{frameKey\}/g) ?? []).length).toBe(2);
+  });
+});
