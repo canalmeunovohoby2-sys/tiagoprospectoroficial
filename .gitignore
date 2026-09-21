@@ -31,3 +31,8 @@ agent-runtime/.env.local
 # stack local (launcher): artefatos de execucao
 __pycache__/
 *.deps-ok
+
+# logs dos motores locais (background)
+.runtime.log
+.maps.log
+.photos.log
