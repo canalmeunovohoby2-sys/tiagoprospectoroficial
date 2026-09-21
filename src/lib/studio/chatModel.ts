@@ -182,17 +182,26 @@ export interface BuildUnifiedChatInput {
 export function buildUnifiedChat(input: BuildUnifiedChatInput): UnifiedChatItem[] {
   const out: UnifiedChatItem[] = [];
   const runs = input.runs ?? [];
-  let runIdx = 0;
+
+  // PAREAMENTO PELO FIM: a execução mais recente pertence à ÚLTIMA mensagem do usuário.
+  // Antes o pareamento era pela ORDEM (1ª run ↔ 1ª mensagem do usuário), então a
+  // atividade da execução ATUAL era anexada à primeira mensagem da conversa — e o
+  // usuário via a atividade "lá em cima", antes das mensagens antigas.
+  const userIdx: number[] = [];
+  for (let i = 0; i < (input.messages ?? []).length; i += 1) {
+    if (input.messages[i].role === "user") userIdx.push(i);
+  }
+  const runByUser = new Map<number, number>();
+  for (let k = 0; k < userIdx.length && k < runs.length; k += 1) {
+    runByUser.set(userIdx[userIdx.length - 1 - k], runs.length - 1 - k);
+  }
 
   for (let i = 0; i < (input.messages ?? []).length; i += 1) {
     const m = input.messages[i];
     if (m.role === "user") {
       out.push({ kind: "user", id: `u-${i}`, text: m.text, image: m.image, fileLabel: m.fileLabel, images: m.images });
-      const run = runs[runIdx];
-      if (run) {
-        out.push(toActivityItem(run));
-        runIdx += 1;
-      }
+      const at = runByUser.get(i);
+      if (at !== undefined) out.push(toActivityItem(runs[at]));
     } else if (m.role === "assistant") {
       out.push({ kind: "assistant", id: `a-${i}`, text: m.text });
     } else {
@@ -200,10 +209,13 @@ export function buildUnifiedChat(input: BuildUnifiedChatInput): UnifiedChatItem[
     }
   }
 
-  // Runs sem mensagem de usuário correspondente (ex.: histórico antigo) → anexa.
-  for (; runIdx < runs.length; runIdx += 1) {
-    if (runs[runIdx].events.length || runs[runIdx].plan) out.push(toActivityItem(runs[runIdx]));
-  }
+  // Runs sem mensagem de usuário correspondente (histórico antigo) → anexa no fim,
+  // apenas as que NÃO foram pareadas com uma mensagem acima.
+  const pareadas = new Set(runByUser.values());
+  runs.forEach((run, idx) => {
+    if (pareadas.has(idx)) return;
+    if (run.events.length || run.plan) out.push(toActivityItem(run));
+  });
 
   for (let c = 0; c < (input.commits ?? []).length; c += 1) {
     out.push({ kind: "commit", id: `c-${c}`, message: input.commits![c].message, hash: input.commits![c].hash });
