@@ -646,7 +646,7 @@ export function formatCreativeBrief(brief: CreativeBrief): string {
   const ty = t.typography;
   const c = t.composition;
   const queries = Object.entries(brief.imageQueries).map(([role, q]) => `   - ${role}: "${q}"`).join("\n");
-  return `DESIGN TOKENS EXECUTÁVEIS (decisões de design para ESTE projeto — implemente como base real):
+  return `REFERENCIA DE DESIGN (hipoteses auxiliares para ESTE projeto — VOCE e o diretor de arte: adapte, combine, substitua ou ignore o que nao servir; nada aqui e template obrigatorio):
 
 PALETA
 - primary: ${pal.primary}
@@ -676,7 +676,7 @@ COMPOSIÇÃO
 - shadow: ${c.shadow}
 - decoration: ${c.decoration}
 
-ARQUITETURA ESCOLHIDA (execute esta, não escolha outra agora):
+ARQUITETURA SUGERIDA (voce decide — reordene/crie/corte se fizer mais sentido):
 ${brief.architectureChoice}
 
 DIREÇÃO DE IMAGENS (referências de busca — NÃO é URL garantida; busque imagens que

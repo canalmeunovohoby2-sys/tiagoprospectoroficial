@@ -126,7 +126,7 @@ export function packSkillKnowledge(topic?: string | null): string | null {
 export function packIndexBlock(): string {
   if (PACK_SKILLS.length === 0) return "";
   const verticais = PACK_VERTICALS.map((s) => s.id).join(", ");
-  return `SKILLS SENIOR DO SEGMENTO (skills-pack): OBRIGATÓRIO chamar design_skills com o SEGMENTO do cliente antes de compor — o VERTICAL do nicho traz seções, objeções, PROVAS e DIREÇÃO FOTOGRÁFICA daquele negócio (nunca suponha).
+  return `SKILLS SENIOR DO SEGMENTO (skills-pack): CONHECIMENTO DISPONIVEL: consulte design_skills com o SEGMENTO do cliente quando ajudar (nao e obrigatorio) — o VERTICAL do nicho traz seções, objeções, PROVAS e DIREÇÃO FOTOGRÁFICA daquele negócio (nunca suponha).
 Verticais: ${verticais}.
 PRODUTO (SaaS, painel, app mobile, PWA, multi-tenant, cobrança, SSO, white-label): NÃO é landing page — chame design_skills com "saas" e/ou "mobile" para receber a arquitetura de produto (telas/rotas/estado/offline/monetização/publicação/segurança/escala). Regras de landing page (hero comercial, seção de contato, mapa embedado) NÃO se aplicam.
 Demais skills do pack (design system, hierarquia, hero, copy, CRO, provas, motion, a11y, SEO, performance, mapas, WhatsApp, LGPD, testes): idem por topic.

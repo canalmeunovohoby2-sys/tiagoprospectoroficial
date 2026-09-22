@@ -25,13 +25,13 @@ describe("plano deterministico de geracao", () => {
 
   it("o bloco do plano e curto e objetivo", () => {
     const bloco = formatGenerationPlan(buildGenerationPlan({ segment: "energia solar" }));
-    expect(bloco).toContain("PLANO DA GERA");
+    expect(bloco).toContain("SUGEST");
     expect(bloco).toContain("Objetivo:");
     expect(bloco).toContain("Imagens necess");
     expect(bloco.length).toBeLessThan(2200);
   });
 
   it("edicao NAO carrega o plano (edicao localizada vai direto ao arquivo)", () => {
-    expect(buildEditSystemPrompt({})).not.toContain("PLANO DA GERA");
+    expect(buildEditSystemPrompt({})).not.toContain("SUGEST");
   });
 });

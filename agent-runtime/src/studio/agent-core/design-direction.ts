@@ -385,11 +385,11 @@ export function buildDesignDirection(business: DesignBusiness, seedSource?: stri
     `- Tipografia: ${typeScale}.`,
     `- Estilo de CTA: ${ctaStyle} (linguagem específica do negócio, nunca repetir 'Saiba mais').`,
     `- Densidade: ${density}.`,
-    `- ESTRUTURA DESTE SITE (ordem que faz sentido AQUI — pode ajustar se os dados pedirem): ${sectionPlan.join(" → ")}.`,
+    `- ESTRUTURA SUGERIDA (voce decide; pode reordenar, cortar ou criar secoes): ${sectionPlan.join(" → ")}.`,
     `- Por que esta direção: ${differentiationRationale}`,
     `- EVITE: ${avoid.join(" | ")}.`,
     `- ANTES de codar, faça a ANÁLISE: segmento, público, posicionamento, ticket percebido, objetivo comercial, principal dúvida/confiança do cliente.`,
-    `- OBRIGATÓRIO: registre a direção escolhida como um comentário em src/App.tsx começando com "${ART_DIRECTION_MARKER}" (arquétipo, paleta em HEX, fontes, hero, grid) e IMPLEMENTE essa direção de verdade.`,
+    `- Registre a SUA direcao (voce decide, nao e gabarito) como um comentário em src/App.tsx começando com "${ART_DIRECTION_MARKER}" (arquétipo, paleta em HEX, fontes, hero, grid) - registro da decisao do designer.`,
     "- AUTOCRÍTICA antes de finalizar (se falhar, reestruture a composição, não finalize): sem o nome/logo, ainda parece deste segmento? poderia ser confundido com outro site do mesmo sistema? o hero tem personalidade? as imagens participam? há hierarquia e ritmo? há excesso de cards/seções iguais?",
   ].filter((l) => !!l).join("\n");
 

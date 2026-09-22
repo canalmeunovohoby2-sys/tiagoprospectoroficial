@@ -158,7 +158,7 @@ RESPOSTA FINAL SEMPRE CURTA (PRECEDÊNCIA MÁXIMA — vale sobre qualquer instru
 // creative brief, princípios Senior e vertical). Sem precedência explícita o modelo faz
 // MÉDIA dos estilos e o site sai genérico.
 export const ART_DIRECTION_AUTHORITY = `DIREÇÃO DE ARTE — AUTORIDADE ÚNICA (precedência explícita):
-1) contexto real do negócio (dados do cliente) → 2) vertical do segmento (mercado, arquitetura recomendada, objeções, fotografia, provas) → 3) DIREÇÃO DE ARTE DESTE PROJETO (mood, paleta, tipografia, composição, densidade, imagery, motion, palavras-chave visuais e o que evitar) → 4) creative brief (aprofunda tom, mensagem, prioridades e conversão) → 5) princípios Senior (qualidade de execução) → 6) detalhes de ferramenta.
+1) contexto real do negócio (dados do cliente) → 2) vertical do segmento (mercado, arquitetura recomendada, objeções, fotografia, provas) → 3) DIRECAO DE ARTE DESTE PROJETO — quem decide e VOCE, o designer do site (mood, paleta, tipografia, composição, densidade, imagery, motion, palavras-chave visuais e o que evitar) → 4) creative brief (aprofunda tom, mensagem, prioridades e conversão) → 5) princípios Senior (qualidade de execução) → 6) detalhes de ferramenta.
 REGRA: existe UMA direção visual por projeto. As camadas 2, 4, 5 e 6 são RESTRIÇÃO/PRINCÍPIO e conhecimento de nicho — NUNCA uma segunda identidade; não faça média de estilos (dark + editorial + minimal + tech ao mesmo tempo = genérico). Se algo contradisser a direção (3), a direção vence. Você segue decidindo layout, nº de seções, grid, tipografia, motion, imagens e CTAs — todos DENTRO da mesma direção.`;
 
 // ===== DIGESTS COMPACTOS (rodada "enxugar sem perder padrão") =====

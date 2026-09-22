@@ -98,7 +98,7 @@ function addressObrigatorio(input: PlanInput): boolean {
 /** Bloco curto e objetivo que entra na missão da 1ª geração. */
 export function formatGenerationPlan(p: GenerationPlan): string {
   return [
-    "PLANO DA GERAÇÃO (ordem: entender → estrutura → direção → imagens → implementar → validar):",
+    "SUGESTAO ESTRUTURAL (o agente decide; reordene/adapte/ignore o que nao fizer sentido — ordem: entender → estrutura → direção → imagens → implementar → validar):",
     `- Objetivo: ${p.objetivo}`,
     `- Mensagem principal: ${p.mensagemPrincipal}`,
     `- Estrutura sugerida (adapte à natureza do negócio, não vire template): ${p.secoes.join(" → ")}`,

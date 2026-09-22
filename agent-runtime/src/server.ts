@@ -336,7 +336,7 @@ export function buildReactMission(input: {
     // O PEDIDO ATUAL vem marcado: o histórico/contexto acima é REFERÊNCIA — a
     // resposta deve atender SOMENTE a esta mensagem (sem herdar assuntos antigos).
     `PEDIDO ATUAL (responda SOMENTE a isto):\n${input.instruction}`,
-    input.creativeBrief ? `BRIEFING CRIATIVO DESTE CLIENTE (decisão da IA — direção principal; implemente isto):\n${input.creativeBrief}` : "",
+    input.creativeBrief ? `BRIEFING CRIATIVO DESTE CLIENTE (sugestao de conteudo — VOCE, o designer, decide a identidade visual; adapte ou ignore o que nao servir):\n${input.creativeBrief}` : "",
     input.mediaBlock,
     input.attachBlock,
   ].filter(Boolean).join("\n\n");
@@ -1858,7 +1858,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               brandColors,
               services: businessForRun.services,
             }, `${projectId}|${businessForRun.name ?? ""}|${businessForRun.segment ?? ""}|${businessForRun.city ?? ""}`);
-            const creativeBrief = (runKind === "generate" && (exec.apiKey || exec.providerId))
+            const creativeBrief = false /* RESTAURACAO: brief por IA fora do caminho — o AGENTE decide a identidade visual */
               ? await generateCreativeBrief({
                   model: callModelWithTools,
                   ai: { providerId: exec.providerId, modelId: exec.modelId, apiKey: exec.apiKey, baseUrl: exec.baseUrl },
