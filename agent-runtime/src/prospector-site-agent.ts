@@ -32,11 +32,18 @@ export function isSurgicalEditTask(instruction: string): boolean {
   const text = String(instruction ?? "").trim();
   if (!text) return false;
   if (/^(o\s+que|como|qual|quando|onde|por\s+que|pode|poderia|voc[eê]\s+acha|diga|explique|resuma|liste|analis|audit)/i.test(text)) return false;
-  // Tarefas de IMAGEM/VISUAL (enquadramento, corte, zoom, hero, banner, logo,
-  // favicon) NÃO são "cirúrgicas": precisam do fluxo normal com inspeção e
-  // verificação real no navegador (senão o ajuste de enquadramento não é corrigido).
-  if (/(foto|fotografia|imagem|imagens|hero|banner|enquadr|cortad|cortou|cortar|recort|zoom|object-position|object-fit|background-position|background-size|cabe[çc]a|rosto|logomarca|\blogo\b|favicon|\bsvg\b|[íi]cone)/i.test(text)) return false;
-  return /(troque?|troca|altere?|muda|mude|corrija?|conserta|adicione?|inclua?|coloque|remova?|apague|deixe|arrume|tire)\b/i.test(text);
+  // ESTRUTURAL nao e cirurgico: adicionar/remover/reorganizar SECAO/BLOCO/AREA exige
+  // composicao, hierarquia e responsividade. Normaliza acentos (NFD) para nao depender
+  // de caracteres acentuados na regex.
+  const plano = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (/(adicion\w*|inclu\w*|cri\w*|insir\w*|nova?|nov[oa]s?)\s+(\w+\s+){0,3}(secao|bloco|area|pagina|depoimento|faq|galeria|carrossel|formulario)/.test(plano)) return false;
+  if (/(remov\w*|apag\w*|tir\w*|exclu\w*)\s+(a\s+)?(secao|bloco|area)/.test(plano)) return false;
+  if (/(reorganiz|reorden|mover?\s+(a\s+)?secao|mudar?\s+a\s+arquitetura|reestrutur)/.test(plano)) return false;
+  if (/(mais moderno|moderniz|redesenhe|redesenhar|refa[cz]a|refazer|transforme|nova identidade|repensar|que esta (feio|ruim|quebrad))/.test(plano)) return false;
+  // CIRURGICO: inclui IMAGEM/LOGO/FOTO/ICONE (troca LOCALIZADA de referencia a um asset
+  // — do usuario ou existente). Antes esses pedidos caiam no fluxo pesado e eram a causa
+  // da "edicao de imagem demorada".
+  return /(troque?|troca|altere?|muda|mude|corrija?|conserta|adicione?|inclua?|coloque|remova?|apague|deixe|arrume|tire|substitu\w*|atualiz\w*|aumente?|diminu\w*|ajust\w*|reenquadr\w*)\b/.test(plano);
 }
 
 const COLOR_SWAP_HINT = `

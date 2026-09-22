@@ -1805,7 +1805,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // AUTONOMIA TOTAL (padrão): a IA decide tudo — arquitetura, design,
             // arquivos, ferramentas e o momento de concluir. Nenhum guard bloqueia.
             // `AGENT_AUTONOMY=guarded` restaura o comportamento antigo.
-            const autonomy: "full" | "guarded" = process.env.AGENT_AUTONOMY === "guarded" ? "guarded" : "full";
+            const autonomy: "full" | "guarded" = process.env.AGENT_AUTONOMY === "full" ? "full" : "guarded";
             // ===== CONVERSA PURA ("oi, boa tarde", "tudo bem?") =====
             // Vale TAMBÉM em projeto bootstrap: saudação/cortesia NUNCA inicia geração.
             // O agente apenas RESPONDE (sem ferramentas, sem edição, sem automação).

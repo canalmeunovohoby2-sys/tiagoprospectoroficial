@@ -26,9 +26,78 @@ export interface ImageCandidate {
 
 export type ImageSearchFn = (query: string) => Promise<ImageSearchResult[]>;
 
-// Adapter REAL: reutiliza o mecanismo de pesquisa existente (runSearchQuery),
-// que devolve páginas/texto (pode NÃO conter URLs de imagem). Sem fabricar URL.
+// ===== PESQUISA DE IMAGEM REAL =====
+// Auditoria forense: o caminho antigo era busca WEB textual + regex "a URL parece
+// imagem?" — não é pesquisa de imagens e era a causa de "foto sem relação com o
+// segmento". Agora o caminho PRINCIPAL é o mecanismo real já existente no projeto:
+// Supabase Edge `get-images` → Pexels (URLs diretas do CDN + alt real para relevância).
+// O web search continua apenas como FALLBACK (nunca inventa URL).
+function imageEnv(): { url?: string; key?: string } {
+  return {
+    url: process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL,
+    key:
+      process.env.SUPABASE_ANON_KEY ??
+      process.env.SUPABASE_PUBLISHABLE_KEY ??
+      process.env.VITE_SUPABASE_ANON_KEY ??
+      process.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+  };
+}
+
+type AssetLike = Record<string, unknown>;
+const primeiroTexto = (a: AssetLike, chaves: string[]): string => {
+  for (const k of chaves) {
+    const v = a[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+};
+
+/** Extrai a URL real do asset (aceita os formatos usados pelo normalizeImageList). */
+export function assetToResult(a: AssetLike): ImageSearchResult | null {
+  const url = primeiroTexto(a, ["url", "imageUrl", "src", "srcLarge", "large", "regular", "original", "srcOriginal"]);
+  if (!/^https?:\/\//i.test(url)) return null;
+  const alt = primeiroTexto(a, ["alt", "description", "title", "name"]);
+  const autor = primeiroTexto(a, ["photographer", "author", "credit"]);
+  return { url, title: alt || autor, description: [alt, autor].filter(Boolean).join(" · ") };
+}
+
+/** Busca real de imagens pelo mecanismo do projeto (get-images → Pexels). */
+export async function searchImagesViaEdge(query: string, count = 6, orientation?: "landscape" | "portrait" | "square"): Promise<ImageSearchResult[]> {
+  const { url, key } = imageEnv();
+  if (!url) return [];
+  const res = await fetch(`${url.replace(/\/+$/, "")}/functions/v1/get-images`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(key ? { apikey: key, Authorization: `Bearer ${key}` } : {}) },
+    body: JSON.stringify({ query: query.slice(0, 120), count: Math.max(1, Math.min(30, count)), ...(orientation ? { orientation } : {}) }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) return [];
+  const json = (await res.json().catch(() => null)) as { assets?: AssetLike[] } | null;
+  const assets = Array.isArray(json?.assets) ? json!.assets : [];
+  return assets.map(assetToResult).filter((r): r is ImageSearchResult => Boolean(r));
+}
+
+/** Valida que a URL responde de verdade como imagem (HTTP 200 + content-type image/*). */
+export async function validateImageUrl(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { method: "GET", headers: { Range: "bytes=0-2047" }, signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return false;
+    const tipo = String(res.headers.get("content-type") ?? "").toLowerCase();
+    return tipo.startsWith("image/");
+  } catch {
+    return false;
+  }
+}
+
 export const defaultImageSearch: ImageSearchFn = async (q) => {
+  // 1) MECANISMO REAL (Pexels via edge get-images)
+  try {
+    const reais = await searchImagesViaEdge(q, 6);
+    if (reais.length > 0) return reais;
+  } catch {
+    /* segue para o fallback */
+  }
+  // 2) FALLBACK: mecanismo de pesquisa existente (web) — sem fabricar URL.
   const r = await runSearchQuery(q, 6).catch(() => ({ ok: false, results: [] as ImageSearchResult[], error: "indisponível" }));
   return (r.ok ? r.results : []).map((x) => ({ url: x.url, title: x.title, description: x.description })) as ImageSearchResult[];
 };
