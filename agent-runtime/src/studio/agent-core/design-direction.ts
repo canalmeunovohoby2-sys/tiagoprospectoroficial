@@ -338,7 +338,7 @@ export function buildDesignDirection(business: DesignBusiness, seedSource?: stri
   const seed = String(seedSource ?? `${name}|${segment}|${city}`).trim() || "prospector";
 
   const p = personalityFor(`${segment} ${business?.category ?? ""}`, seed);
-  const realPhotos = Array.isArray(business?.photos) && business.photos.length > 0;
+  const realPhotos = false; // business.photos = LEAD_REFERENCE_ONLY (fotos do Google/Maps): NAO ativam hero fotorrealista nem galeria
   const brandColors = (business?.brandColors ?? []).map((c) => String(c).toLowerCase()).filter((c) => /^#[0-9a-f]{3,6}$/.test(c));
 
   const archetype = pick(ARCHETYPES, seed, "archetype");

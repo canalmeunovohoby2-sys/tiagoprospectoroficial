@@ -132,8 +132,8 @@ export function rankCurated(cands: ImageCandidate[], ctx: ImageProjectContext): 
 }
 
 /** Bloco com os candidatos JÁ CURADOS para o modelo (evita lista indiscriminada). */
-export function formatCuratedImages(role: string, cands: ImageCandidate[]): string {
-  const top = rankCurated(cands, {} as ImageProjectContext).slice(0, 4);
+export function formatCuratedImages(role: string, cands: ImageCandidate[], ctx: ImageProjectContext = {} as ImageProjectContext): string {
+  const top = rankCurated(cands, ctx).slice(0, 4);
   if (top.length === 0) return `IMAGENS CURADAS (${role}): nenhuma adequada — componha sem imagem em vez de usar uma imagem errada.`;
   return [
     `IMAGENS CURADAS PARA ESTA SEÇÃO (${role}) — use UMA destas (URL + alt), nunca outra fonte para imagem de apresentação:`,
@@ -230,7 +230,8 @@ export function selectImageCandidate(opts: {
   }
   const best = [...valid].sort((a, b) => b.relevance - a.relevance)[0];
   best.reason = `relevance ${best.relevance.toFixed(2)} · adere a "${best.query}" | subjects/mood do intent`;
-  return { candidate: best, rejectedCount: cands.length - valid.length, reason: best.reason, needsFallback: best.relevance < 0.25 };
+  if (best.relevance < 0.25) { return { candidate: null, rejectedCount: cands.length - valid.length, reason: "Nenhum candidato com relevancia minima segura - buscar query alternativa ou compor sem imagem.", needsFallback: true }; }
+  return { candidate: best, rejectedCount: cands.length - valid.length, reason: best.reason, needsFallback: false };
 }
 
 /** Pipeline determinístico de pesquisa de imagem (intent → query → search → select). */

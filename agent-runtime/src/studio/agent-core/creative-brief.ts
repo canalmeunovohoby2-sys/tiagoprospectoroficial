@@ -33,7 +33,7 @@ REGRAS RÍGIDAS:
 - Se os dados forem insuficientes, seja criativo na APRESENTAÇÃO e permaneça factual no conteúdo.
 - NÃO use uma sequência obrigatória de seções para todos os segmentos.
 - NÃO repita o mesmo briefing entre clientes: a direção tem de nascer DESTE negócio.
-- Se houver fotos reais, elas são ativos do cliente: diga como usá-las (hero, galeria, ambiente). Não sugira imagem falsa para preencher seção.
+- Fotos do lead/Google = REFERENCIA do estabelecimento (nao sao imagem de apresentacao). Assets enviados pelo usuario = ativos reais do cliente. Imagens de apresentacao = pipeline get-images/Pexels.
 - Localização: só se houver endereço/coordenadas reais.
 
 FORMATO DA RESPOSTA (curto e acionável, ~10-16 linhas):

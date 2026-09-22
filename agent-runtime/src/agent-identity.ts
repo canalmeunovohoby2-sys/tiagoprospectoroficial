@@ -175,7 +175,7 @@ export const DESIGN_FOUNDATIONS_COMPACT = `PADRÃO SENIOR (execução premium �
 8. ACESSIBILIDADE WCAG AA: contraste ≥4.5:1, HTML semântico, h1–h6 sem pular, alt descritivo, :focus-visible, label em todo input.
 9. PERFORMANCE: width/height + lazy (hero eager), font-display swap, animar só transform/opacity, terceiros adiados.
 10. MOTION: hover 150–250ms, reveal com stagger 60–100ms, easing suave, prefers-reduced-motion respeitado.
-11. IMAGENS: intenção (sujeito/atmosfera/enquadramento) da direção; prioridade foto real do negócio > pipeline de imagens > ilustrativa coerente; tratar na composição (crop, object-position, overlay); nunca placeholder evidente.
+11. IMAGENS: intenção (sujeito/atmosfera/enquadramento) da direção; prioridade assets enviados pelo usuario > pipeline de imagens curado (get-images/Pexels) > referencias do lead; tratar na composição (crop, object-position, overlay); nunca placeholder evidente.
 12. SEO ON-PAGE: 1 <h1>, <title> persuasivo + meta description, JSON-LD LocalBusiness com NAP real.
 13. PERCEPÇÃO PREMIUM: respiro consistente, coerência total (1 estilo de borda, 1 linguagem de ícones, mesmo tratamento fotográfico), micro-detalhes resolvidos — parece feito PARA ESTA empresa.
 14. EXPERIÊNCIA POR SEGMENTO e 17. ARQUITETURA NASCE DO NEGÓCIO: ordem das seções segue a jornada do segmento, nunca estrutura fixa.
