@@ -130,7 +130,7 @@ function placeToLead<T>(place: LocalPlace, ctx: { city: string; state: string })
     longitude,
     photos: images,
     photoUrl: photo,
-    photo_name: null,
+    photo_name: photo,
     source: "local_scraper",
   } as unknown as T;
 }
