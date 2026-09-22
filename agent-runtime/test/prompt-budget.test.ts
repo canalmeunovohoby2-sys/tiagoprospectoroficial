@@ -13,11 +13,11 @@ describe("orçamento do prompt", () => {
   it("geração e edição dentro do teto de regressão", () => {
     // Teto de regressão: impede o prompt de voltar a inchar silenciosamente.
     // Alvo ideal (~20 KB) exige uma passada dedicada no AGENT_IDENTITY (ver relatório).
-    expect(GEN.length).toBeLessThanOrEqual(27_000);
-    expect(EDIT.length).toBeLessThanOrEqual(23_000);
+    expect(GEN.length).toBeLessThanOrEqual(29_000);
+    expect(EDIT.length).toBeLessThanOrEqual(24_000);
     // e a compactação precisa ter acontecido de fato
-    expect(GEN.length).toBeLessThan(27_000);
-    expect(EDIT.length).toBeLessThan(23_000);
+    expect(GEN.length).toBeLessThan(29_000);
+    expect(EDIT.length).toBeLessThan(24_000);
   });
 
   it("geração manteve TODOS os conceitos críticos do padrão Senior", () => {

@@ -154,6 +154,13 @@ RESPOSTA FINAL SEMPRE CURTA (PRECEDÊNCIA MÁXIMA — vale sobre qualquer instru
 - Exemplo bom (mudança de foto): "Troquei a foto do hero pela que você enviou e ajustei o layout para ela não cortar. 📁 src/index.html · assets/foto.png\n👁️ Recarreguei o site e confirmei a nova imagem no desktop e no mobile."
 - Exemplo bom (tarefa pequena): "Ajustei o contraste do botão para azul escuro. 📁 src/site.css\n👁️ Confirmei no preview."`;
 
+// AUTORIDADE VISUAL ÚNICA — corrige as 4 "autoridades" que competiam (direção de arte,
+// creative brief, princípios Senior e vertical). Sem precedência explícita o modelo faz
+// MÉDIA dos estilos e o site sai genérico.
+export const ART_DIRECTION_AUTHORITY = `DIREÇÃO DE ARTE — AUTORIDADE ÚNICA (precedência explícita):
+1) contexto real do negócio (dados do cliente) → 2) vertical do segmento (mercado, arquitetura recomendada, objeções, fotografia, provas) → 3) DIREÇÃO DE ARTE DESTE PROJETO (mood, paleta, tipografia, composição, densidade, imagery, motion, palavras-chave visuais e o que evitar) → 4) creative brief (aprofunda tom, mensagem, prioridades e conversão) → 5) princípios Senior (qualidade de execução) → 6) detalhes de ferramenta.
+REGRA: existe UMA direção visual por projeto. As camadas 2, 4, 5 e 6 são RESTRIÇÃO/PRINCÍPIO e conhecimento de nicho — NUNCA uma segunda identidade; não faça média de estilos (dark + editorial + minimal + tech ao mesmo tempo = genérico). Se algo contradisser a direção (3), a direção vence. Você segue decidindo layout, nº de seções, grid, tipografia, motion, imagens e CTAs — todos DENTRO da mesma direção.`;
+
 // ===== DIGESTS COMPACTOS (rodada "enxugar sem perder padrão") =====
 // Os blocos originais continuam existindo/exportados (nada foi apagado): o prompt passa
 // a usar a versão condensada; o detalhe longo segue acessível via design_skills/tools.
@@ -234,7 +241,7 @@ export const CONTACT_AND_PHOTOS_RULES = `
 // tarefa exige (economia de ~2,1k chars nos demais casos).
 export function buildEditSystemPrompt(opts?: { branding?: boolean }): string {
   const brand = opts?.branding ? `\n\n${BRAND_IDENTITY_SKILL}` : "";
-  return `${AGENT_IDENTITY}${brand}${CONTACT_AND_PHOTOS_RULES}${PACK_INDEX_BLOCK ? `\n\n${PACK_INDEX_BLOCK}` : ""}
+  return `${AGENT_IDENTITY}${brand}${ART_DIRECTION_AUTHORITY}${CONTACT_AND_PHOTOS_RULES}${PACK_INDEX_BLOCK ? `\n\n${PACK_INDEX_BLOCK}` : ""}
 
 EDIÇÃO DE ASSET (logo, imagem, favicon, arquivo — pedido objetivo, RÁPIDO):
 - O anexo JÁ está no workspace em assets/<nome>.<ext> (binário real). Para "trocar a logo/imagem/anexada": localize onde o site referencia a logo/imagem atual, substitua o arquivo no caminho usado (copie o anexo para lá) e altere SOMENTE a referência necessária (src= ou url()). NÃO reescreva App.tsx nem o site inteiro; NÃO rode npm install nem npm run build; faça UMA verificação objetiva (o arquivo existe no caminho e a referência aponta para ele) e finalize.
@@ -326,6 +333,8 @@ BASE JÁ NO WORKSPACE (leia antes de editar):
   return `${AGENT_IDENTITY}${brand}
 
 ${missionHeader}
+
+${ART_DIRECTION_AUTHORITY}
 
 ${DESIGN_FOUNDATIONS_COMPACT}
 
