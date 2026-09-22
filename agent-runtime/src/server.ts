@@ -50,6 +50,7 @@ import { validateRenderedSite, type DirectionExpectation } from "./studio/visual
 import { EDIT_TOOLS } from "./work-evidence.js";
 import { intentCoverage, type WorkEvidence } from "./work-evidence.js";
 import { syncWorkspaceFromClient, bumpWorkspaceRevision, currentWorkspaceRevision } from "./workspace.js";
+import { backupAndPruneFirstGen, shouldPruneFirstGen } from "./firstgen-workspace.js";
 
 // BLINDAGEM DO PROCESSO: um erro assíncrono (ex.: cliente desconecta no meio do
 // stream → ERR_STREAM_WRITE_AFTER_END) NÃO pode derrubar o runtime local. Antes,
@@ -1802,6 +1803,17 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // entra em edição (ou geração, se o projeto ainda for bootstrap).
             const hasAttachments = Array.isArray(body.attachments) && (body.attachments as unknown[]).length > 0;
             const runKind = hasAttachments ? (firstGen ? "generate" : "edit") : reactRunKind({ firstGen, instruction });
+            // FIRSTGEN NUNCA recebe o site de OUTRO cliente como ponto de partida: backup
+            // + poda do workspace para infra + shell canônico (auditoria física provou
+            // workspace "firstGen" com componentes/CSS/content do cliente anterior).
+            if (shouldPruneFirstGen(firstGen, runKind)) {
+              try {
+                const prune = backupAndPruneFirstGen(root, projectId);
+                if (prune.removed.length || prune.reset.length) {
+                  console.info("[firstgen-prune]", JSON.stringify({ removed: prune.removed.length, reset: prune.reset.length, backup: prune.backupDir }));
+                }
+              } catch { /* poda é proteção: falha não derruba a geração */ }
+            }
             // AUTONOMIA TOTAL (padrão): a IA decide tudo — arquitetura, design,
             // arquivos, ferramentas e o momento de concluir. Nenhum guard bloqueia.
             // `AGENT_AUTONOMY=guarded` restaura o comportamento antigo.
