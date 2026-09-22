@@ -239,16 +239,19 @@ export function mediaContextBlock(business: BusinessContext): string {
 
   if (photos.length > 0) {
     lines.push(
-      "IMAGENS REAIS DO CLIENTE (use EXATAMENTE estas URLs em <img src>; NUNCA invente/adivinhe URL de imagem):",
+      "FOTOS DO ESTABELECIMENTO OBTIDAS DO LEAD (Google/Maps) = REFERÊNCIA DO NEGÓCIO, NÃO imagem de apresentação: não use automaticamente como hero, background, cover, banner nem visual principal. Só entram se o pedido pedir explicitamente. São URLs reais — nunca invente URL:",
       ...photos.slice(0, 12).map((u, i) => `  ${i + 1}. ${u}`),
+      "IMAGEM DE APRESENTAÇÃO DO SITE = pesquisar PRIMEIRO no pipeline de imagens (image_plan → get-images/Pexels) pelo segmento + serviço + contexto da seção.",
     );
   } else {
-    lines.push("IMAGENS REAIS DO CLIENTE: nenhuma disponível. NÃO invente fotos do estabelecimento nem use <img> quebrada.");
+    lines.push(
+      "FOTOS DO ESTABELECIMENTO: nenhuma disponível. NÃO invente fotos do estabelecimento nem use <img> quebrada — a apresentação visual vem do pipeline de imagens (image_plan → get-images/Pexels).",
+    );
   }
 
   if (stock.length > 0) {
     lines.push(
-      "IMAGENS ILUSTRATIVAS DISPONÍVEIS (stock do sistema — use como apoio visual; NÃO são do cliente, NÃO afirme que são):",
+      "IMAGENS ILUSTRATIVAS DISPONÍVEIS (stock do sistema — apoio visual, NÃO são do cliente, NÃO afirme que são; para hero e seções, prefira image_plan → get-images/Pexels com o segmento):",
       ...stock.slice(0, 12).map((u, i) => `  ${i + 1}. ${u}`),
     );
   }

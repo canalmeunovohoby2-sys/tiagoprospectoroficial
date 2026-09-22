@@ -42,7 +42,7 @@ PERCEPÇÃO: <1 linha>
 HERO: <composição/abertura>
 PALETA: <3-5 HEX + função>
 TIPOGRAFIA: <título/corpo + clima>
-IMAGENS: <tratamento + uso das fotos reais, se houver>
+IMAGENS: <direção fotográfica por seção (sujeito/atmosfera/enquadramento). As fotos do lead são REFERÊNCIA, não a imagem de apresentação; a apresentação vem do pipeline get-images/Pexels (segmento + serviço + seção). NÃO recomende usar a foto do Google/Maps como hero.>
 SEÇÕES: <lista QUE FAZ SENTIDO neste caso + 1-2 que NÃO fazem>
 CTAs: <linguagem exata>
 MOBILE: <direção>
@@ -67,7 +67,8 @@ export function buildCreativeBriefPrompt(input: {
     `Coordenadas: ${b.latitude != null && b.longitude != null ? `${b.latitude},${b.longitude}` : "—"}`,
     `Sobre (dados do cliente): ${b.about ?? "—"}`,
     Array.isArray(b.services) && b.services.length ? `Serviços informados: ${b.services.join(", ")}` : "Serviços informados: —",
-    `Fotos REAIS disponíveis: ${photos.length}${photos.length ? ` (${photos.slice(0, 4).join(", ")})` : ""}`,
+    `Fotos do estabelecimento (REFERÊNCIA do lead — NÃO usar como imagem de apresentação automaticamente): ${photos.length}${photos.length ? ` (${photos.slice(0, 4).join(", ")})` : ""}`,
+    `Imagem de apresentação: pesquisar no pipeline (get-images/Pexels) por segmento + serviço + contexto da seção`,
     `Imagens ilustrativas do sistema: ${stock.length}`,
     input.extraFacts ? `Outros dados: ${input.extraFacts}` : "",
   ].filter(Boolean);
