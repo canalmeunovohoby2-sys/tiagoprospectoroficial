@@ -40,7 +40,11 @@ export interface LocalPlace {
 
 /** O runtime remoto está selecionado? Então nada de scraper local. */
 export function localScrapersEnabled(): boolean {
-  return getAgentRuntimeMode() !== "remote";
+  // PROSPECCAO LOCAL E O CAMINHO PRINCIPAL (motor 8788): uma preferencia antiga de modo
+  // ("remote"/Nuvem salva no navegador) NAO pode mais desligar a busca local. A tentativa
+  // local e sempre feita; se o runtime/scraper nao responder, a falha e silenciosa e a
+  // edge (Google/Geoapify/OSM) continua entrando como fallback/união.
+  return true;
 }
 
 function digits(value: string | null | undefined): string {

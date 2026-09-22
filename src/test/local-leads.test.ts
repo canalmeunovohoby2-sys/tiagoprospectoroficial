@@ -17,9 +17,13 @@ beforeEach(() => {
 });
 
 describe("leads locais · modo do runtime", () => {
-  it("no modo Nuvem o scraper local fica desligado", () => {
+  it("o scraper local e SEMPRE tentado (prospeccao nao depende do modo salvo)", () => {
     setAgentRuntimeMode("remote");
-    expect(localScrapersEnabled()).toBe(false);
+    expect(localScrapersEnabled()).toBe(true);
+    setAgentRuntimeMode("auto");
+    expect(localScrapersEnabled()).toBe(true);
+    setAgentRuntimeMode("local");
+    expect(localScrapersEnabled()).toBe(true);
   });
 
   it("no modo automático/Este computador fica ligado", () => {
