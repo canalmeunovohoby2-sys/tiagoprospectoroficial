@@ -21,14 +21,23 @@ import { settleWithin } from "../_shared/source-deadline.ts";
 // Supabase Edge Functions expõem EdgeRuntime.waitUntil para trabalho em
 // background que continua após a resposta HTTP.
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
+// Uma Edge (nuvem) NAO alcanca rede local: se a URL do scraper apontar para
+// localhost/faixa privada, a fonte e tratada como DESLIGADA (antes ela quebrava a
+// busca inteira e o usuario via "erro no mapscraper"). Para usar os scrapers locais,
+// o caminho e o Agent Runtime local (/maps e /photos).
+function urlAlcancavelPelaNuvem(u: string): boolean {
+  const v = String(u ?? "").trim();
+  if (!v) return false;
+  return !/^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(v);
+}
 const GMAPS_SCRAPER_URL = (Deno.env.get("GMAPS_SCRAPER_URL") ?? "").trim();
-const GMAPS_SCRAPER_ENABLED = ((Deno.env.get("GMAPS_SCRAPER_ENABLED") ?? Deno.env.get("ENABLE_GMAPS_SCRAPER") ?? "false").trim().toLowerCase() === "true");
+const GMAPS_SCRAPER_ENABLED = ((Deno.env.get("GMAPS_SCRAPER_ENABLED") ?? Deno.env.get("ENABLE_GMAPS_SCRAPER") ?? "false").trim().toLowerCase() === "true") && urlAlcancavelPelaNuvem(GMAPS_SCRAPER_URL);
 const GMAPS_SCRAPER_API_KEY = (Deno.env.get("GMAPS_SCRAPER_API_KEY") ?? "").trim();
 const GMAPS_SCRAPER_TIMEOUT_MS = Number(Deno.env.get("GMAPS_SCRAPER_TIMEOUT_MS") ?? "300000");
 
 // Segunda fonte: mapScraper (christivn/mapScraper) via microserviço HTTP.
 const MAP_SCRAPER_URL = (Deno.env.get("MAP_SCRAPER_URL") ?? "").trim();
-const MAP_SCRAPER_ENABLED = ((Deno.env.get("MAP_SCRAPER_ENABLED") ?? Deno.env.get("ENABLE_MAP_SCRAPER") ?? "false").trim().toLowerCase() === "true");
+const MAP_SCRAPER_ENABLED = ((Deno.env.get("MAP_SCRAPER_ENABLED") ?? Deno.env.get("ENABLE_MAP_SCRAPER") ?? "false").trim().toLowerCase() === "true") && urlAlcancavelPelaNuvem(MAP_SCRAPER_URL);
 const MAP_SCRAPER_API_KEY = (Deno.env.get("MAP_SCRAPER_API_KEY") ?? "").trim();
 const MAP_SCRAPER_TIMEOUT_MS = Number(Deno.env.get("MAP_SCRAPER_TIMEOUT_MS") ?? "300000");
 const MAP_SCRAPER_LANG = (Deno.env.get("MAP_SCRAPER_LANG") ?? "pt").trim();
