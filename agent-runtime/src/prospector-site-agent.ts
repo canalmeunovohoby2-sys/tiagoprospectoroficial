@@ -38,7 +38,7 @@ export function isSurgicalEditTask(instruction: string): boolean {
   const plano = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   if (/(adicion\w*|inclu\w*|cri\w*|insir\w*|nova?|nov[oa]s?)\s+(\w+\s+){0,3}(secao|bloco|area|pagina|depoimento|faq|galeria|carrossel|formulario)/.test(plano)) return false;
   if (/(remov\w*|apag\w*|tir\w*|exclu\w*)\s+(a\s+)?(secao|bloco|area)/.test(plano)) return false;
-  if (/(reorganiz|reorden|mover?\s+(a\s+)?secao|mudar?\s+a\s+arquitetura|reestrutur)/.test(plano)) return false;
+  if (/(reorganiz|reorden|mover?\s+(a\s+)?secao|mud\w*\s+a\s+arquitetura|reestrutur)/.test(plano)) return false;
   if (/(mais moderno|moderniz|redesenhe|redesenhar|refa[cz]a|refazer|transforme|nova identidade|repensar|que esta (feio|ruim|quebrad))/.test(plano)) return false;
   // CIRURGICO: inclui IMAGEM/LOGO/FOTO/ICONE (troca LOCALIZADA de referencia a um asset
   // — do usuario ou existente). Antes esses pedidos caiam no fluxo pesado e eram a causa
