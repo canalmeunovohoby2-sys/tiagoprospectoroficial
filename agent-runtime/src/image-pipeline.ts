@@ -134,9 +134,9 @@ export function rankCurated(cands: ImageCandidate[], ctx: ImageProjectContext): 
 /** Bloco com os candidatos JÁ CURADOS para o modelo (evita lista indiscriminada). */
 export function formatCuratedImages(role: string, cands: ImageCandidate[], ctx: ImageProjectContext = {} as ImageProjectContext): string {
   const top = rankCurated(cands, ctx).slice(0, 4);
-  if (top.length === 0) return `IMAGENS CURADAS (${role}): nenhuma adequada — componha sem imagem em vez de usar uma imagem errada.`;
+  if (top.length === 0) return `RESULTADOS DE PESQUISA DE IMAGEM: nenhuma opcao adequada — componha sem imagem em vez de usar uma imagem errada.`;
   return [
-    `IMAGENS CURADAS PARA ESTA SEÇÃO (${role}) — use UMA destas (URL + alt), nunca outra fonte para imagem de apresentação:`,
+    `RESULTADOS DE PESQUISA DE IMAGEM — OPCOES para VOCE decidir (a escolha final da imagem e sua; pode pesquisar de novo com outra query se nenhuma servir):`,
     ...top.map((c, i) => `  ${i + 1}. ${c.url}\n     alt: ${c.title || c.description || role}`),
   ].join("\n");
 }

@@ -33,7 +33,7 @@ describe("curadoria determinística de imagens (sem visão, por metadados)", () 
 
   it("entrega bloco curto com URL + alt (não lista indiscriminada)", () => {
     const bloco = formatCuratedImages("hero", [cand("solar panel install"), cand("soldier"), cand("photovoltaic panels"), cand("inverter install"), cand("rooftop solar"), cand("extra")]);
-    expect(bloco).toContain("IMAGENS CURADAS");
+    expect(bloco).toContain("RESULTADOS DE PESQUISA");
     expect(bloco).toContain("alt:");
     expect(bloco).not.toMatch(/soldier/i);
     expect((bloco.match(/https:\/\/images\.pexels\.com/g) ?? []).length).toBeLessThanOrEqual(4);

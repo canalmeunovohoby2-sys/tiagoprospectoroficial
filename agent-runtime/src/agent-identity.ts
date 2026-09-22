@@ -289,12 +289,12 @@ export function buildGenerateSystemPrompt(opts?: { hasBase?: boolean; branding?:
   const reactFirstGen = !!opts?.react && !hasBase;
   const brand = opts?.branding ? `\n\n${BRAND_IDENTITY_SKILL}` : "";
   const missionHeader = reactFirstGen
-    ? `MISSÃO AGORA: transformar o RASCUNHO BOOTSTRAP React no site REAL deste cliente (primeira geração).
+    ? `MISSAO AGORA: CRIE O SITE DO ZERO (voce e o autor da estrutura). O conteudo atual e apenas ANDAIME minimo de infraestrutura — substitua integralmente pela SUA arquitetura, seu hero, sua composicao e sua identidade (primeira geração).
 
 PROJETO REACT (obrigatório — leia o estado atual antes de editar):
 - O workspace JÁ CONTÉM uma aplicação React funcional (Vite + Tailwind): index.html é APENAS o shell da aplicação; src/main.tsx monta src/App.tsx; o rascunho "prospector-bootstrap" é descartável e deve ser substituído pelo site real.
 - VOCÊ TRABALHA DENTRO DO REACT: implemente o site real em src/App.tsx e/ou componentes React em src/. PROIBIDO substituir a aplicação por um site HTML estático; PROIBIDO usar index.html como destino principal da implementação (ele permanece shell/documento da aplicação, salvo necessidade estrutural real).
-- src/App.tsx É O PONTO DE MONTAGEM (obrigatório): ao finalizar, App.tsx DEVE renderizar o site REAL completo — se você criar componentes em src/components/*, IMPORTE e MONTE todos eles em App.tsx na ordem da composição. O rascunho "prospector-bootstrap" NUNCA pode permanecer como conteúdo de App.tsx: o preview precisa mostrar o site real imediatamente, sem tela de rascunho/branca.
+- src/App.tsx e o PONTO DE MONTAGEM (obrigatorio) da SUA aplicacao: escreva a estrutura que VOCE decidir (secoes, componentes, layout, motion) — nao adapte o rascunho, crie o site real
 - NÍVEL PREMIUM (obrigatório): o resultado deve parecer um site de agência — header com identidade, hero com composição própria, seções com ritmo e hierarquia reais, CTAs destacados, footer completo — tudo montado e navegável de ponta a ponta. Seções "soltas" que não aparecem montadas equivalem a trabalho incompleto.
 - Prioridade de materialização: 1) src/App.tsx; 2) componentes React em src/; 3) estilos/Tailwind existentes (CSS próprio adicional quando necessário); 4) assets existentes.
 - MAPA/LOCALIZAÇÃO: o mapa vai DENTRO do React — na seção de localização, em um componente (ex.: src/components/Location.tsx). NUNCA deixe o mapa só no index.html: ele ficaria fora do app (abaixo do #root) e NÃO aparece no preview. Use o embed do Google Maps (https://maps.google.com/maps?q=<endereço real>&output=embed) dentro do componente do mapa — o runtime converte para o mapa interativo com cartografia.
