@@ -9,6 +9,7 @@
 // seções) e acionável (o Coder executa a partir disto).
 
 import type { BusinessContext } from "../../tools.js";
+import { buildGenerationPlan, formatGenerationPlan } from "./generation-plan.js";
 import type { ModelCaller } from "./model.js";
 
 export const CREATIVE_BRIEF_SYSTEM = `Você é DIRETOR DE ARTE E ESTRATEGISTA WEB de uma agência high-end.
@@ -69,6 +70,8 @@ export function buildCreativeBriefPrompt(input: {
     Array.isArray(b.services) && b.services.length ? `Serviços informados: ${b.services.join(", ")}` : "Serviços informados: —",
     `Fotos do estabelecimento (REFERÊNCIA do lead — NÃO usar como imagem de apresentação automaticamente): ${photos.length}${photos.length ? ` (${photos.slice(0, 4).join(", ")})` : ""}`,
     `Imagem de apresentação: pesquisar no pipeline (get-images/Pexels) por segmento + serviço + contexto da seção`,
+    // PLANO DETERMINÍSTICO (1ª geração): entender → estrutura → direção → imagens → implementar.
+    formatGenerationPlan(buildGenerationPlan({ businessName: String(b.name ?? ""), segment: String(b.segment ?? b.category ?? ""), city: b.city ?? undefined, state: b.state ?? undefined, whatsapp: b.whatsapp ?? null, address: b.address ?? null })),
     `Imagens ilustrativas do sistema: ${stock.length}`,
     input.extraFacts ? `Outros dados: ${input.extraFacts}` : "",
   ].filter(Boolean);
