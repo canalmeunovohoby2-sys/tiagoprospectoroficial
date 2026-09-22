@@ -60,6 +60,25 @@ export function assertGenerationQuality(
   }
 
   // Google Maps embutido — obrigatório em TODA landing page gerada.
+  // PLACEHOLDER LITERAL no código entregue (ex.: "{business.cidade}" apareceu no site).
+  // Só tokens claramente NÃO resolvidos: {business.…}/{lead.…}/{company.…}/{project.…} e
+  // chaves duplas {{…}}. Template literal JS legítimo (${…}) NÃO é bloqueado.
+  const codigoTodo = Object.values(files ?? {}).join("\n");
+  const placeholder = codigoTodo.match(/\{\{|\{\s*(business|lead|company|project|empresa|cliente)\s*\./i)?.[0];
+  if (placeholder) {
+    issues.push(`Placeholder literal não resolvido no código (${placeholder}…). Substitua pelos dados reais do cliente antes de finalizar.`);
+  }
+
+  // FOTO DO LEAD (Google/Maps) NUNCA como imagem de apresentação: a origem
+  // lh3.googleusercontent.com só chega por business.photos. Barreira objetiva em
+  // hero/background/cover/banner — não deixar isso para a decisão do modelo.
+  const blocosDeApresentacao = html.match(/<(?:section|div|header)[^>]*(?:hero|banner|cover|background)[^>]*>[\s\S]{0,2500}?<\/(?:section|div|header)>/gi) ?? [];
+  const leadNoHero = blocosDeApresentacao.some((b) => /lh3\.googleusercontent\.com/i.test(b)) ||
+    /(?:background-image|src)\s*[:=]\s*["'(][^"')]*lh3\.googleusercontent\.com/i.test(html);
+  if (leadNoHero) {
+    issues.push("Foto do lead (lh3.googleusercontent.com) usada como imagem de apresentação (hero/background/cover). Ela é REFERÊNCIA do negócio: troque por uma imagem curada do pipeline (image_plan/get-images).");
+  }
+
   // MAPA: exigido para SITE (landing/institucional). Em PRODUTO (SaaS/painel/app)
   // não faz sentido — antes o gate reprovava um dashboard por "sem Google Maps",
   // o que empurrava o agente a poluir o produto com seção de mapa/contato.

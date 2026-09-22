@@ -89,6 +89,58 @@ export async function validateImageUrl(url: string): Promise<boolean> {
   }
 }
 
+// ===== CURADORIA DETERMINÍSTICA (rodada "imagens curadas") =====
+// A escolha final NÃO pode depender só do ranking textual: candidatos claramente
+// fora do contexto (ex.: "soldier/military" num site de energia solar) são barrados
+// por uma barreira OBJETIVA de metadados; termos do vertical elevam a prioridade.
+const FORA_DE_CONTEXTO = /(soldier|military|war\b|weapon|gun\b|army|troop|battle|rifle|missile|bomb|tank\b|sniper|soldado|militar|guerra|arma\b|ex[ée]rcito|tiro)/i;
+
+/** Sinais de relevância do nicho (segmento + palavras do vertical), sem "if por segmento". */
+export function nicheSignals(ctx: ImageProjectContext): string[] {
+  const base = `${ctx?.segment ?? ""} ${ctx?.positioning ?? ""} ${ctx?.architecture ?? ""}`
+    .toLowerCase()
+    .split(/[^a-zà-ú0-9]+/)
+    .filter((w) => w.length >= 4);
+  const extras: Record<string, string[]> = {
+    "energia solar": ["solar", "panel", "photovoltaic", "photovolta", "install", "inverter", "rooftop", "renewable"],
+    academia: ["fitness", "gym", "training", "workout", "weights", "exercise", "treino"],
+    saude: ["clinic", "consult", "health", "care", "patient"],
+    restaurante: ["food", "dish", "kitchen", "restaurant", "meal"],
+    odontologia: ["dental", "dentist", "teeth", "clinic"],
+    usinagem: ["cnc", "machining", "metal", "lathe", "factory", "industrial"],
+  };
+  const chave = Object.keys(extras).find((k) => String(ctx?.segment ?? "").toLowerCase().includes(k));
+  return Array.from(new Set([...base, ...(chave ? extras[chave] : [])]));
+}
+
+/** Rejeita candidato cujo metadado é claramente fora do contexto comercial. */
+export function foraDoContexto(c: ImageCandidate): boolean {
+  return FORA_DE_CONTEXTO.test(`${c.title} ${c.description} ${c.url}`);
+}
+
+/** Ordena por relevância ao nicho (forte > parcial > sem relação) sem falso negativo. */
+export function rankCurated(cands: ImageCandidate[], ctx: ImageProjectContext): ImageCandidate[] {
+  const sinais = nicheSignals(ctx);
+  const pontos = (c: ImageCandidate): number => {
+    const t = `${c.title} ${c.description}`.toLowerCase();
+    return sinais.reduce((acc, s) => acc + (t.includes(s) ? 1 : 0), 0);
+  };
+  return cands
+    .filter((c) => !foraDoContexto(c))
+    .map((c) => ({ ...c, relevance: Math.min(1, c.relevance * 0.4 + Math.min(1, pontos(c) / 3) * 0.6) }))
+    .sort((a, b) => b.relevance - a.relevance);
+}
+
+/** Bloco com os candidatos JÁ CURADOS para o modelo (evita lista indiscriminada). */
+export function formatCuratedImages(role: string, cands: ImageCandidate[]): string {
+  const top = rankCurated(cands, {} as ImageProjectContext).slice(0, 4);
+  if (top.length === 0) return `IMAGENS CURADAS (${role}): nenhuma adequada — componha sem imagem em vez de usar uma imagem errada.`;
+  return [
+    `IMAGENS CURADAS PARA ESTA SEÇÃO (${role}) — use UMA destas (URL + alt), nunca outra fonte para imagem de apresentação:`,
+    ...top.map((c, i) => `  ${i + 1}. ${c.url}\n     alt: ${c.title || c.description || role}`),
+  ].join("\n");
+}
+
 export const defaultImageSearch: ImageSearchFn = async (q) => {
   // 1) MECANISMO REAL (Pexels via edge get-images)
   try {
@@ -163,8 +215,8 @@ export function selectImageCandidate(opts: {
   const used = opts.usedUrls ?? new Set<string>();
   const cands = (opts.candidates ?? []).map((c) => ({
     ...c,
-    rejected: c.rejected || used.has(c.url),
-    rejectionReason: used.has(c.url) ? "URL já utilizada no projeto" : c.rejectionReason,
+    rejected: c.rejected || used.has(c.url) || foraDoContexto(c),
+    rejectionReason: used.has(c.url) ? "URL já utilizada no projeto" : foraDoContexto(c) ? "metadado fora do contexto comercial" : c.rejectionReason,
     relevance: c.relevance || scoreCandidate(c, opts.intent),
   }));
   const valid = cands.filter((c) => !c.rejected);
