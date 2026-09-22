@@ -1880,7 +1880,9 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               : "";
               const missionBase = buildReactMission({
                 continuityBlock,
-                directionBlock: direction.block,
+                // CONVERGENCIA ESTETICA: na 1a geracao os tokens determinisicos da direcao (paleta/hero/grid/ritmo)
+                // NAO entram — viravam um prior forte e os sites do mesmo segmento saiam parecidos. Em edicao continuam.
+                directionBlock: firstGen ? undefined : direction.block,
                 instruction,
                 creativeBrief,
                 mediaBlock: mediaBlockForRun,
