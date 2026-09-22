@@ -367,7 +367,7 @@ export function buildDesignDirection(business: DesignBusiness, seedSource?: stri
     ...p.avoid,
   ];
 
-  const block = [
+  const block = ["DIRECAO VISUAL — REFERENCIA, NAO ESPECIFICACAO: voce e o diretor de arte e decide a identidade final; os itens abaixo sao inspiracao/contexto (adapte, combine, substitua ou ignore quando outra solucao servir melhor). Nao e template obrigatorio.",
     "DIREÇÃO CRIATIVA DESTE NEGÓCIO (consequência dos DADOS REAIS deste cliente — obrigatória; NÃO é template e NÃO use a mesma para outro cliente):",
     "- Esta direção é o PONTO DE PARTIDA da SUA análise, não uma ordem fixa: VOCÊ decide a identidade visual (paleta, tipografia, composição, ritmo, imagens e estrutura) a partir do segmento, público, posicionamento e material REAL deste negócio. Ela deve parecer própria deste cliente e DIFERENTE de qualquer outro — inclusive de outro cliente do mesmo segmento.",
     `- Conceito visual: ${visualConcept}.`,
