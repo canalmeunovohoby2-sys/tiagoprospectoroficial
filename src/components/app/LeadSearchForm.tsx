@@ -498,8 +498,8 @@ export function LeadSearchForm({
           confidence: l.confidence ?? null,
           money_score: l.money_score ?? null,
           pain_score: l.pain_score ?? null,
-          intent_score: l.intent_score ?? null,
-          final_score: l.final_score ?? null,
+          intent_score: l.intent_score ?? 0,
+          final_score: l.final_score ?? 0,
         }));
         const { error: lErr } = await supabase.from("leads").insert(payload);
         if (lErr) throw lErr;
