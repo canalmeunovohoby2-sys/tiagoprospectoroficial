@@ -87,7 +87,8 @@ const GOOGLE_KEY = Deno.env.get("GOOGLE_PLACES_API_KEY");
 const GOOGLE_KEY_LOADED = typeof GOOGLE_KEY === "string" && GOOGLE_KEY.trim().length > 0;
 // O Google Places (New/Legacy) fica DESATIVADO: a fonte primária agora é o
 // Geoapify Places API (gratuito, base OpenStreetMap + open data), sem billing.
-const USE_GOOGLE_PLACES = false;
+// Fonte principal de leads: ON por padrão quando a chave existe (era hardcoded false e a busca ficava vazia). Desligável por secret GOOGLE_PLACES_ENABLED=false.
+const USE_GOOGLE_PLACES = (Deno.env.get("GOOGLE_PLACES_ENABLED") ?? Deno.env.get("ENABLE_GOOGLE_PLACES") ?? "true").trim().toLowerCase() !== "false";
 
 const GEOAPIFY_KEY = Deno.env.get("GEOAPIFY_API_KEY");
 const GEOAPIFY_KEY_LOADED = typeof GEOAPIFY_KEY === "string" && GEOAPIFY_KEY.trim().length > 0;
