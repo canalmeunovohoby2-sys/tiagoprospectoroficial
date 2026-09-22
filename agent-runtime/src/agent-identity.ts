@@ -7,7 +7,8 @@
 // FUNDAÇÕES DE DESIGN (skills premium) — injeção DETERMINÍSTICA na geração:
 // princípios de UI/UX/art-direction/CRO sempre presentes no contexto (a tool
 // `design_skills` continua existindo para consulta complementar sob demanda).
-import { DESIGN_FOUNDATIONS_WITH_PACK as DESIGN_FOUNDATIONS } from "./studio/agent-core/design-skills.js";
+// (O DESIGN_FOUNDATIONS completo vive em studio/agent-core/design-skills.ts e segue
+// disponível via design_skills; o prompt usa o digest compacto abaixo + índice do pack.)
 // Pacote SENIOR (verticals por segmento) — índice no prompt + texto sob demanda.
 import { PACK_INDEX_BLOCK } from "./studio/agent-core/skills-pack.js";
 
@@ -161,6 +162,37 @@ RESPOSTA FINAL SEMPRE CURTA (PRECEDÊNCIA MÁXIMA — vale sobre qualquer instru
 - Exemplo bom (mudança de foto): "Troquei a foto do hero pela que você enviou e ajustei o layout para ela não cortar. 📁 src/index.html · assets/foto.png\n👁️ Recarreguei o site e confirmei a nova imagem no desktop e no mobile."
 - Exemplo bom (tarefa pequena): "Ajustei o contraste do botão para azul escuro. 📁 src/site.css\n👁️ Confirmei no preview."`;
 
+// ===== DIGESTS COMPACTOS (rodada "enxugar sem perder padrão") =====
+// Os blocos originais continuam existindo/exportados (nada foi apagado): o prompt passa
+// a usar a versão condensada; o detalhe longo segue acessível via design_skills/tools.
+export const DESIGN_FOUNDATIONS_COMPACT = `PADRÃO SENIOR (execução premium — princípios, NUNCA template):
+1. DESIGN SYSTEM ANTES DE CODAR: tokens com intenção (1 marca + 1 accent exclusivo do CTA + neutros; escala de 5–9 tons), máx. 2 famílias tipográficas com escala modular, espaçamento base 4/8, raio/sombra consistentes. Nunca cores default de framework.
+2. HIERARQUIA E COMPOSIÇÃO: em 3s o visitante entende o que é, por que confiar e onde clicar; 1 elemento dominante por seção; accent só no CTA; composição variada (assimétrica, split, full-bleed, editorial) — nunca navbar→hero→3 cards→footer por inércia.
+3. HERO COMO DIREÇÃO DE ARTE: quem/o quê/por quê/ação em segundos, sem parede de texto; nada do clichê "título central + texto + botão + imagem abaixo".
+4. COPY DE CONVERSÃO: fale do RESULTADO do cliente com especificidade (números, prazos, garantias reais), "você", PAS para dores, 1 CTA por seção no tom do funil; banir jargão vazio ("compromisso com a qualidade").
+5. PROVA SOCIAL (só dados reais): números > selos > depoimentos específicos > avaliações; nunca inventar.
+6. FAQ COMO QUEBRA DE OBJEÇÃO quando o segmento exigir: perguntas na linguagem do cliente, respostas curtas, accordion leve.
+7. MOBILE PROJETADO (não encolhido): reavalie ordem, densidade, tipografia fluida (clamp), toque ≥44px, menu com toggle seguro, sem overflow, 100dvh.
+8. ACESSIBILIDADE WCAG AA: contraste ≥4.5:1, HTML semântico, h1–h6 sem pular, alt descritivo, :focus-visible, label em todo input.
+9. PERFORMANCE: width/height + lazy (hero eager), font-display swap, animar só transform/opacity, terceiros adiados.
+10. MOTION: hover 150–250ms, reveal com stagger 60–100ms, easing suave, prefers-reduced-motion respeitado.
+11. IMAGENS: intenção (sujeito/atmosfera/enquadramento) da direção; prioridade foto real do negócio > pipeline de imagens > ilustrativa coerente; tratar na composição (crop, object-position, overlay); nunca placeholder evidente.
+12. SEO ON-PAGE: 1 <h1>, <title> persuasivo + meta description, JSON-LD LocalBusiness com NAP real.
+13. PERCEPÇÃO PREMIUM: respiro consistente, coerência total (1 estilo de borda, 1 linguagem de ícones, mesmo tratamento fotográfico), micro-detalhes resolvidos — parece feito PARA ESTA empresa.
+14. EXPERIÊNCIA POR SEGMENTO e 17. ARQUITETURA NASCE DO NEGÓCIO: ordem das seções segue a jornada do segmento, nunca estrutura fixa.
+15. ANTI-TEMPLATE: dois clientes nunca recebem mesma estrutura/paleta/ordem/textos; efeitos são ferramentas da direção, não enfeite; qualidade = direção + composição + hierarquia + execução.
+16. TIPOGRAFIA COM PRESENÇA: par coerente com o segmento, escala/peso/line-height/tracking trabalhados; fonte neutra para tudo não serve.
+18. DIFERENCIAÇÃO: "removendo o nome da empresa, ainda parece desenhado para ESTE segmento?" — se não, refine antes de finalizar.
+19. PROFUNDIDADE PROPORCIONAL: informação suficiente para gerar confiança e conversão (proposta, diferenciais, serviços/aplicações, processo, estrutura, cases, área atendida, FAQ, localização) — só o que fizer sentido; nada de conteúdo falso.
+20. RITMO VISUAL: alterne composição entre seções; nunca sequência interminável de cards/3 colunas idênticas.
+
+NÍVEL MÍNIMO DE VIDA VISUAL (site estático é falha de qualidade): reveal on scroll com stagger; hover/focus reais em botões, cards, links e imagens; UMA assinatura de movimento escolhida pela direção (marquee, parallax leve, contador, zoom lento, gradiente, beam); transições 300–700ms em transform/opacity.
+
+MARQUEE/ROLAGEM INFINITA (quando a direção pedir): duplique o conteúdo 2x e anime translateX de 0 a -50% com @keyframes linear (ciclo de 20-40s), pause no hover (animation-play-state: paused), respeite prefers-reduced-motion e use pointer-events: none em faixas decorativas.`;
+
+// BROWSER QA enxuto — o detalhamento operacional vive nas tools/QA do runtime.
+export const BROWSER_QA_COMPACT = `BROWSER QA: quando precisar validar o resultado, use as ferramentas de browser (abrir, inspecionar, medir, console) e corrija problemas OBJETIVOS antes de concluir — página que não monta, erro de JS, recurso crítico quebrado, layout colapsado, overflow grave, asset inexistente. Verifique desktop e mobile (390px).`;
+
 export const BROWSER_QA_INSTRUCTIONS = `BROWSER QA (ferramentas browser_*):
 - Você tem navegador real (browser_open, browser_inspect, browser_console, browser_links, browser_screenshot, browser_set_viewport, browser_reload, visual_review).
 - Use quando a tarefa envolver validar o resultado (geração, redesign, responsividade mobile, overflow, links, console, imagens). NÃO use para mudanças triviais de texto.
@@ -202,24 +234,9 @@ SISTEMA PROFISSIONAL DE LOGOMARCA + IDENTIDADE VISUAL (mesmo cérebro — projet
 // FONTE ÚNICA das regras de composição (endereço + fotos) — usada na GERAÇÃO e na EDIÇÃO.
 // Não duplicar este texto em nenhum outro lugar: importe/adicione esta constante.
 export const CONTACT_AND_PHOTOS_RULES = `
-
-- NÍVEL MÍNIMO DE VIDA VISUAL (site ESTÁTICO é falha de qualidade, não escolha): toda entrega precisa de (a) entrada em cena por scroll (reveal com IntersectionObserver + stagger 60–100ms), (b) estados de hover/focus reais em botões, cards, links e imagens (lift/scale/glow/borda conforme a direção), (c) UMA assinatura de movimento do projeto (marquee, parallax leve, contador, imagem com zoom lento, gradiente em movimento, beam — escolhida pela DIREÇÃO), (d) transições de 300–700ms em transform/opacity com easing suave e prefers-reduced-motion respeitado. Sem isso o site parece template barato — e nenhuma dessas é decoração: elas guiam o olho e dão profundidade.
-- FONTE DA VERDADE DO NEGÓCIO: use SEMPRE os dados reais do cliente (briefing/lead/contexto da missão). Se algum arquivo auxiliar (ex.: o src/site.json da base) estiver VAZIO ou trouxer nome genérico/de TESTE (ex.: "TESTE…", "Exemplo", "Lorem", "rascunho"), trate como AUSENTE e siga com o contexto do cliente — NUNCA ancore o plano (imagens, seções, copy) em placeholder e NUNCA escreva esse nome no site final. Sem dados reais para um passo, diga o que falta de forma operacional (ex.: "sem dados do cliente para o plano de imagem — usando o briefing do lead") em vez de comentar a inutilidade do arquivo.
-- ENDEREÇO É DADO DE CONTATO, NÃO CONTEÚDO COMERCIAL: rua/número/bairro/CEP/telefone/WhatsApp
-  pertencem a Contato / Localização / bloco de informações da empresa / rodapé. NUNCA abra a
-  narrativa com endereço completo nem jogue o endereço no meio de seções comerciais só porque o
-  dado foi encontrado. Prioridade: (1) seção de Contato existente, (2) seção de Localização
-  existente, (3) bloco de informações da empresa, (4) rodapé, (5) criar uma seção de localização
-  SOMENTE quando fizer sentido. Peso visual proporcional à função: endereço não compete com
-  headline, CTA principal, proposta de valor ou serviços. Não duplicar endereço em várias seções.
-- FOTOS COERENTES COM O NICHO E COM A SEÇÃO: antes de escolher uma imagem, pergunte o que este
-  negócio realmente vende, o que o cliente espera ver e qual imagem reforça a mensagem DAQUELA
-  seção (hero = impacto do negócio; serviços = o serviço real; ambiente = o espaço; prova =
-  resultado). Use termos de busca contextuais (segmento + serviço, segmento + ambiente, segmento
-  + produto) no mecanismo de imagens já existente. NUNCA use stock desconectado do negócio, foto
-  repetida em várias seções sem necessidade nem imagem que contradiga o posicionamento. Se não
-  houver imagem adequada, NÃO invente: componha bem com o que existe. Logo enviada pelo usuário
-  tem PRIORIDADE sobre qualquer logo genérica/stock.`;
+- ENDEREÇO é dado de contato/localização: use Contato, Localização, bloco institucional ou rodapé; não interrompa a narrativa comercial nem duplique; peso visual proporcional (não compete com headline, CTA ou serviços).
+- FOTOS coerentes com SEGMENTO + SERVIÇO + contexto da seção (hero = impacto do negócio; serviços = o serviço real; ambiente = o espaço; prova = resultado): use o pipeline de imagens do projeto com termos contextuais; sem stock desconectado, repetição desnecessária ou imagem que contrarie o posicionamento; sem imagem adequada, componha sem inventar. Logo enviada pelo usuário tem PRIORIDADE.
+- FONTE DA VERDADE: dados reais do cliente; arquivo auxiliar vazio, genérico ou de teste é tratado como AUSENTE e nunca vai ao site final.`;
 
 // Prompt-base do modo EDIÇÃO. `branding` inclui a skill de marca só quando a
 // tarefa exige (economia de ~2,1k chars nos demais casos).
@@ -258,7 +275,7 @@ EDIÇÃO DE IMAGENS E ENQUADRAMENTO (obrigatório):
   • trocar imagem → altere de verdade a URL/path (prefira arquivos reais em assets/ ou imagens coerentes com o segmento); remover → remova o elemento e o CSS relacionado.
 - SEMPRE confirme no navegador (browser_open → browser_inspect/browser_measure/browser_eval) que o sujeito aparece por INTEIRO (ex.: a cabeça toda visível), no desktop E no mobile, sem overflow horizontal e sem erro de console, antes de finalizar. Se ainda estiver cortado, ajuste e verifique de novo.
 
-${BROWSER_QA_INSTRUCTIONS}
+${BROWSER_QA_COMPACT}
 
 O site DEVE continuar válido: index.html com <!doctype html>, <style> balanceado, src/site.json JSON válido.`;
 }
@@ -318,7 +335,9 @@ BASE JÁ NO WORKSPACE (leia antes de editar):
 
 ${missionHeader}
 
-${DESIGN_FOUNDATIONS}
+${DESIGN_FOUNDATIONS_COMPACT}
+
+${PACK_INDEX_BLOCK}
 
 ${efficiency}
 
@@ -348,7 +367,7 @@ MENU MOBILE SEGURO (regra obrigatória de geração):
   document.addEventListener("click", e => { if (nav.classList.contains("open") && !nav.contains(e.target) && !btn.contains(e.target)) setMenu(false); });
 - PROIBIDO causar tela preta: "filter: brightness(0)", overlay full-screen "background:#000" sem display/classe controlada e SEM fechar ao navegar/clicar item/Escape.
 
-${BROWSER_QA_INSTRUCTIONS}
+${BROWSER_QA_COMPACT}
 
 SELF-CHECK DE GERAÇÃO (obrigatório antes de finish_task):
 - Existe hero forte e CTA claro? Header/nav coerentes? Footer completo?
