@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isSurgicalEditTask } from "../src/prospector-site-agent";
 import { isBugReport } from "../src/completion-guard";
+import { buildEditSystemPrompt } from "../src/agent-identity";
 
 // MATRIZ CORRIGIDA (auditoria): antes, "adicione seção" era cirúrgica (❌) e
 // "troque a imagem/logo" era PESADA (❌ — causa da edição de imagem demorada).
@@ -73,5 +74,17 @@ describe("autonomia · default guarded (guard + QA automática ativos)", () => {
     const bloco = src.slice(Math.max(0, i - 260), i + 80);
     expect(bloco).toContain('runKindEfetivo === "generate"');
     expect(bloco).toContain("!timedOut");
+  });
+});
+
+// REGRESSAO (rastro real: uma troca de imagem gastou as 40 iteracoes e NAO aplicou). A EDICAO
+// precisa ser direta: sem navegador, anexo por /assets/<nome>, termina com diff.
+describe("edicao · foco e aplicacao", () => {
+  it("o prompt de EDICAO traz as regras de foco (sem navegador, anexo direto, conclusao por diff)", () => {
+    const edit = buildEditSystemPrompt({});
+    expect(edit).toContain("EDICAO LOCALIZADA");
+    expect(edit).toContain("SEM abrir o navegador");
+    expect(edit).toContain("/assets/<nome>");
+    expect(edit).toContain("SEM diff = tarefa NAO feita");
   });
 });

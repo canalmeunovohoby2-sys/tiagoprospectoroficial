@@ -188,6 +188,13 @@ RESPOSTA FINAL SEMPRE CURTA (PRECEDÊNCIA MÁXIMA — vale sobre qualquer instru
 - Exemplo bom (mudança de foto): "Troquei a foto do hero pela que você enviou e ajustei o layout para ela não cortar. 📁 src/index.html · assets/foto.png\n👁️ Recarreguei o site e confirmei a nova imagem no desktop e no mobile."
 - Exemplo bom (tarefa pequena): "Ajustei o contraste do botão para azul escuro. 📁 src/site.css\n👁️ Confirmei no preview."`;
 
+// FOCO NA EDICAO (evidencia do rastro: uma troca de imagem consumiu as 40 iteracoes e NAO
+// aplicou — o agente se perdeu em leituras/navegador). Edicao localizada e DIRETA.
+export const EDIT_FOCUS_RULES = `
+- EDICAO LOCALIZADA (texto/cor/logo/imagem): ache o arquivo, altere e GRAVE — no maximo 2 leituras, sem releituras, SEM abrir o navegador. Nao reescreva o que nao foi pedido.
+- ANEXO do usuario: use o caminho real informado (ex.: "/assets/<nome>"); troca de imagem = 1 busca no pipeline e finalize.
+- SEM diff = tarefa NAO feita: faca agora ou diga o que faltou.`;
+
 // AUTORIDADE VISUAL ÚNICA — corrige as 4 "autoridades" que competiam (direção de arte,
 // creative brief, princípios Senior e vertical). Sem precedência explícita o modelo faz
 // MÉDIA dos estilos e o site sai genérico.
@@ -275,7 +282,7 @@ export const CONTACT_AND_PHOTOS_RULES = `
 // tarefa exige (economia de ~2,1k chars nos demais casos).
 export function buildEditSystemPrompt(opts?: { branding?: boolean }): string {
   const brand = opts?.branding ? `\n\n${BRAND_IDENTITY_SKILL}` : "";
-  return `${AGENT_IDENTITY}${brand}${ART_DIRECTION_AUTHORITY}${CONTACT_AND_PHOTOS_RULES}${PACK_INDEX_BLOCK ? `\n\n${PACK_INDEX_BLOCK}` : ""}
+  return `${AGENT_IDENTITY}${brand}${ART_DIRECTION_AUTHORITY}${CONTACT_AND_PHOTOS_RULES}${EDIT_FOCUS_RULES}${PACK_INDEX_BLOCK ? `\n\n${PACK_INDEX_BLOCK}` : ""}
 
 EDIÇÃO DE ASSET (logo, imagem, favicon, arquivo — pedido objetivo, RÁPIDO):
 - O anexo JÁ está no workspace em assets/<nome>.<ext> (binário real). Para "trocar a logo/imagem/anexada": localize onde o site referencia a logo/imagem atual, substitua o arquivo no caminho usado (copie o anexo para lá) e altere SOMENTE a referência necessária (src= ou url()). NÃO reescreva App.tsx nem o site inteiro; NÃO rode npm install nem npm run build; faça UMA verificação objetiva (o arquivo existe no caminho e a referência aponta para ele) e finalize.
