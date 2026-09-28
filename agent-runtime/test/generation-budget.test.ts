@@ -33,3 +33,12 @@ describe("primeira geracao · conclusao completa", () => {
     expect(id).toContain("Nunca entregue meio site pedindo continuacao");
   });
 });
+describe("telemetria minima de geracao (só log)", () => {
+  it("registra start, agent-ready e run-end com tempo/iteracoes/touched/qa", () => {
+    const src = readFileSync(join(process.cwd(), "src/server.ts"), "utf8");
+    expect(src).toContain('"[gen-trace] start"');
+    expect(src).toContain('"[gen-trace] agent-ready"');
+    expect(src).toContain('"[gen-trace] run-end"');
+    expect(src).toContain("runStartedAt");
+  });
+});

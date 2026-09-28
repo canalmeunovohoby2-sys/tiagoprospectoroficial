@@ -1824,6 +1824,8 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             const hasAttachments = Array.isArray(body.attachments) && (body.attachments as unknown[]).length > 0;
             const runKind = hasAttachments ? (firstGen ? "generate" : "edit") : reactRunKind({ firstGen, instruction });
             const runKindEfetivo: ReactRunKind = runKind === "edit" && semSiteReal(currentFiles) && pareceCriacao(instruction) ? "generate" : runKind;
+            const runStartedAt = Date.now();
+            console.info("[gen-trace] start", JSON.stringify({ projectId, kind: runKindEfetivo, firstGen, files: Object.keys(currentFiles).length, iters: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : 40 }));
             // FIRSTGEN NUNCA recebe o site de OUTRO cliente como ponto de partida: backup
             // + poda do workspace para infra + shell canônico (auditoria física provou
             // workspace "firstGen" com componentes/CSS/content do cliente anterior).
@@ -1940,6 +1942,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 { hasBase: runKindEfetivo === "generate" ? false : !firstGen, autonomy },
               );
               sessions.set(sessionKey, { agent: oldAgent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
+              console.info("[gen-trace] agent-ready", JSON.stringify({ projectId, ms: Date.now() - runStartedAt }));
             }
             // ===== STREAMING REAL: assina ANTES de runTask =====
             // Cada evento REAL do agente vira linha NDJSON na hora (activity,
@@ -2057,6 +2060,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 })
               : { executed: false, pass: false, correctionRound: false, technicalFailure: "", final: null };
             if (firstGenQa.correctionRound) emitFiles();
+            console.info("[gen-trace] run-end", JSON.stringify({ projectId, kind: runKindEfetivo, timedOut, iterations: outcome.iterations ?? 0, touched: touched.length, qa: firstGenQa.executed ? firstGenQa.pass : null, totalMs: Date.now() - runStartedAt }));
             const mapFixed = (() => { try { return normalizeWorkspaceMapEmbeds(root, business); } catch { return [] as string[]; } })();
             let finalFiles = readWorkspace(root);
             if (mapFixed.length > 0) emitFiles();
