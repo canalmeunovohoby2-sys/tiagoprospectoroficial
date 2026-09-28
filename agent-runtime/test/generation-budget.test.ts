@@ -36,9 +36,9 @@ describe("primeira geracao · conclusao completa", () => {
 describe("telemetria minima de geracao (só log)", () => {
   it("registra start, agent-ready e run-end com tempo/iteracoes/touched/qa", () => {
     const src = readFileSync(join(process.cwd(), "src/server.ts"), "utf8");
-    expect(src).toContain('"[gen-trace] start"');
-    expect(src).toContain('"[gen-trace] agent-ready"');
-    expect(src).toContain('"[gen-trace] run-end"');
+    expect(src).toContain('genTrace("start"');
+    expect(src).toContain('genTrace("agent-ready"');
+    expect(src).toContain('genTrace("run-end"');
     expect(src).toContain("runStartedAt");
   });
 });

@@ -5,7 +5,7 @@
 // SESSÃO PERSISTENTE POR PROJETO: um Agent (Cline) fica vivo por projectId em
 // memória; cada nova mensagem chama agent.continue() para manter o contexto.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -304,6 +304,17 @@ export function shouldReuseSession(existing: { execKey?: string } | undefined | 
  * modelo). Padrão 4 min; configurável por `AGENT_RUN_TIMEOUT_MS` (0 desliga,
  * mínimo 30s, máximo 15min).
  */
+/**
+ * Rastro minimo da geracao gravado em ARQUIVO (agent-runtime/.gen-trace.log): permite
+ * diagnostico objetivo de tempo/iteracoes/QA sem depender do stdout do processo destacado.
+ * Nunca derruba a execucao (falha de escrita e ignorada).
+ */
+function genTrace(evento: string, dados: Record<string, unknown>): void {
+  try {
+    appendFileSync(join(process.cwd(), ".gen-trace.log"), `${new Date().toISOString()} ${evento} ${JSON.stringify(dados)}\n`);
+  } catch { /* noop */ }
+}
+
 export function resolveRunTimeoutMs(raw?: string | number | null): number {
   const fromArg = raw === undefined || raw === null || raw === "" ? null : String(raw);
   const text = String(fromArg ?? process.env.AGENT_RUN_TIMEOUT_MS ?? "").trim();
@@ -1825,7 +1836,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             const runKind = hasAttachments ? (firstGen ? "generate" : "edit") : reactRunKind({ firstGen, instruction });
             const runKindEfetivo: ReactRunKind = runKind === "edit" && semSiteReal(currentFiles) && pareceCriacao(instruction) ? "generate" : runKind;
             const runStartedAt = Date.now();
-            console.info("[gen-trace] start", JSON.stringify({ projectId, kind: runKindEfetivo, firstGen, files: Object.keys(currentFiles).length, iters: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : 40 }));
+            genTrace("start", { projectId, kind: runKindEfetivo, firstGen, files: Object.keys(currentFiles).length, iters: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : 40 });
             // FIRSTGEN NUNCA recebe o site de OUTRO cliente como ponto de partida: backup
             // + poda do workspace para infra + shell canônico (auditoria física provou
             // workspace "firstGen" com componentes/CSS/content do cliente anterior).
@@ -1942,7 +1953,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 { hasBase: runKindEfetivo === "generate" ? false : !firstGen, autonomy },
               );
               sessions.set(sessionKey, { agent: oldAgent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
-              console.info("[gen-trace] agent-ready", JSON.stringify({ projectId, ms: Date.now() - runStartedAt }));
+              genTrace("agent-ready", { projectId, ms: Date.now() - runStartedAt });
             }
             // ===== STREAMING REAL: assina ANTES de runTask =====
             // Cada evento REAL do agente vira linha NDJSON na hora (activity,
@@ -2060,7 +2071,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 })
               : { executed: false, pass: false, correctionRound: false, technicalFailure: "", final: null };
             if (firstGenQa.correctionRound) emitFiles();
-            console.info("[gen-trace] run-end", JSON.stringify({ projectId, kind: runKindEfetivo, timedOut, iterations: outcome.iterations ?? 0, qa: firstGenQa.executed ? firstGenQa.pass : null, totalMs: Date.now() - runStartedAt }));
+            genTrace("run-end", { projectId, kind: runKindEfetivo, timedOut, iterations: outcome.iterations ?? 0, qa: firstGenQa.executed ? firstGenQa.pass : null, totalMs: Date.now() - runStartedAt });
             const mapFixed = (() => { try { return normalizeWorkspaceMapEmbeds(root, business); } catch { return [] as string[]; } })();
             let finalFiles = readWorkspace(root);
             if (mapFixed.length > 0) emitFiles();
