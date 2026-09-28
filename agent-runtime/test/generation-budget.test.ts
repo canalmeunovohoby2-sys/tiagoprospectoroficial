@@ -1,4 +1,4 @@
-﻿import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -22,5 +22,14 @@ describe("orcamento de execucao · gerar x editar", () => {
 
   it("o endpoint /generate tambem nao nasce com poucas iteracoes", () => {
     expect(src).toContain("GENERATE_MAX_ITERATIONS ?? 45");
+  });
+});
+
+describe("primeira geracao · conclusao completa", () => {
+  it("exige o site COMPLETO e limita o navegador a uma checagem curta", () => {
+    const id = readFileSync(join(process.cwd(), "src/agent-identity.ts"), "utf8");
+    expect(id).toContain("so finalize com o site COMPLETO");
+    expect(id).toContain("nao use o navegador como etapa longa");
+    expect(id).toContain("Nunca entregue meio site pedindo continuacao");
   });
 });
