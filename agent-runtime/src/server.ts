@@ -1657,6 +1657,9 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
       }
 
       if (url.pathname === "/run" && req.method === "POST") {
+        // Rastro na CHEGADA: garante visibilidade mesmo quando a execucao e barrada depois
+        // (dono do projeto/IA nao validada). Sem conteudo sensivel — so auth/projeto.
+        genTrace("run-received", { hasAuth: Boolean(req.headers.authorization) });
           const body = await readJson(req);
           const instruction = String(body.instruction ?? "").trim();
         const projectId = String(body.projectId ?? body.sessionId ?? "default").trim();
