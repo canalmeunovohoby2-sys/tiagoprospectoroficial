@@ -31,17 +31,28 @@ describe("preview · iframe para o runtime local", () => {
 // só era aplicado no iframe do WebContainer e a recarga exigia `phase === "ready"`,
 // que no preview do runtime (modo local) nunca acontece.
 describe("preview · recarrega após cada edição", () => {
-  it("a recarga não depende do WebContainer ficar ready", () => {
+  it("a recarga usa a DIGITAL dos arquivos (não remonta a cada poll) e não depende do WebContainer", () => {
     const idx = src.indexOf("setTimeout(() => setFrameKey");
     expect(idx).toBeGreaterThan(0);
     // o bloco do refresh (o que o antecede) não pode ter o early-return por fase
     expect(src.slice(Math.max(0, idx - 700), idx)).not.toContain('phase !== "ready"');
     const depois = src.slice(idx, idx + 200);
-    expect(depois).toContain("refreshKey, projected");
+    expect(depois).toContain("refreshKey, filesSignature"); // digital de arquivos: nao remonta a cada poll
   });
 
   it("os DOIS iframes do runtime remontam com cache-buster", () => {
     expect((src.match(/key=\{`rt-/g) ?? []).length).toBe(2);
     expect((src.match(/k=\$\{frameKey\}/g) ?? []).length).toBe(2);
+  });
+});
+
+// REGRESSAO (bug relatado: preview "piscando" sem aplicar): o poll entrega array novo a cada
+// tick; sem digital de conteudo o iframe remontava a cada ~1s. Aqui garantimos a digital.
+describe("preview · anti-tremulacao (digital de arquivos)", () => {
+  const src = readFileSync(join(process.cwd(), "src/components/sites/studio/WebContainerPreview.tsx"), "utf8");
+  it("computa filesSignature (tamanho + hash) e usa nas dependencias", () => {
+    expect(src).toContain("const filesSignature = useMemo(");
+    expect(src).toContain("return `${total}:${h}`");
+    expect(src).toContain("[refreshKey, filesSignature]");
   });
 });
