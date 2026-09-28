@@ -1048,7 +1048,7 @@ export function startServer(port = PORT, host = HOST) {
         // Gera em MENOS iterações por padrão (a geração é uma chamada bloqueante; 32
         // iterações + browser estouram o limite de ~300s de proxy/transport e dão
         // "Agent Runtime não respondeu"). Configurável via GENERATE_MAX_ITERATIONS.
-        const genIter = Math.min(60, Math.max(8, Number(body.maxIterations ?? process.env.GENERATE_MAX_ITERATIONS ?? 22)));
+        const genIter = Math.min(60, Math.max(8, Number(body.maxIterations ?? process.env.GENERATE_MAX_ITERATIONS ?? 45)));
         // Browser QA na geração fica OPT-IN (acelera muito; evita timeout). Para
         // ligar por padrão: GENERATE_BROWSER=1 ou envie enableBrowser:true.
         const genBrowser = process.env.GENERATE_BROWSER === "1" || body.enableBrowser === true;
@@ -1935,7 +1935,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 projectId,
                 currentFiles,
                 businessForRun,
-                { ...body, mode: runKindEfetivo === "generate" ? "generate" : "edit" },
+                { ...body, mode: runKindEfetivo === "generate" ? "generate" : "edit", maxIterations: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : body.maxIterations },
                 exec,
                 { hasBase: runKindEfetivo === "generate" ? false : !firstGen, autonomy },
               );
@@ -1962,7 +1962,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // Antes o padrao de 4 min cortava a geracao no meio (site pela metade, ~4 arquivos).
             const baseTimeout = resolveRunTimeoutMs();
             const runTimeoutMs = runKindEfetivo === "generate"
-              ? (baseTimeout === 0 ? 0 : Math.min(Math.max(baseTimeout, 660_000), 900_000))
+              ? (baseTimeout === 0 ? 0 : Math.min(Math.max(baseTimeout, 900_000), 900_000))
               : Math.min(baseTimeout, 120_000);
             let timedOut = false;
             // Resultado PARCIAL honesto (diff real do disco) — usado pelo watchdog.
