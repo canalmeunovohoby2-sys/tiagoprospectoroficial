@@ -2060,7 +2060,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 })
               : { executed: false, pass: false, correctionRound: false, technicalFailure: "", final: null };
             if (firstGenQa.correctionRound) emitFiles();
-            console.info("[gen-trace] run-end", JSON.stringify({ projectId, kind: runKindEfetivo, timedOut, iterations: outcome.iterations ?? 0, touched: touched.length, qa: firstGenQa.executed ? firstGenQa.pass : null, totalMs: Date.now() - runStartedAt }));
+            console.info("[gen-trace] run-end", JSON.stringify({ projectId, kind: runKindEfetivo, timedOut, iterations: outcome.iterations ?? 0, qa: firstGenQa.executed ? firstGenQa.pass : null, totalMs: Date.now() - runStartedAt }));
             const mapFixed = (() => { try { return normalizeWorkspaceMapEmbeds(root, business); } catch { return [] as string[]; } })();
             let finalFiles = readWorkspace(root);
             if (mapFixed.length > 0) emitFiles();
