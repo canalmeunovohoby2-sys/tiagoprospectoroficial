@@ -27,8 +27,8 @@ describe("INICIAR-TIAGOPROSPECTOR.bat — launcher dos tres motores locais", () 
 
   it("confere o health ANTES de iniciar (nao cria duplicata)", () => {
     const src = bat();
-    expect(src).toContain(":esperar");
-    expect(src).toContain("ja estava ativo - reutilizando");
+    expect(src).toContain(":health");
+    expect(src).toContain("if errorlevel 1"); // so inicia o que estiver fora (nao duplica)
     expect(src).toContain("/health");
   });
 

@@ -151,25 +151,18 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>,
 );
 `,
-    "src/App.tsx": `// ${REACT_BOOTSTRAP_MARKER}: rascunho neutro descartável — o site real substitui este arquivo.
+    "src/App.tsx": `// ${REACT_BOOTSTRAP_MARKER}: shell VAZIO — existe apenas para o Vite montar.
+// NENHUMA identidade visual aqui: a IA cria a estrutura, o layout, as secoes, os componentes,
+// a tipografia, as cores e as imagens DESTE projeto (cada site e uma decisao nova).
 export default function App() {
-  return (
-    <main className="min-h-screen bg-white text-neutral-900">
-      <section className="mx-auto flex min-h-screen max-w-3xl flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-xs uppercase tracking-[0.2em] text-neutral-400">Rascunho</p>
-        <h1 className="text-3xl font-semibold sm:text-4xl">${safeName}</h1>
-        <p className="max-w-xl text-neutral-500">${safeTagline}</p>
-      </section>
-    </main>
-  );
+  return null;
 }
 `,
     "src/index.css": `@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ${REACT_BOOTSTRAP_MARKER}: base neutra — a identidade visual real vem da geração. */
-body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+/* ${REACT_BOOTSTRAP_MARKER}: base tecnica apenas (sem fonte, cor, layout ou tokens do cliente). */
 `,
   };
 }

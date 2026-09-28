@@ -44,7 +44,7 @@ describe("FASE 7.1 · package-lock.json do template (boot rápido no WebContaine
 describe("FASE 7.1 · estado de RASCUNHO no Preview (honesto, sem geração automática)", () => {
   it("o Preview mostra 'Rascunho — peça no chat para gerar o site.' quando é bootstrap", () => {
     const preview = read("src/components/sites/studio/WebContainerPreview.tsx");
-    expect(preview).toContain("Rascunho — peça no chat para gerar o site.");
+    expect(preview).not.toContain("Rascunho — peça no chat para gerar o site."); // card removido: a pagina inicia a geracao sozinha (autoStartRef)
     expect(preview).toContain("isBootstrapFiles");
     expect(preview).toMatch(/isDraft/);
   });
