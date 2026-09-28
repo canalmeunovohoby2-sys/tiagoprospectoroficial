@@ -241,7 +241,7 @@ export function mediaContextBlock(business: BusinessContext): string {
     lines.push(
       "FOTOS DO ESTABELECIMENTO OBTIDAS DO LEAD (Google/Maps) = REFERÊNCIA DO NEGÓCIO, NÃO imagem de apresentação: não use automaticamente como hero, background, cover, banner nem visual principal. Só entram se o pedido pedir explicitamente. São URLs reais — nunca invente URL:",
       ...photos.slice(0, 12).map((u, i) => `  ${i + 1}. ${u}`),
-      "IMAGEM DE APRESENTAÇÃO DO SITE = pesquisar PRIMEIRO no pipeline de imagens (image_plan → get-images/Pexels) pelo segmento + serviço + contexto da seção.",
+      "IMAGEM DE APRESENTAÇÃO DO SITE = pesquisar PRIMEIRO no pipeline de imagens (image_plan → get-images/Pexels) pelo segmento + serviço + contexto da seção. NUNCA use como apresentação imagem do site/domínio do PRÓPRIO cliente nem de terceiros (ex.: www.cliente.com.br) — essas são referência, não foto de site.",
     );
   } else {
     lines.push(

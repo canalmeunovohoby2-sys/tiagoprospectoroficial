@@ -69,6 +69,16 @@ export function assertGenerationQuality(
     issues.push(`Placeholder literal não resolvido no código (${placeholder}…). Substitua pelos dados reais do cliente antes de finalizar.`);
   }
 
+  // IMAGEM DE APRESENTAÇÃO DE ORIGEM NÃO CURADA (bug real: hero saiu com imagens do SITE DO
+  // CLIENTE — www.atonstar.com.br). Apresentação só pode vir do pipeline (stock) ou de /assets/.
+  const blocosHero = html.match(/<(?:section|div|header)[^>]*(?:hero|banner|cover|background)[^>]*>[\s\S]{0,2500}?<\/(?:section|div|header)>/gi) ?? [];
+  const fonteCurada = /(images\.pexels\.com|images\.unsplash\.com|cdn\.pixabay\.com|burst\.shopifycdn\.com|images\.istockphoto\.com|\/assets\/|data:image)/i;
+  const urlsHero = [...blocosHero.flatMap((b) => [...b.matchAll(/(?:background-image\s*:\s*url\(|src=)["']?(https?:\/\/[^"')\s]+)/gi)].map((m) => m[1]))];
+  const externa = urlsHero.find((u) => !fonteCurada.test(u));
+  if (externa) {
+    issues.push(`Imagem de apresentação (hero/background) vem de origem não curada: ${externa.slice(0, 90)}. Use image_plan/get-images (Pexels) ou asset enviado pelo usuário em /assets/ — imagem de site de cliente/terceiro é apenas referência.`);
+  }
+
   // FOTO DO LEAD (Google/Maps) NUNCA como imagem de apresentação: a origem
   // lh3.googleusercontent.com só chega por business.photos. Barreira objetiva em
   // hero/background/cover/banner — não deixar isso para a decisão do modelo.

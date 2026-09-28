@@ -43,6 +43,21 @@ function imageEnv(): { url?: string; key?: string } {
   };
 }
 
+/**
+ * ORIGEM CONFIÁVEL DE APRESENTAÇÃO: o pipeline só devolve imagem de banco (stock).
+ * BUG REAL: o site aprovado saiu com 5 imagens de www.atonstar.com.br (site do PRÓPRIO
+ * cliente) e só 2 do Pexels — imagens de terceiros/cliente entravam como apresentação.
+ */
+const STOCK_HOSTS = /(^|\.)(images\.pexels\.com|images\.unsplash\.com|cdn\.pixabay\.com|burst\.shopifycdn\.com|images\.istockphoto\.com|upload\.wikimedia\.org)$/i;
+
+export function isStockHost(url: string): boolean {
+  try {
+    return STOCK_HOSTS.test(new URL(url).host);
+  } catch {
+    return false;
+  }
+}
+
 type AssetLike = Record<string, unknown>;
 const primeiroTexto = (a: AssetLike, chaves: string[]): string => {
   for (const k of chaves) {
@@ -56,6 +71,8 @@ const primeiroTexto = (a: AssetLike, chaves: string[]): string => {
 export function assetToResult(a: AssetLike): ImageSearchResult | null {
   const url = primeiroTexto(a, ["url", "imageUrl", "src", "srcLarge", "large", "regular", "original", "srcOriginal"]);
   if (!/^https?:\/\//i.test(url)) return null;
+  // Só banco de imagens entra como candidato de apresentação (nunca site do cliente/terceiros).
+  if (!isStockHost(url)) return null;
   const alt = primeiroTexto(a, ["alt", "description", "title", "name"]);
   const autor = primeiroTexto(a, ["photographer", "author", "credit"]);
   return { url, title: alt || autor, description: [alt, autor].filter(Boolean).join(" · ") };

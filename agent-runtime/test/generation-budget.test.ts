@@ -26,10 +26,10 @@ describe("orcamento de execucao · gerar x editar", () => {
 });
 
 describe("primeira geracao · conclusao completa", () => {
-  it("exige o site COMPLETO e limita o navegador a uma checagem curta", () => {
+  it("exige o site COMPLETO e controla tempo/foco (sem navegador na criacao)", () => {
     const id = readFileSync(join(process.cwd(), "src/agent-identity.ts"), "utf8");
     expect(id).toContain("so finalize com o site COMPLETO");
-    expect(id).toContain("nao use o navegador como etapa longa");
+    expect(id).toContain("NAO abra o navegador");
     expect(id).toContain("Nunca entregue meio site pedindo continuacao");
   });
 });
