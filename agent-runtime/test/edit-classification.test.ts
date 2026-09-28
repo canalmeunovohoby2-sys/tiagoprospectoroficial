@@ -71,7 +71,7 @@ describe("autonomia · default guarded (guard + QA automática ativos)", () => {
     const i = src.indexOf("runFirstGenQaCycle(");
     expect(i).toBeGreaterThan(0);
     const bloco = src.slice(Math.max(0, i - 260), i + 80);
-    expect(bloco).toContain('runKind === "generate"');
-    expect(bloco).toContain("firstGen");
+    expect(bloco).toContain('runKindEfetivo === "generate"');
+    expect(bloco).toContain("!timedOut");
   });
 });

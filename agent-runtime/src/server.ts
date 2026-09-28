@@ -240,6 +240,24 @@ export type ReactRunKind = "conversation" | "generate" | "edit";
  *   MESMO em projeto bootstrap: "Oi" jamais vira "gere o site";
  * - pedido de alteração → geração (primeira vez) ou edição.
  */
+/** O projeto ainda NAO tem site real? (so infra + shell) — usada para honrar "crie o site"
+ *  mesmo quando o marcador de rascunho ja foi perdido por uma geracao parcial. NAO poda nada. */
+export function semSiteReal(files: Record<string, string>): boolean {
+  const caminhos = Object.keys(files ?? {});
+  if (caminhos.length === 0) return true;
+  const temSecoes = caminhos.some((p) => /^src\/(components|sections|pages|layouts)\//.test(p));
+  const temDados = caminhos.some((p) => /^src\/(data|lib)\//.test(p));
+  const app = String(files["src/App.tsx"] ?? "");
+  const shell = app.length < 1200 || app.includes("prospector-bootstrap");
+  return !temSecoes && !temDados && shell;
+}
+
+/** O pedido e de CRIACAO de site? (verbo de criacao + alvo site/pagina/landing) */
+export function pareceCriacao(instruction: string): boolean {
+  const t = String(instruction ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return /(crie|criar|gere|gerar|faca|monte|desenvolva|construa)/.test(t) && /(site|pagina|landing|one ?page)/.test(t);
+}
+
 export function reactRunKind(input: { firstGen: boolean; instruction: string }): ReactRunKind {
   if (!instructionRequestsChange(input.instruction)) return "conversation";
   return input.firstGen ? "generate" : "edit";
@@ -1801,8 +1819,11 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             const firstGen = isBootstrapProject(currentFiles) || Object.keys(currentFiles).length === 0;
             // ANEXO NUNCA É CONVERSA: mandar um arquivo/logo é pedido de uso —
             // entra em edição (ou geração, se o projeto ainda for bootstrap).
+            // INTENCAO DE GERACAO: "crie o site" num projeto sem site real volta a ser GERACAO
+            // (antes virava EDICAO por causa de uma geracao parcial que apagou o marcador de rascunho).
             const hasAttachments = Array.isArray(body.attachments) && (body.attachments as unknown[]).length > 0;
             const runKind = hasAttachments ? (firstGen ? "generate" : "edit") : reactRunKind({ firstGen, instruction });
+            const runKindEfetivo: ReactRunKind = runKind === "edit" && semSiteReal(currentFiles) && pareceCriacao(instruction) ? "generate" : runKind;
             // FIRSTGEN NUNCA recebe o site de OUTRO cliente como ponto de partida: backup
             // + poda do workspace para infra + shell canônico (auditoria física provou
             // workspace "firstGen" com componentes/CSS/content do cliente anterior).
@@ -1845,7 +1866,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 return;
               }
             }
-            writeLine({ type: "activity", phase: "analyzing", detail: runKind === "generate" ? "Analisando o negócio e montando o site…" : "Analisando o projeto para aplicar o pedido…" });
+            writeLine({ type: "activity", phase: "analyzing", detail: runKindEfetivo === "generate" ? "Analisando o negócio e montando o site…" : "Analisando o projeto para aplicar o pedido…" });
             // CONTINUIDADE REAL: memória de decisões + histórico de alterações +
             // conversa recente entram na missão (mesma infraestrutura do legado).
             const continuityBlock = buildContinuityBlock({
@@ -1914,9 +1935,9 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 projectId,
                 currentFiles,
                 businessForRun,
-                { ...body, mode: runKind === "generate" ? "generate" : "edit" },
+                { ...body, mode: runKindEfetivo === "generate" ? "generate" : "edit" },
                 exec,
-                { hasBase: !firstGen, autonomy },
+                { hasBase: runKindEfetivo === "generate" ? false : !firstGen, autonomy },
               );
               sessions.set(sessionKey, { agent: oldAgent, projectId, lastActive: Date.now(), resetToken: "", execKey: exec.key });
             }
@@ -1937,7 +1958,12 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             let outcome: AgentRunOutcome;
             // FASE 7.4 — CORTA A RUN NO TEMPO LIMITE: aborta o agente e devolve o
             // que já foi aplicado, com resposta honesta (nunca fica "infinito").
-            const runTimeoutMs = runKind === "generate" ? resolveRunTimeoutMs() : Math.min(resolveRunTimeoutMs(), 120_000);
+            // ORCAMENTO POR TIPO: geracao inicial gasta MAIS que edicao (uma geracao real medida levou 6m37s).
+            // Antes o padrao de 4 min cortava a geracao no meio (site pela metade, ~4 arquivos).
+            const baseTimeout = resolveRunTimeoutMs();
+            const runTimeoutMs = runKindEfetivo === "generate"
+              ? (baseTimeout === 0 ? 0 : Math.min(Math.max(baseTimeout, 660_000), 900_000))
+              : Math.min(baseTimeout, 120_000);
             let timedOut = false;
             // Resultado PARCIAL honesto (diff real do disco) — usado pelo watchdog.
             const partialAfterTimeout = (): AgentRunOutcome => {
@@ -1945,7 +1971,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               const touchedTimeout = Object.keys(after).filter((p) => filesBeforeRun[p] !== after[p]);
               return {
                 ok: true,
-                reply: `⏱ Encerrei no tempo limite desta edição (${Math.round(runTimeoutMs / 60000)} min). O que deu tempo ficou salvo (${touchedTimeout.length} arquivo(s)). Peça o próximo passo que eu continuo daqui.`,
+                reply: `⏱ Encerrei no tempo limite desta tarefa (${Math.round(runTimeoutMs / 60000)} min). O que deu tempo ficou salvo (${touchedTimeout.length} arquivo(s)). Peça o próximo passo que eu continuo daqui.`,
                 files: after,
                 touched: touchedTimeout,
                 iterations: 0,
@@ -2001,7 +2027,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // GERAR → build/preview → QA Chromium real → [no máx. 1 rodada de correção
             // com os problemas devolvidos ao agente] → QA final. Falha técnica do QA
             // NUNCA vira sucesso silencioso (ressalva explícita no payload).
-            const firstGenQa: FirstGenQaResult = runKind === "generate" && firstGen && !timedOut && autonomy !== "full"
+            const firstGenQa: FirstGenQaResult = runKindEfetivo === "generate" && !timedOut && autonomy !== "full"
               ? await runFirstGenQaCycle({
                   root,
                   instruction,
