@@ -1839,7 +1839,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             const runKind = hasAttachments ? (firstGen ? "generate" : "edit") : reactRunKind({ firstGen, instruction });
             const runKindEfetivo: ReactRunKind = runKind === "edit" && semSiteReal(currentFiles) && pareceCriacao(instruction) ? "generate" : runKind;
             const runStartedAt = Date.now();
-            genTrace("start", { projectId, kind: runKindEfetivo, firstGen, files: Object.keys(currentFiles).length, iters: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : 40 });
+            genTrace("start", { projectId, kind: runKindEfetivo, firstGen, files: Object.keys(currentFiles).length, iters: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : 40, anexos: Array.isArray(body.attachments) ? (body.attachments as unknown[]).length : 0 });
             // FIRSTGEN NUNCA recebe o site de OUTRO cliente como ponto de partida: backup
             // + poda do workspace para infra + shell canônico (auditoria física provou
             // workspace "firstGen" com componentes/CSS/content do cliente anterior).

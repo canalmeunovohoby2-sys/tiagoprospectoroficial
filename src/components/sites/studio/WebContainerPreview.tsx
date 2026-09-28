@@ -225,6 +225,21 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
   // IMPORTANTE: depende também dos ARQUIVOS (`projected`) — sem isso, mudanças do
   // agente que o HMR não aplicasse ficavam invisíveis no preview até um refreshKey
   // externo chegar (o "não aparece no preview" relatado).
+  // DIGITAL DOS ARQUIVOS: o poll de eventos entrega um array NOVO a cada tick, mesmo sem
+  // mudança de conteúdo — usar `projected` direto na dependência remontava o iframe a cada
+  // ~1s (preview "piscando" sem parar e parecendo que nada aplica). A recarga agora só
+  // acontece quando a digital (tamanho + hash do conteúdo) muda de verdade.
+  const filesSignature = useMemo(() => {
+    let h = 5381;
+    let total = 0;
+    for (const [k, v] of Object.entries(files ?? {})) {
+      const s = `${k}${v ?? ""}`;
+      total += s.length;
+      for (let i = 0; i < s.length; i += 1) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    }
+    return `${total}:${h}`;
+  }, [files]);
+
   useEffect(() => {
     if (firstRefresh.current) { firstRefresh.current = false; return; }
     // NÃO exigir `phase === "ready"`: no PREVIEW SERVIDO PELO RUNTIME (modo local) o
@@ -233,7 +248,7 @@ export function WebContainerPreview({ files, projectId, refreshKey, device = "de
     // Debounce menor (1s) com coalescing: rajada de arquivos = 1 recarga só.
     const t = setTimeout(() => setFrameKey((k) => k + 1), 1000);
     return () => clearTimeout(t);
-  }, [refreshKey, projected]);
+  }, [refreshKey, filesSignature]);
 
   // FASE 5.1 — T8: Preview REAL visível (Vite rodando + iframe carregado).
   useEffect(() => {
