@@ -15,7 +15,7 @@ export default function History() {
   const [loading, setLoading] = useState(true);
 
   async function load() {
-    if (!user) return;
+    if (!user) { setLoading(false); return; }
     const { data, error } = await supabase.from("searches").select("*").order("created_at", { ascending: false });
     if (error) toast.error(error.message);
     setItems((data as any as Search[]) ?? []);

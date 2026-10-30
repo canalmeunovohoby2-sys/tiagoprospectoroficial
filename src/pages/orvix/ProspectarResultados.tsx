@@ -126,7 +126,7 @@ export default function OrvixProspectarResultados() {
 
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) { setLoading(false); return; }
     let cancelled = false;
 
     async function fetchLeads(): Promise<Lead[]> {

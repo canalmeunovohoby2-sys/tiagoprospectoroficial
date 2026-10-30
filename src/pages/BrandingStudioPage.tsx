@@ -29,7 +29,7 @@ export default function BrandingStudioPage() {
   const [mockupBaseUrl, setMockupBaseUrl] = useState<string | undefined>(undefined);
 
   const load = useCallback(async () => {
-    if (!user) return;
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     setError(null);
     try {

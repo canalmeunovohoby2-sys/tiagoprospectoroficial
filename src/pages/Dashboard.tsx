@@ -54,7 +54,7 @@ function Dashboard() {
   const [offsets, setOffsets] = useState<Record<MetricKey, number>>(() => loadOffsets());
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) { setLoading(false); return; }
     (async () => {
       const [{ count: total }, { count: favorites }, { count: contacted }, { count: proposals }, { count: clients }] = await Promise.all([
         supabase.from("leads").select("*", { count: "exact", head: true }),

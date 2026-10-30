@@ -137,7 +137,7 @@ export default function Services() {
 
   // Load from backend + one-time migration from localStorage
   useEffect(() => {
-    if (!user) return;
+    if (!user) { setLoading(false); return; }
     let cancelled = false;
 
     const load = async () => {

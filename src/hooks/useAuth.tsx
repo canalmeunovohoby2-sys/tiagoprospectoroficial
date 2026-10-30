@@ -32,6 +32,16 @@ const BOOTSTRAP_TIMEOUT_MS = 8000;
 
 function describeAnonError(error: { message?: string } | null): string {
   const message = error?.message?.toLowerCase() ?? "";
+  if (
+    message.includes("failed to fetch") ||
+    message.includes("network") ||
+    message.includes("load failed") ||
+    message.includes("resolv") ||
+    message.includes("timeout") ||
+    message.includes("tempo limite")
+  ) {
+    return "Não foi possível conectar ao Supabase. O projeto pode ter sido excluído/pausado ou a URL/chave configurada está incorreta.";
+  }
   if (message.includes("anonymous") || message.includes("signup") || message.includes("sign up")) {
     return ANON_ERROR_HINT;
   }
@@ -101,6 +111,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!active || bootstrapped.current) return;
       console.warn("[Auth] bootstrap excedeu o tempo limite; liberando o app sem sessão");
       bootstrapped.current = true;
+      setAuthError(
+        "O Supabase não respondeu em 8 segundos. Verifique se o projeto está ativo e se a URL/chave configuradas estão corretas.",
+      );
       setLoading(false);
     }, BOOTSTRAP_TIMEOUT_MS);
 
@@ -115,24 +128,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!active) return;
-      const s = data.session;
-      if (s) {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!active) return;
+        const s = data.session;
+        if (s) {
+          bootstrapped.current = true;
+          applySession(s);
+          void restorePreferences();
+          return;
+        }
+        // Uso pessoal: sem sessão existente, entra automaticamente.
+        const ok = await ensureSession();
+        if (!active) return;
         bootstrapped.current = true;
-        applySession(s);
-        void restorePreferences();
-        return;
-      }
-      // Uso pessoal: sem sessão existente, entra automaticamente.
-      const ok = await ensureSession();
-      if (!active) return;
-      bootstrapped.current = true;
-      if (ok) {
-        const { data: refreshed } = await supabase.auth.getSession();
-        applySession(refreshed.session ?? null);
-        void restorePreferences();
-      } else {
+        if (ok) {
+          const { data: refreshed } = await supabase.auth.getSession();
+          applySession(refreshed.session ?? null);
+          void restorePreferences();
+        } else {
+          setLoading(false);
+        }
+      } catch (e) {
+        if (!active) return;
+        const message = e instanceof Error ? e.message : "erro inesperado";
+        console.warn("[Auth] bootstrap falhou", message);
+        setAuthError(
+          "Não foi possível conectar ao Supabase. Verifique se o projeto está ativo e recarregue a página.",
+        );
+        bootstrapped.current = true;
         setLoading(false);
       }
     })();

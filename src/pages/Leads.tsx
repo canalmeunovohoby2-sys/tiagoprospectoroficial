@@ -89,7 +89,7 @@ export default function Leads() {
   const [openingSiteId, setOpeningSiteId] = useState<string | null>(null);
 
   async function load() {
-    if (!user) return;
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     let q = supabase.from("leads").select("*").order("score", { ascending: false }).order("created_at", { ascending: false });
     if (searchId) q = q.eq("search_id", searchId);

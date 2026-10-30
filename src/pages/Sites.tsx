@@ -99,7 +99,7 @@ export default function Sites() {
   const thumbOf = (p: SiteProjectRow) => thumbs[p.id] ?? thumbnailSettings(p).thumbnail ?? null;
 
   async function load() {
-    if (!user) return;
+    if (!user) { setLoading(false); return; }
     setLoading(true);
     try {
       setProjects(await listSiteProjects(user.id));
