@@ -26,6 +26,10 @@ const Ctx = createContext<AuthCtx>({
 const ANON_ERROR_HINT =
   "A sessão de uso pessoal não pôde ser iniciada. Habilite os sign-ins anônimos no Supabase (Authentication > Providers > Anonymous) e recarregue a página.";
 
+// Tempo máximo do bootstrap de sessão. Se o Supabase não responder (rede lenta,
+// bloqueio, token travado), liberamos o app em vez de deixar "Carregando…" para sempre.
+const BOOTSTRAP_TIMEOUT_MS = 8000;
+
 function describeAnonError(error: { message?: string } | null): string {
   const message = error?.message?.toLowerCase() ?? "";
   if (message.includes("anonymous") || message.includes("signup") || message.includes("sign up")) {
@@ -93,6 +97,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // senão o gate cairia em /login antes de tentarmos a sessão automática.
     bootstrapped.current = false;
 
+    const watchdog = window.setTimeout(() => {
+      if (!active || bootstrapped.current) return;
+      console.warn("[Auth] bootstrap excedeu o tempo limite; liberando o app sem sessão");
+      bootstrapped.current = true;
+      setLoading(false);
+    }, BOOTSTRAP_TIMEOUT_MS);
+
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       if (!active) return;
       if (!bootstrapped.current) return;
@@ -128,6 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       active = false;
+      window.clearTimeout(watchdog);
       sub.subscription.unsubscribe();
     };
   }, [applySession, ensureSession]);

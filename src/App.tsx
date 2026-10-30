@@ -3,8 +3,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation, useParams } from "react-router-dom";
-import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useParams } from "react-router-dom";
+import { AuthProvider } from "@/hooks/useAuth";
 import { AppShell } from "@/components/app/AppShell";
 import { ErrorBoundary } from "@/components/app/ErrorBoundary";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
@@ -15,7 +15,6 @@ import Dashboard from "./pages/Dashboard";
 // `lazyWithRetry` protege contra "Failed to fetch dynamically imported module"
 // causado por cache de HTML apontando para chunks antigos após novo deploy.
 
-const Login = lazyWithRetry(() => import("./pages/Login"), "Login");
 const ResetPassword = lazyWithRetry(() => import("./pages/ResetPassword"), "ResetPassword");
 const Search = lazyWithRetry(() => import("./pages/Search"), "Search");
 const Leads = lazyWithRetry(() => import("./pages/Leads"), "Leads");
@@ -33,19 +32,10 @@ const NotFound = lazyWithRetry(() => import("./pages/NotFound"), "NotFound");
 
 const queryClient = new QueryClient();
 
-// Protege as rotas da aplicação: sem login → redireciona para /login (guardando a rota de origem).
-const RequireAuth = () => {
-  const { session, loading } = useAuth();
-  const location = useLocation();
-  if (loading)
-    return (
-      <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        Carregando…
-      </div>
-    );
-  if (!session) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-  return <Outlet />;
-};
+// TEMPORÁRIO: tela de login desativada para permitir acesso sem senha.
+// A sessão (inclusive a anônima) continua sendo inicializada em segundo plano
+// pelo AuthProvider. Para reativar, restaure o gate que redirecionava para /login.
+const RequireAuth = () => <Outlet />;
 
 const RouteFallback = () => (
   <div className="min-h-screen flex items-center justify-center text-muted-foreground">Carregando…</div>
@@ -88,7 +78,7 @@ const App = () => (
             <Suspense fallback={<RouteFallback />}>
               <Routes>
                 <Route path="/auth" element={<Navigate to="/" replace />} />
-                <Route path="/login" element={<Login />} />
+                <Route path="/login" element={<Navigate to="/" replace />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route element={<RequireAuth />}>
                   <Route element={<AppShell />}>
