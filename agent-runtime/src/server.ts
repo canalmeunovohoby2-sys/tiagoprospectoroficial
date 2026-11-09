@@ -2074,7 +2074,18 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 })
               : { executed: false, pass: false, correctionRound: false, technicalFailure: "", final: null };
             if (firstGenQa.correctionRound) emitFiles();
-            genTrace("run-end", { projectId, kind: runKindEfetivo, timedOut, iterations: outcome.iterations ?? 0, qa: firstGenQa.executed ? firstGenQa.pass : null, totalMs: Date.now() - runStartedAt });
+            const runErro = String(
+              (outcome as unknown as { error?: unknown }).error
+                ?? ((outcome as unknown as { errors?: unknown[] }).errors?.[0] ?? ""),
+            ).trim();
+            genTrace("run-end", { projectId, kind: runKindEfetivo, timedOut, iterations: outcome.iterations ?? 0, qa: firstGenQa.executed ? firstGenQa.pass : null, totalMs: Date.now() - runStartedAt, ok: outcome.ok, erro: runErro.slice(0, 200) });
+            // FALHA IMEDIATA (iterations=0, sem timeout): NUNCA deixar a tela em "Sem atividade
+            // ainda" sem explicação. Registra no rastro e emite atividade de erro para o chat.
+            if (!timedOut && (outcome.ok === false || (outcome.iterations ?? 0) === 0)) {
+              const motivo = runErro || String(outcome.reply ?? "").trim().slice(0, 300) || "A execução não iniciou (verifique a IA em Configurações → IA).";
+              genTrace("run-error", { projectId, kind: runKindEfetivo, erro: motivo.slice(0, 300) });
+              try { writeLine({ type: "activity", phase: "error", detail: motivo }); } catch { /* noop */ }
+            }
             const mapFixed = (() => { try { return normalizeWorkspaceMapEmbeds(root, business); } catch { return [] as string[]; } })();
             let finalFiles = readWorkspace(root);
             if (mapFixed.length > 0) emitFiles();
