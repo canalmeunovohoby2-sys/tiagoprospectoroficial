@@ -1298,17 +1298,22 @@ export default function SiteProjectPage() {
     await runAiInstruction(prompt, undefined, { media: true });
   }
 
-  // GERAÇÃO IMEDIATA (rascunho): projeto React que ainda é o RASCUNHO não fica esperando um
-  // segundo clique — ao entrar, a geração começa sozinha. Cobre TODAS as entradas (clique em
-  // "Gerar site" no Lead, criação com prompt e abrir o projeto). Dispara UMA vez e só quando
-  // há rascunho real e nada rodando — o card "Gerar site" do preview deixou de existir.
+  // GERAÇÃO IMEDIATA somente com INTENÇÃO EXPLÍCITA (clique em "Gerar site" no Lead/criação).
+  // BUG corrigido: o auto-start por "rascunho" disparava de novo a cada RELOAD e mandava
+  // "criar o site" para um projeto que já tinha site. Agora: (1) exige a intenção vinda da
+  // navegação; (2) exige arquivos carregados (draftFiles vazio = ainda carregando);
+  // (3) consome a intenção (replaceState) ⇒ 1 clique = 1 execução, reload nunca gera.
   const autoStartRef = useRef(false);
   useEffect(() => {
     if (autoStartRef.current) return;
     if (!project || !isReactProject) return;
+    if (Object.keys(draftFiles ?? {}).length === 0) return;
     if (aiRunning || generating) return;
+    const st = window.history.state as { usr?: { startGeneration?: boolean } } | null;
+    if (!st?.usr?.startGeneration) return;
     if (!isBootstrapFiles(draftFiles)) return;
     autoStartRef.current = true;
+    try { window.history.replaceState({ ...st, usr: {} }, ""); } catch { /* noop */ }
     void handleGenerateSite();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, draftFiles, aiRunning, generating, isReactProject]);
