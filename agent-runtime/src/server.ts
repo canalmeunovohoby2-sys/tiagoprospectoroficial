@@ -325,6 +325,18 @@ function countSignals(text: string, re: RegExp): number {
   return (String(text ?? "").match(re) ?? []).length;
 }
 
+const MOTION_SIGNALS: RegExp[] = [
+  /@keyframes/i, /animation\s*:/i, /transition/i, /IntersectionObserver/, /requestAnimationFrame/,
+  /setInterval/, /translate3d/i, /translate[XY]/i, /transform\s*[:=]/, /\bscale\(/, /rotate\(/,
+  /will-change/i, /marquee/i, /animate-/, /motion\./i, /framer-motion/i, /useAnimationFrame/,
+  /spring/i, /gsap/i, /scroll-behavior/i, /scrollTo/, /window\.scroll/, /scroll/,
+];
+
+function sinaisPresentes(texto: string): number[] {
+  const t = String(texto ?? "");
+  return MOTION_SIGNALS.map((re, i) => (re.test(t) ? i : -1)).filter((i) => i >= 0);
+}
+
 /** Devolve a FALTA objetiva do pedido no diff (null = aplicado de verdade). */
 export function editIntentViolation(
   kind: EditIntentKind,
@@ -337,8 +349,11 @@ export function editIntentViolation(
   const textoNovo = changed.map((p) => after[p]).join("\n");
   const textoAntes = changed.map((p) => before?.[p] ?? "").join("\n");
   if (kind === "motion") {
-    const re = /@keyframes|animation\s*:|transition\s*:|IntersectionObserver|requestAnimationFrame|translate3d|translateX|marquee|animate-|scroll/gi;
-    if (countSignals(textoNovo, re) <= countSignals(textoAntes, re)) {
+    // PRESENÇA de sinais (não contagem): aceita CSS e JS (transform/translate/rAF/scroll…).
+    // Antes um efeito implementado 100% em JS era reprovado (falso negativo).
+    const antes = new Set(sinaisPresentes(textoAntes));
+    const novos = sinaisPresentes(textoNovo).filter((i) => !antes.has(i));
+    if (novos.length === 0) {
       return "o pedido é de EFEITO/MOVIMENTO e o código alterado não ganhou nenhuma animação real (reveal, hover, transição ou movimento)";
     }
   }
@@ -2097,18 +2112,22 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 let falta = editIntentViolation(intent, filesBeforeRun, after, instruction);
                 if (falta) {
                   genTrace("intent-check", { projectId, intent, falta: falta.slice(0, 160) });
+                  let corrigiu = false;
                   try {
                     const fix = await oldAgent.runTask(
                       `CORREÇÃO OBRIGATÓRIA DO PEDIDO: o usuário pediu "${String(instruction).slice(0, 300)}". O diff NÃO contém o que foi pedido: ${falta}. Implemente DE FATO nos arquivos reais (ex.: classes/@keyframes/transições no componente certo), confirme no código e finalize.`,
                       { continueSession: true },
                     );
+                    corrigiu = (fix.touched?.length ?? 0) > 0;
                     if (fix.ok) {
                       after = readWorkspace(root);
                       falta = editIntentViolation(intent, filesBeforeRun, after, instruction);
                     }
                   } catch { /* segue para o veredito */ }
-                  genTrace("intent-check", { projectId, intent, falta: falta ? falta.slice(0, 160) : "", retried: true });
-                  if (falta) {
+                  genTrace("intent-check", { projectId, intent, falta: falta ? falta.slice(0, 160) : "", retried: true, corrigiu });
+                  // NÃO marcar vermelho depois de uma correção que ALTEROU arquivos: a
+                  // implementação pode usar um mecanismo fora dos nossos sinais (falso negativo).
+                  if (falta && !corrigiu) {
                     outcome.ok = false;
                     outcome.reply = `Não consegui aplicar o que você pediu: ${falta}. O projeto ficou como estava — me diga se quer que eu tente por outro caminho.`;
                     outcome.error = `Pedido não aplicado: ${falta}`;

@@ -15,7 +15,7 @@ describe("verificacao do pedido no diff", () => {
     const antes = { "src/components/Menu.tsx": "export const Menu=()=> <nav>menu</nav>;" };
     const sem = { "src/components/Menu.tsx": "export const Menu=()=> <nav className='bg-black'>menu</nav>;" };
     expect(editIntentViolation("motion", antes, sem, "menu com movimento")).toMatch(/efeito\/movimento/i);
-    const com = { "src/components/Menu.tsx": "export const Menu=()=> <nav className='transition hover:scale-105'>menu</nav>; @keyframes slide {}" };
+    const com = { "src/components/Menu.tsx": "export const Menu=()=> <nav ref={r} style={{transform:'translate3d(0,'+y+'px,0)'}} onScroll={()=>requestAnimationFrame(tick)}>menu</nav>;" };
     expect(editIntentViolation("motion", antes, com, "menu com movimento")).toBeNull();
   });
 
