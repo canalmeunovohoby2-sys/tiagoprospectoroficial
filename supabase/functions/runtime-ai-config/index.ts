@@ -103,7 +103,13 @@ Deno.serve(async (req) => {
     };
     const pedido = (def.model ?? "").trim();
     const regra = MODEL_OK[provider];
-    const model = pedido && regra && !regra.test(pedido) ? DEFAULT_MODEL[provider] : (pedido || DEFAULT_MODEL[provider]);
+    // MODELO DE IMAGEM (ex.: *-image, flux, dall-e): o SDK envia modalities ["image","text"] e o
+    // provedor RECUSA ("No endpoints found that support the requested output modalities") -> run com 0 turnos.
+    // Gerador de site precisa de modelo de TEXTO: cai no default do provedor.
+    const modeloDeImagem = /(image|imagen|dall-?e|flux|stable-?diffusion|sdxl|midjourney)/i.test(pedido);
+    const model = modeloDeImagem
+      ? DEFAULT_MODEL[provider]
+      : (pedido && regra && !regra.test(pedido) ? DEFAULT_MODEL[provider] : (pedido || DEFAULT_MODEL[provider]));
     // Ollama é local e NÃO usa API Key: sem chave exigida, sem chave fictícia.
     const apiKey = provider === "ollama"
       ? ""
