@@ -188,6 +188,20 @@ RESPOSTA FINAL SEMPRE CURTA (PRECEDÊNCIA MÁXIMA — vale sobre qualquer instru
 - Exemplo bom (mudança de foto): "Troquei a foto do hero pela que você enviou e ajustei o layout para ela não cortar. 📁 src/index.html · assets/foto.png\n👁️ Recarreguei o site e confirmei a nova imagem no desktop e no mobile."
 - Exemplo bom (tarefa pequena): "Ajustei o contraste do botão para azul escuro. 📁 src/site.css\n👁️ Confirmei no preview."`;
 
+// RÉGUA DE EXECUÇÃO PREMIUM (1ª geração): princípios CONCRETOS de qualidade, sem escolher
+// paleta/hero por você. Sem isso o modelo cai no Tailwind padrão (site "de IA", sem vida).
+export const FIRSTGEN_DESIGN_BAR = `PADRÃO DE EXECUÇÃO PREMIUM (régua de qualidade — você decide o estilo, mas a execução precisa deste nível):
+1) TOKENS ANTES DE TUDO: defina em CSS variables a paleta (1 neutro escuro, 1 claro, 1 marca + 1 accent exclusivo do CTA), escala tipográfica (clamp), espaçamentos (base 4/8), raios e sombras; use os tokens no código inteiro (nada de cor solta).
+2) NO MÁXIMO 2 TIPOS, com contraste real (display + texto), escala modular e tracking ajustado — nunca a fonte default em tudo.
+3) HERO COM DIREÇÃO DE ARTE: um elemento dominante (imagem em sangria, tipografia grande ou composição assimétrica), headline de RESULTADO (não de features), 1 CTA claro e contexto/prova imediata. Evite "título centralizado + parágrafo + botão" por inércia.
+4) RITMO: alterne as seções (split, full-bleed, editorial, números, depoimentos, galeria) — nunca quatro blocos de três cards iguais.
+5) PROFUNDIDADE: superfícies em 2 níveis, bordas sutis, sombras suaves coerentes e respiro generoso (72–120px entre seções no desktop).
+6) VIDA VISUAL (obrigatório): reveal no scroll (IntersectionObserver + stagger 60–100ms), hover/focus reais em botões/cards/links e UMA assinatura de movimento (marquee, parallax leve, contador, zoom lento ou gradiente). 150–400ms em transform/opacity, respeitando prefers-reduced-motion. Site 100% estático é falha.
+7) RESPONSIVO DE VERDADE: mobile-first, reordene o conteúdo (não só encolha), tipografia fluida, alvos de toque ≥44px, sem overflow; confira 390px.
+8) PROVA E CONVERSÃO: números só se existirem no contexto, depoimentos reais, garantias; CTAs com benefício ("Quero meu orçamento"), nunca "Enviar".
+9) ANTI-TEMPLATE: copy com nomes/valores específicos do negócio; se trocar o nome da empresa e o site ainda parecer feito para o segmento, refine.
+10) AUTOCHEK antes de concluir: tokens aplicados? hero autoral? seções variadas? reveal+hover presentes? mobile ok? sem placeholder nem link quebrado? Se algo falhar, corrija antes de responder.`;
+
 // FOCO NA EDICAO (evidencia do rastro: uma troca de imagem consumiu as 40 iteracoes e NAO
 // aplicou — o agente se perdeu em leituras/navegador). Edicao localizada e DIRETA.
 export const EDIT_FOCUS_RULES = `
@@ -380,6 +394,8 @@ ${reactFirstGen ? "" : `${ART_DIRECTION_AUTHORITY}
 ${DESIGN_FOUNDATIONS_COMPACT}
 
 ${PACK_INDEX_BLOCK}`}${reactFirstGen ? `
+
+${FIRSTGEN_DESIGN_BAR}
 
 CADA PROJETO E UMA DECISAO NOVA: nao reutilize automaticamente linguagem visual, composicao, estrutura, paleta ou tratamento de imagem de outros projetos — crie a solucao a partir DESTE negocio. (Sem lista de estilos obrigatorios: a decisao e sua.)` : ""}
 

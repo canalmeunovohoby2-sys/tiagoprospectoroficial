@@ -8,9 +8,9 @@ import { join } from "node:path";
 const src = readFileSync(join(process.cwd(), "src/server.ts"), "utf8");
 
 describe("orcamento de execucao · gerar x editar", () => {
-  it("GERAR tem 15 min; EDITAR continua capado em 2 min", () => {
+  it("GERAR tem 15 min; EDITAR capado em 4 min", () => {
     expect(src).toContain("Math.max(baseTimeout, 900_000), 900_000)");
-    expect(src).toContain("Math.min(baseTimeout, 120_000)");
+    expect(src).toContain("Math.min(baseTimeout, 240_000)");
     const i = src.indexOf("const baseTimeout");
     const bloco = src.slice(i, i + 400);
     expect(bloco).toContain('runKindEfetivo === "generate"');

@@ -31,7 +31,7 @@ describe("primeira geracao · missao direta (legacy-like)", () => {
 
   it("a primeira geracao ficou MENOR que o caminho com base", () => {
     expect(FIRSTGEN.length).toBeLessThan(COM_BASE.length);
-    expect(FIRSTGEN.length).toBeLessThan(13_000);
+    expect(FIRSTGEN.length).toBeLessThan(16_000);
   });
 
   it("com base (nao-firstgen) e a EDICAO continuam com as referencias", () => {
