@@ -309,6 +309,60 @@ export function shouldReuseSession(existing: { execKey?: string } | undefined | 
  * diagnostico objetivo de tempo/iteracoes/QA sem depender do stdout do processo destacado.
  * Nunca derruba a execucao (falha de escrita e ignorada).
  */
+type EditIntentKind = "motion" | "color" | "text" | "section" | null;
+
+/** Classifica o PEDIDO para verificar, no diff, se ele foi realmente aplicado. */
+export function editIntentOf(instruction: string): EditIntentKind {
+  const t = String(instruction ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  if (/(efeito|movimento|animac|animad|scroll|rolagem|parallax|reveal|hover|transic|marquee|carrossel|contador|vivo|travad|estatico|sem vida|menu)/.test(t)) return "motion";
+  if (/(cor\b|cores\b|paleta|verde|azul|vermelh|amarel|dourad|preto|branco|roxo|laranja)/.test(t)) return "color";
+  if (/(secao|bloco|adicion|remov|reorganiz|depoimento|faq|galeria)/.test(t)) return "section";
+  if (/(titulo|texto|frase|copy|headline|subtitulo)/.test(t)) return "text";
+  return null;
+}
+
+function countSignals(text: string, re: RegExp): number {
+  return (String(text ?? "").match(re) ?? []).length;
+}
+
+/** Devolve a FALTA objetiva do pedido no diff (null = aplicado de verdade). */
+export function editIntentViolation(
+  kind: EditIntentKind,
+  before: Record<string, string>,
+  after: Record<string, string>,
+  instruction: string,
+): string | null {
+  const changed = Object.keys(after ?? {}).filter((p) => before?.[p] !== after[p] && typeof after[p] === "string");
+  if (changed.length === 0) return "nenhum arquivo foi alterado";
+  const textoNovo = changed.map((p) => after[p]).join("\n");
+  const textoAntes = changed.map((p) => before?.[p] ?? "").join("\n");
+  if (kind === "motion") {
+    const re = /@keyframes|animation\s*:|transition\s*:|IntersectionObserver|requestAnimationFrame|translate3d|translateX|marquee|animate-|scroll/gi;
+    if (countSignals(textoNovo, re) <= countSignals(textoAntes, re)) {
+      return "o pedido é de EFEITO/MOVIMENTO e o código alterado não ganhou nenhuma animação real (reveal, hover, transição ou movimento)";
+    }
+  }
+  if (kind === "color") {
+    const re = /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/gi;
+    const novo = new Set((textoNovo.match(re) ?? []).map((s) => s.toLowerCase()));
+    const antes = new Set((textoAntes.match(re) ?? []).map((s) => s.toLowerCase()));
+    if (![...novo].some((c) => !antes.has(c))) return "o pedido é de COR e nenhuma cor nova apareceu no código";
+  }
+  if (kind === "text") {
+    const m = String(instruction ?? "").match(/["“']([^"”']{4,80})["”']/);
+    if (m && !textoNovo.toLowerCase().includes(m[1].toLowerCase())) {
+      return `o texto pedido ("${m[1]}") não está nos arquivos alterados`;
+    }
+  }
+  if (kind === "section") {
+    const re = /<section\b|<(?:div|section)[^>]*className=[^>]*section/gi;
+    if (countSignals(textoNovo, re) <= countSignals(textoAntes, re)) {
+      return "o pedido era ESTRUTURAL (seção/bloco) e nenhuma seção nova apareceu no código";
+    }
+  }
+  return null;
+}
+
 function genTrace(evento: string, dados: Record<string, unknown>): void {
   try {
     appendFileSync(join(process.cwd(), ".gen-trace.log"), `${new Date().toISOString()} ${evento} ${JSON.stringify(dados)}\n`);
@@ -2031,6 +2085,37 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               try { unsubscribeLive(); } catch { /* noop */ }
             }
             liveBridge.flushFiles();
+            // ===== VERIFICAÇÃO DO PEDIDO (QUALQUER modificação) =====
+            // O agente pode responder "feito" sem ter aplicado (ex.: "menu com movimento" e o
+            // menu continua estático). Aqui o DIFF é comparado com a INTENÇÃO do pedido
+            // (efeito/animação, cor, texto, seção) e, se faltar, devolvemos o problema UMA vez
+            // ao agente. Se persistir, a resposta final NÃO pode dizer "salvo/feito".
+            if (!timedOut && runKindEfetivo !== "conversation" && (outcome.touched?.length ?? 0) > 0) {
+              const intent = editIntentOf(instruction);
+              if (intent) {
+                let after = readWorkspace(root);
+                let falta = editIntentViolation(intent, filesBeforeRun, after, instruction);
+                if (falta) {
+                  genTrace("intent-check", { projectId, intent, falta: falta.slice(0, 160) });
+                  try {
+                    const fix = await oldAgent.runTask(
+                      `CORREÇÃO OBRIGATÓRIA DO PEDIDO: o usuário pediu "${String(instruction).slice(0, 300)}". O diff NÃO contém o que foi pedido: ${falta}. Implemente DE FATO nos arquivos reais (ex.: classes/@keyframes/transições no componente certo), confirme no código e finalize.`,
+                      { continueSession: true },
+                    );
+                    if (fix.ok) {
+                      after = readWorkspace(root);
+                      falta = editIntentViolation(intent, filesBeforeRun, after, instruction);
+                    }
+                  } catch { /* segue para o veredito */ }
+                  genTrace("intent-check", { projectId, intent, falta: falta ? falta.slice(0, 160) : "", retried: true });
+                  if (falta) {
+                    outcome.ok = false;
+                    outcome.reply = `Não consegui aplicar o que você pediu: ${falta}. O projeto ficou como estava — me diga se quer que eu tente por outro caminho.`;
+                    outcome.error = `Pedido não aplicado: ${falta}`;
+                  }
+                }
+              }
+            }
             // ===== COMPILE GATE (React): o build precisa PASSAR antes de concluir =====
             // Bug real: o agente escrevia código com erro de sintaxe (ex.: "Unexpected export"
             // em src/components/Hero.tsx), a run "concluía" e a PUBLICAÇÃO morria com
