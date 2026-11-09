@@ -122,7 +122,7 @@ describe("firstGen QA · ciclo obrigatório (sem Chromium — dependências inje
 
   it("fiação no servidor: QA só em firstGen React, com ressalva e payload honestos", () => {
     const src = readFileSync(join(process.cwd(), "src/server.ts"), "utf8");
-    expect(src).toContain('runKind === "generate" && firstGen && !timedOut');
+        expect(src).toContain('runKindEfetivo === "generate" && !timedOut');
     expect(src).toContain("runFirstGenQaCycle");
     expect(src).toContain("⚠ Ressalva");
     expect(src).toContain("qa: { executed: firstGenQa.executed");

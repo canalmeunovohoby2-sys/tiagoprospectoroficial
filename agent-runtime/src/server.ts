@@ -2036,7 +2036,8 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // em src/components/Hero.tsx), a run "concluía" e a PUBLICAÇÃO morria com
             // "Build falhou (exit 1)". Aqui o build é a evidência: se falhar, devolvemos o
             // erro REAL ao agente UMA vez; se ele corrigir, seguimos.
-            if (!timedOut && runKindEfetivo !== "conversation" && existsSync(join(root, "package.json"))) {
+            // (A QA da 1ª geração já roda o build e corrige; não duplicar aqui.)
+            if (!timedOut && runKindEfetivo !== "conversation" && !(runKindEfetivo === "generate" && autonomy !== "full") && existsSync(join(root, "package.json"))) {
               let build = await buildReactProject(root).catch(() => ({ ok: false, error: "build indisponível", log: "" } as { ok: boolean; error?: string; log?: string; html?: string }));
               genTrace("build-check", { projectId, ok: build.ok, erro: String(build.error ?? "").slice(0, 160) });
               if (!build.ok) {

@@ -296,8 +296,18 @@ export default function SiteProjectPage() {
     if (!project?.id) { toast.error("Projeto não carregado."); return; }
 
     // C5: React publica o BUILD real (não a spec/HTML estático).
-    if (isReactProject) {
-      setPublishing(true);
+      if (isReactProject) {
+        // PUBLICACAO RAPIDA: sem mudancas desde a ultima publicacao nao ha o que recompilar —
+        // devolve o link atual na hora (antes o usuario esperava o build inteiro sem necessidade).
+        const jaPublicado = project.published_status === "published"
+          && project.published_code
+          && Object.keys(project.published_code as Record<string, string>).length > 0;
+        if (!dirty && jaPublicado) {
+          const link = publicUrl();
+          toast.info(link ? `Este site já está publicado — link: ${link}` : "Este site já está publicado com a versão atual.");
+          return;
+        }
+        setPublishing(true);
       try {
         // C5 §10: snapshot do estado atual antes de publicar (nada fica "invisível").
         if (dirty && draftFiles && Object.keys(draftFiles).length > 0) {

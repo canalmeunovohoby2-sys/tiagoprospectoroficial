@@ -46,8 +46,9 @@ export interface VisualVerification {
 }
 
 export const VISUAL_VIEWPORTS: Array<{ device: "desktop" | "tablet" | "mobile"; width: number; height: number }> = [
+  // LATENCIA: tablet não muda decisão de qualidade (desktop e mobile cobrem layout/quebra).
+  // 2 viewports em vez de 3 = ~1/3 menos tempo no "Revisando o visual", sem perder sinal.
   { device: "desktop", width: 1366, height: 768 },
-  { device: "tablet", width: 768, height: 1024 },
   { device: "mobile", width: 390, height: 844 },
 ];
 

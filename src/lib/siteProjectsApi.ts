@@ -885,20 +885,22 @@ export async function inlinePublishedAssets(
   if (!token) return files;
   const mapa = new Map<string, string>();
   let total = 0;
-  for (const nome of nomes) {
+  // BUSCA EM PARALELO (a publicacao esperava um asset por vez — com 10+ imagens isso somava
+  // varios segundos). Mesmos limites de tamanho e o mesmo fallback silencioso por asset.
+  await Promise.all([...nomes].map(async (nome) => {
     try {
       const res = await fetch(
         `${LOCAL_AGENT_RUNTIME_URL}/preview/${encodeURIComponent(projectId)}/assets/${encodeURIComponent(nome)}?t=${encodeURIComponent(token)}`,
       );
-      if (!res.ok) continue;
+      if (!res.ok) return;
       const bytes = new Uint8Array(await res.arrayBuffer());
-      if (bytes.byteLength === 0) continue;
-      if (bytes.byteLength > MAX_ASSET_BYTES || total + bytes.byteLength > MAX_TOTAL_BYTES) continue;
+      if (bytes.byteLength === 0) return;
+      if (bytes.byteLength > MAX_ASSET_BYTES || total + bytes.byteLength > MAX_TOTAL_BYTES) return;
       total += bytes.byteLength;
       const tipo = res.headers.get("content-type") ?? "application/octet-stream";
       mapa.set(`/assets/${nome}`, `data:${tipo};base64,${bytesToBase64(bytes)}`);
-    } catch { /* segue sem esse asset (nunca derruba a publicação) */ }
-  }
+    } catch { /* segue sem esse asset (nunca derruba a publicacao) */ }
+  }));
   if (mapa.size === 0) return files;
   const out: Record<string, string> = {};
   for (const [caminho, conteudo] of Object.entries(files)) {
