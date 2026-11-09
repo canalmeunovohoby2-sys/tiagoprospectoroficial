@@ -140,7 +140,7 @@ ${ctx}`;
       // 3 abordagens determinísticas e informa o motivo (o app usa `message`).
       const motivo = e instanceof Error ? e.message : "falha na IA";
       const fb = fallbackVariants(lead);
-      return new Response(JSON.stringify({ message: fb[0], variants: fb, warning: motivо }, {
+      return new Response(JSON.stringify({ message: fb[0], variants: fb, warning: motivo }, {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       }));
     }
