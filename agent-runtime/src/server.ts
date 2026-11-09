@@ -2084,6 +2084,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             if (!timedOut && (outcome.ok === false || (outcome.iterations ?? 0) === 0)) {
               const motivo = runErro || String(outcome.reply ?? "").trim().slice(0, 300) || "A execução não iniciou (verifique a IA em Configurações → IA).";
               genTrace("run-error", { projectId, kind: runKindEfetivo, erro: motivo.slice(0, 300) });
+              // SESSÃO ENVENENADA: uma run abortada/presa deixa o Agent em estado inválido e
+              // TODAS as tentativas seguintes falham em ~15s com 0 iterações. Descarta a
+              // sessão desta chave para o próximo clique começar com um Agent novo.
+              try { sessions.delete(sessionKey); genTrace("session-reset", { projectId, kind: runKindEfetivo }); } catch { /* noop */ }
               try { writeLine({ type: "activity", phase: "error", detail: motivo }); } catch { /* noop */ }
             }
             const mapFixed = (() => { try { return normalizeWorkspaceMapEmbeds(root, business); } catch { return [] as string[]; } })();
