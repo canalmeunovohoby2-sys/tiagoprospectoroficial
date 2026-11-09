@@ -107,6 +107,12 @@ const SOURCE_LABELS = {
   overpassRecovery: "openstreetmap_overpass_recovery",
 } as const;
 
+// Identificação exigida pelas políticas de uso do Nominatim/Overpass.
+// Antes usávamos "LeadHunterBrasil/1.0 (lovable.app)", que o Nominatim
+// passou a rejeitar com HTTP 403 (IPs de nuvem sem contato válido).
+const OSM_USER_AGENT =
+  "TiagoProspector/1.0 (+https://tiagoprospectoroficial.vercel.app; canalmeunovohoby3@gmail.com)";
+
 const FIELD_MASK = [
   "places.id",
   "places.displayName",
@@ -1331,7 +1337,7 @@ async function searchNominatim(segment: string, city: string, state: string, ctx
       const doFetch = () => fetchWithRetry(url.toString(), {
         method: "GET",
         headers: {
-          "User-Agent": "LeadHunterBrasil/1.0 (lovable.app)",
+          "User-Agent": OSM_USER_AGENT,
           "Accept": "application/json",
         },
       }, nominatimFetchOpts(ctx));
@@ -1395,7 +1401,7 @@ async function getNominatimBoundary(city: string, state: string, ctx?: SearchCtx
     const doFetch = () => fetchWithRetry(url.toString(), {
       method: "GET",
       headers: {
-        "User-Agent": "LeadHunterBrasil/1.0 (lovable.app)",
+        "User-Agent": OSM_USER_AGENT,
         "Accept": "application/json",
       },
     }, nominatimFetchOpts(ctx));
@@ -1440,6 +1446,8 @@ const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
   "https://lz4.overpass-api.de/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://overpass.osm.ch/api/interpreter",
 ];
 
 async function searchOverpass(segment: string, city: string, state: string, ctx?: SearchCtx): Promise<OverpassSearchResult> {
@@ -1513,7 +1521,8 @@ async function searchOverpass(segment: string, city: string, state: string, ctx?
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "User-Agent": "LeadHunterBrasil/1.0 (lovable.app)",
+            "Accept": "application/json",
+            "User-Agent": OSM_USER_AGENT,
           },
           body: new URLSearchParams({ data: query }).toString(),
         }, { retries: 1, respectRetryAfter: true });
@@ -1619,7 +1628,8 @@ async function searchOverpassByName(
           method: "POST",
           headers: {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "User-Agent": "LeadHunterBrasil/1.0 (lovable.app)",
+            "Accept": "application/json",
+            "User-Agent": OSM_USER_AGENT,
           },
           body: new URLSearchParams({ data: query }).toString(),
         }, { retries: 1, respectRetryAfter: true });
@@ -3572,12 +3582,18 @@ Deno.serve(async (req) => {
 
     console.info("[search-places] search_status", { search_status, sources_status, leads: leads.length });
 
+    // Se já temos leads (inclusive dos scrapers locais no cliente), não poluir a
+    // resposta com avisos de chaves opcionais ausentes (Google/Geoapify).
+    const responseWarnings = leads.length > 0
+      ? warnings.filter((w) => !String((w as { code?: string }).code ?? "").endsWith("_KEY_MISSING"))
+      : warnings;
+
     return new Response(JSON.stringify({
       leads,
       count: leads.length,
       source,
       sources_tried: sourcesTried,
-      warnings,
+      warnings: responseWarnings,
       diagnostics,
       audit,
       search_status,

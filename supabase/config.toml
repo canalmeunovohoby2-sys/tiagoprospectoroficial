@@ -1,4 +1,11 @@
-project_id = "efgwszjjtjebqdzziqfs"
+project_id = "yvjescftagxktiikqxvc"
+
+[auth]
+enabled = true
+site_url = "https://tiagoprospectoroficial.vercel.app"
+additional_redirect_urls = ["http://localhost:8080", "http://localhost:5173"]
+enable_signup = true
+enable_anonymous_sign_ins = true
 
 [functions.github]
 verify_jwt = false
