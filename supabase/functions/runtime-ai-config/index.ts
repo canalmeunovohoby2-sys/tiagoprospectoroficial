@@ -89,7 +89,21 @@ Deno.serve(async (req) => {
     }
 
     const provider = def.provider as "deepseek" | "openai" | "nvidia" | "openrouter" | "gemini" | "ollama";
-    const model = (def.model ?? "").trim() || DEFAULT_MODEL[provider];
+    // MODELO x PROVEDOR: um modelo de outro provedor (ex.: provider=deepseek com
+    // model="gemini-2.5-pro") faz a API recusar na hora — a run termina com 0 iterações e o
+    // chat fica em "Sem atividade". Normaliza para o modelo default do provedor quando
+    // o valor salvo não pertence a ele.
+    const MODEL_OK: Record<string, RegExp | null> = {
+      deepseek: /^deepseek[-/]/i,
+      gemini: /^gemini[-/]/i,
+      openai: /^(gpt-|chatgpt-|o1|o3|o4)/i,
+      nvidia: /\//,
+      openrouter: /\//,
+      ollama: null,
+    };
+    const pedido = (def.model ?? "").trim();
+    const regra = MODEL_OK[provider];
+    const model = pedido && regra && !regra.test(pedido) ? DEFAULT_MODEL[provider] : (pedido || DEFAULT_MODEL[provider]);
     // Ollama é local e NÃO usa API Key: sem chave exigida, sem chave fictícia.
     const apiKey = provider === "ollama"
       ? ""
