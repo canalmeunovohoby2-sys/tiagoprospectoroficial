@@ -594,9 +594,26 @@ export class ProspectorSiteAgent {
       return undefined;
     };
 
+    // MODELO DE TEXTO OBRIGATÓRIO: o SDK envia `modalities:["image","text"]` quando o
+    // provedor é openrouter E o registro do modelo diz "saída de imagem" — o provedor recusa
+    // ("No endpoints found that support the requested output modalities") e a run morre com
+    // 0 turnos. Para GERAR SITE o modelo tem de ser de texto: normaliza ids de imagem e o
+    // roteador `openrouter/auto` para um modelo de texto concreto.
+    const providerIdFinal = options.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek";
+    const rawModel = (options.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat").trim();
+    const modelIdFinal = ((): string => {
+      const p = providerIdFinal.toLowerCase();
+      const img = /(image|imagen|dall-?e|flux|stable-?diffusion|sdxl|midjourney)/i.test(rawModel)
+        || (p === "openrouter" && (!rawModel || rawModel === "openrouter/auto"));
+      if (!img) return rawModel;
+      if (p === "openrouter") return "openai/gpt-4o-mini";
+      if (p === "gemini") return "gemini-2.5-flash";
+      if (p === "openai") return "gpt-4o-mini";
+      return "deepseek-chat";
+    })();
     const agentCfg: Record<string, unknown> = {
-      providerId: options.providerId ?? process.env.PROSPECTOR_PROVIDER ?? "deepseek",
-      modelId: options.modelId ?? process.env.PROSPECTOR_MODEL ?? "deepseek-chat",
+      providerId: providerIdFinal,
+      modelId: modelIdFinal,
       apiKey: options.apiKey ?? process.env.DEEPSEEK_API_KEY ?? process.env.PROSPECTOR_API_KEY,
       baseUrl: options.baseUrl ?? process.env.PROSPECTOR_BASE_URL ?? "https://api.deepseek.com",
       systemPrompt,
