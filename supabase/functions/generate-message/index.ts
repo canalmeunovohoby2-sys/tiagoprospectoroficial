@@ -4,10 +4,14 @@ import { generateText, AiError } from "../_shared/ai.ts";
 interface LeadInput {
   name: string;
   segment?: string | null;
+  category?: string | null;
   city?: string | null;
   state?: string | null;
   website?: string | null;
   has_website?: boolean;
+  rating?: number | null;
+  reviews_count?: number | null;
+  instagram?: string | null;
   score_reasons?: string[];
 }
 
@@ -47,59 +51,68 @@ Scores baixos/desconhecidos (money=${money_score}, pain=${pain_score}). Mantenha
       });
     }
 
-    const system = `Você gera mensagens de prospecção ULTRA-CURTAS para WhatsApp (Micro-Copywriting). Tom humano, consultivo, leve, sem pressão — focado em abrir conversa naturalmente.
+    const system = `Você é um copywriter brasileiro de prospecção B2B, especialista em ABRIR CONVERSA no WhatsApp com donos de pequenos negócios. Você escreve como uma pessoa real: curto, específico, com algo concreto para dizer — nunca como robô nem como vendedor de pacote.
 
-# ESTRUTURA FIXA OBRIGATÓRIA (4 frases curtas, em UM único parágrafo corrido — sem quebras extras)
-Gere EXATAMENTE nesta ordem, adaptando ao contexto do lead. Use emojis contextuais (1 por frase, MÁXIMO 4 no total) posicionados de forma natural e coerente com o significado da frase — nunca decorativos ou aleatórios:
+# OBJETIVO
+Conseguir uma RESPOSTA. Não vender o site na primeira mensagem.
 
-Olá, tudo bem? 👋 Dei uma olhada na presença digital da [Nome da Empresa] e tive uma ideia que poderia agregar bastante! 💡 Trabalho com desenvolvimento web e montei um conceito de site premium pensado especificamente para [TIPO DE NEGÓCIO]. 🚀 Gravei um vídeo bem curto mostrando a estrutura. 🎥 Se fizer sentido pra vocês, fico à disposição para conversar.
-
-# REGRAS ESTRITAS (NÃO QUEBRE)
-- USE emojis contextuais, escolhidos pelo SIGNIFICADO da frase. Guia por contexto (adapte ao segmento do lead):
-  • Saudação: 👋 🙌
-  • Ideia/observação sobre a presença digital: 💡 👀 ✨
-  • Desenvolvimento/conceito premium: 🚀 🛠️ 💻 — ou emoji do nicho (⚖️ advocacia, 🦷 odonto, 🚗 estética automotiva, 💅 estética, 🍰 confeitaria, 🏋️ academia, 🍽️ restaurante, 📚 educação, 🏥 saúde, 🏡 imobiliária, 💇 salão)
-  • Vídeo/demonstração: 🎥 🎬 📹
-  • Fechamento (opcional): 🤝
-- MÁXIMO 4 emojis no total (1 por frase). Nunca 2 emojis seguidos. Nunca emoji sem função semântica.
-- Substitua [Nome da Empresa] pelo nome real do lead/empresa fornecido no contexto.
-- Substitua [TIPO DE NEGÓCIO] pela descrição adaptada ao segmento do lead (ex.: "clínicas odontológicas", "escritórios de advocacia", "estúdios de estética automotiva", "restaurantes", "academias", "lojas de moda", "escolas de idiomas", "consultórios de psicologia", etc.). SEMPRE no plural genérico do nicho — nunca reutilize o nome da empresa aqui.
-- NÃO inclua nenhum link, URL ou marcador de link na mensagem. A mensagem termina após "fico à disposição para conversar." — sem "[LINK]", sem "http", sem "Segue o link".
-- Ortografia e acentuação PERFEITAS em português do Brasil (à disposição, olá, você, vídeo, específica, etc.).
-- Texto CORRIDO em um único parágrafo (sem listas, sem títulos, sem quebras de linha internas). Máximo ~4 linhas visuais.
-- Sem assinatura, sem "Atenciosamente", sem "Meu nome é", sem apresentar-se pelo nome.
-- Se o lead JÁ POSSUI site (has_website=true), pode ajustar SUTILMENTE a primeira frase para "dei uma olhada no site atual da [Nome da Empresa] e tive uma ideia de repaginação que poderia agregar bastante" — mantendo o restante da estrutura idêntico.
-- PROIBIDO: termos técnicos crus ("landing page", "funil", "conversão", "tráfego", "copywriting", "SEO"), clichês corporativos, citar preço, citar concorrentes, inventar dados ou métricas.
-- Sem "Assunto:" mesmo se channel=email — apenas o parágrafo único.
+# REGRAS INEGOCIÁVEIS
+- Português do Brasil impecável. Tom humano, direto e respeitoso. 2 a 4 frases curtas, 35 a 60 palavras (máx. 320 caracteres).
+- Abra com uma OBSERVAÇÃO ESPECÍFICA e verdadeira sobre o negócio, usando só os dados do contexto (segmento, cidade, nota/avaliações, ausência de site, Instagram). A primeira frase deve provar que a mensagem é só para ele.
+- VARIE A ABERTURA entre as 3 versões: (1) observação direta sobre o negócio, (2) pergunta curta e específica, (3) contexto local (cidade/bairro) + constatação.
+- Termine com UMA pergunta simples de baixa fricção (ex.: "Faz sentido eu te mostrar?", "Quer que eu te mande como ficaria?").
+- No máximo 1 emoji por mensagem — e só se somar sentido. Sem emoji é melhor do que emoji decorativo.
+- NUNCA use clichês de IA/vendedor: "dei uma olhada na presença digital", "tive uma ideia que poderia agregar", "conceito de site premium", "solução completa", "agregar valor", "alavancar", "sinergia", "fico à disposição", "podemos conversar sem compromisso".
+- PROIBIDO: links/URLs, preço, citar concorrentes, jargão ("landing page", "funil", "conversão", "tráfego", "copy", "SEO"), inventar dados, métricas ou serviços que não estejam no contexto.
+- Sem apresentação ("meu nome é"), sem assinatura, sem "Atenciosamente", sem assunto de e-mail.
 
 ${scoringDirective}
 
-# AJUSTE DE TOM POR SCORING
-Aplique o tom do scoring SOMENTE em escolhas sutis de palavras dentro da estrutura fixa (ex.: "conceito de site premium" pode virar "conceito de site sob medida" para leads mais modestos, ou "conceito de site premium com posicionamento executivo" para money_score alto). NUNCA adicione frases novas, NUNCA quebre a estrutura de parágrafo único, NUNCA ultrapasse 4 emojis contextuais.`;
+# TOM POR SCORING (sutil, sem mudar as regras)
+Ajuste apenas a escolha de palavras: money alto → postura de par de negócios; pain alto → evidencie o que ele perde hoje sem ser ofensivo; moderado → ganho rápido e simples; baixo → tom leve e curioso.
+
+# SAÍDA
+Gere EXATAMENTE 3 versões (cada uma segue todas as regras), separadas por uma linha contendo apenas três hífens (---). Nada antes da primeira versão, nada depois da terceira, sem títulos e sem numeração.`;
 
     const ctx = [
       `Nome do lead/empresa: ${lead.name}`,
-      lead.segment && `Segmento/nicho: ${lead.segment}`,
+      (lead.segment || lead.category) && `Segmento/nicho: ${lead.segment ?? lead.category}`,
       lead.city && `Cidade: ${lead.city}`,
       lead.state && `Estado: ${lead.state}`,
       typeof lead.has_website === "boolean" && `Possui site atualmente: ${lead.has_website ? "sim" : "não"}`,
       lead.website && `Site atual: ${lead.website}`,
+      typeof lead.rating === "number" && lead.rating > 0 && `Nota no Google: ${lead.rating}${typeof lead.reviews_count === "number" ? ` (${lead.reviews_count} avaliações)` : ""}`,
+      lead.instagram && `Instagram: ${lead.instagram}`,
     ].filter(Boolean).join("\n");
 
-    const user = `Gere a mensagem seguindo EXATAMENTE a estrutura fixa em parágrafo único. Substitua [Nome da Empresa] pelo nome real e [TIPO DE NEGÓCIO] pelo plural genérico do nicho adaptado ao segmento abaixo. NÃO inclua links, URLs nem marcador [LINK] — a mensagem deve terminar naturalmente após "fico à disposição para conversar.".
+    const user = `Escreva 3 versões de primeira mensagem para este lead, seguindo as regras. Use somente dados presentes no contexto — se faltar informação, não invente. Sem links. Separe as versões com uma linha "---".
 
-CONTEXTO DO LEAD (use só o que estiver presente):
+CONTEXTO DO LEAD:
 ${ctx}`;
 
     let message = "";
+    let variants: string[] = [];
     try {
       const result = await generateText({
         system,
         user,
-        temperature: 0.9,
+        temperature: 0.95,
         maxOutputTokens: 1200,
       });
-      message = result.text;
+      const texto = String(result.text ?? "").trim();
+      variants = texto
+        .split(/\n\s*---+\s*\n/)
+        .map((v) => v.replace(/^\s*(versão|versao|opção|opcao)\s*\d+\s*[:\-–]?\s*/i, "").trim())
+        .filter((v) => v.length > 20 && !/^https?:\/\//i.test(v));
+      // Sanidade: nada de link na mensagem (o link é anexado pelo app, não pelo modelo).
+      variants = variants.map((v) => v.replace(/https?:\/\/\S+/gi, "").trim()).filter(Boolean);
+      message = variants[0] ?? texto;
+      if (!message) {
+        return new Response(JSON.stringify({ error: "A IA não retornou mensagem. Tente gerar novamente." }), {
+          status: 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     } catch (e) {
       if (e instanceof AiError) {
         return new Response(
@@ -110,7 +123,7 @@ ${ctx}`;
       throw e;
     }
 
-    return new Response(JSON.stringify({ message }), {
+    return new Response(JSON.stringify({ message, variants }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
