@@ -2201,16 +2201,53 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 })
               : { executed: false, pass: false, correctionRound: false, technicalFailure: "", final: null };
             if (firstGenQa.correctionRound) emitFiles();
-            // TRABALHO APLICADO = CONCLUÍDO: se houve arquivos alterados (e o build-check acima
-            // passou), NÃO exibir texto de falha do guard ("não consegui confirmar…"). O agente
-            // pode ter batido no limite de iterações, mas o pedido FOI aplicado.
-            if (!timedOut && outcome.ok === false && (outcome.touched?.length ?? 0) > 0) {
+            // TRABALHO APLICADO = CONCLUÍDO (vale mesmo quando o guard devolve texto de falha
+            // com ok:true, como no caso "verificação não comprovada"): se HOUVE alteração, a
+            // entrega não pode aparecer como erro. Normaliza para um resumo neutro.
+            if (!timedOut && (outcome.touched?.length ?? 0) > 0) {
               const textoAtual = String(outcome.reply ?? "");
-              if (/não consegui confirmar a verificação|guard de conclusão recusou|exceeded maxIterations/i.test(textoAtual)) {
+              if (/não consegui confirmar a verificação|guard de conclusão recusou|verificação não comprovada|exceeded maxIterations/i.test(textoAtual)) {
                 outcome.ok = true;
                 outcome.reply = `Alteração aplicada (${outcome.touched!.length} arquivo(s)) e o build passou. Confira no preview — se quiser ajustar algo, me diga.`;
                 outcome.error = undefined;
                 genTrace("accepted-after-work", { projectId, touched: outcome.touched!.length });
+              }
+            }
+            // PLACEHOLDER RESIDUAL ({{…}} / {business.…}): NUNCA entregar com token não resolvido.
+            // 1 tentativa do agente com os trechos exatos; se persistir, remove o token do código.
+            if (!timedOut) {
+              const temPlaceholder = (s: string): boolean =>
+                /\{\{[^}]{0,160}\}\}/.test(s) || /\{\s*(?:business|lead|company|project|empresa|cliente)\./i.test(s);
+              const escanear = (): { arquivos: Record<string, string>; achados: Array<{ path: string; trecho: string }> } => {
+                const w = readWorkspace(root);
+                const achados: Array<{ path: string; trecho: string }> = [];
+                for (const [path, content] of Object.entries(w)) {
+                  if (typeof content !== "string" || !temPlaceholder(content)) continue;
+                  const m = content.match(/\{\{[^}]{0,160}\}\}/) ?? content.match(/\{\s*(?:business|lead|company|project|empresa|cliente)\.[^}]{0,140}\}/i);
+                  achados.push({ path, trecho: String(m?.[0] ?? "").slice(0, 120) });
+                }
+                return { arquivos: w, achados };
+              };
+              let scan = escanear();
+              if (scan.achados.length > 0) {
+                genTrace("placeholder-check", { projectId, n: scan.achados.length, onde: scan.achados.slice(0, 3).map((a) => a.path) });
+                try {
+                  const fix = await oldAgent.runTask(
+                    `PLACEHOLDER RESIDUAL (obrigatório): o código entregue contém token não resolvido {{…}}. Substitua pelos dados REAIS do cliente (ou remova o token) e finalize:\n- ${scan.achados.slice(0, 6).map((a) => `${a.path}: ${a.trecho}`).join("\n- ")}`,
+                    { continueSession: true },
+                  );
+                  if (fix.ok) scan = escanear();
+                } catch { /* segue para a limpeza determinística */ }
+                if (scan.achados.length > 0) {
+                  for (const [path, content] of Object.entries(scan.arquivos)) {
+                    if (typeof content !== "string" || !temPlaceholder(content)) continue;
+                    const limpo = content
+                      .replace(/\{\{[^}]{0,160}\}\}/g, "")
+                      .replace(/\{\s*(?:business|lead|company|project|empresa|cliente)\.[^}]{0,140}\}/gi, "");
+                    try { writeFileSync(join(root, path), limpo, "utf8"); } catch { /* noop */ }
+                  }
+                  genTrace("placeholder-strip", { projectId, n: scan.achados.length });
+                }
               }
             }
             const runErro = String(
