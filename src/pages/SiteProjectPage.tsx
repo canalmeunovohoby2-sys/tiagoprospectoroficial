@@ -273,11 +273,13 @@ export default function SiteProjectPage() {
     setBuilding(true);
     try {
       const res = await invokeStudioBuild({ projectId: project.id, userId: user?.id, files: draftFiles ?? {}, workspaceRevision: workspaceRevRef.current ?? undefined });
-      if (!res.ok) {
-        const error = res.error ?? "Build falhou.";
-        toast.error(error);
-        return { ok: false, error };
-      }
+        if (!res.ok) {
+          // Mostra a CAUSA REAL do build (antes só "exit 1"): a linha de erro do Vite/esbuild.
+          const detalhe = String(res.log ?? "").match(/ERROR:[^\n]+|error during build:[^\n]+|\[vite:[^\]]+\][^\n]+/i)?.[0] ?? "";
+          const error = `${res.error ?? "Build falhou."}${detalhe ? ` — ${detalhe.slice(0, 200)}` : ""}`;
+          toast.error(error);
+          return { ok: false, error };
+        }
       toast.success("Build de produção concluído");
       return { ok: true, html: res.html ?? undefined };
     } catch (e) {
