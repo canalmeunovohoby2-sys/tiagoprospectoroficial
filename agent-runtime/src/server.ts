@@ -2020,7 +2020,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 projectId,
                 currentFiles,
                 businessForRun,
-                { ...body, mode: runKindEfetivo === "generate" ? "generate" : "edit", maxIterations: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : (surgicalEdit ? Math.min(Number(body.maxIterations ?? 40), 24) : body.maxIterations) },
+                { ...body, mode: runKindEfetivo === "generate" ? "generate" : "edit", maxIterations: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : body.maxIterations },
                 exec,
                 { hasBase: runKindEfetivo === "generate" ? false : !firstGen, autonomy },
               );
@@ -2208,7 +2208,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             genTrace("run-end", { projectId, kind: runKindEfetivo, timedOut, iterations: outcome.iterations ?? 0, qa: firstGenQa.executed ? firstGenQa.pass : null, totalMs: Date.now() - runStartedAt, ok: outcome.ok, erro: runErro.slice(0, 200) });
             // FALHA IMEDIATA (iterations=0, sem timeout): NUNCA deixar a tela em "Sem atividade
             // ainda" sem explicação. Registra no rastro e emite atividade de erro para o chat.
-            if (!timedOut && (outcome.ok === false || (outcome.iterations ?? 0) === 0)) {
+            if (!timedOut && ((outcome.iterations ?? 0) === 0 || (outcome.ok === false && (outcome.touched?.length ?? 0) === 0))) {
               const motivo = runErro || String(outcome.reply ?? "").trim().slice(0, 300) || "A execução não iniciou (verifique a IA em Configurações → IA).";
               const evs = Array.isArray((outcome as unknown as { events?: unknown[] }).events)
                 ? (outcome as unknown as { events: Array<{ type?: unknown; error?: unknown }> }).events

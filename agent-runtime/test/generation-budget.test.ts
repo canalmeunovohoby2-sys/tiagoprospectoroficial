@@ -17,7 +17,7 @@ describe("orcamento de execucao · gerar x editar", () => {
   });
 
   it("GERAR recebe no minimo 80 iteracoes (EDITAR nao muda)", () => {
-    expect(src).toContain("maxIterations: runKindEfetivo === \"generate\" ? Math.max(Number(body.maxIterations ?? 0), 80) : (surgicalEdit ? Math.min(Number(body.maxIterations ?? 40), 24) : body.maxIterations)");
+    expect(src).toContain("maxIterations: runKindEfetivo === \"generate\" ? Math.max(Number(body.maxIterations ?? 0), 80) : body.maxIterations");
   });
 
   it("o endpoint /generate tambem nao nasce com poucas iteracoes", () => {
