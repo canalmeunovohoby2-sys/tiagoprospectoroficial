@@ -2107,7 +2107,10 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // ao agente. Se persistir, a resposta final NÃO pode dizer "salvo/feito".
             if (!timedOut && runKindEfetivo !== "conversation" && (outcome.touched?.length ?? 0) > 0) {
               const intent = editIntentOf(instruction);
-              if (intent) {
+              // EDICAO CIRURGICA (texto/cor/logo/imagem): NÃO disparar rodada de correção por
+              // intenção — era um RUN INTEIRO a mais (principal causa de "edição demorada") e
+              // essas edições já são específicas + validadas pelo build. Estrutural/ampla segue.
+              if (intent && !surgicalEdit) {
                 let after = readWorkspace(root);
                 let falta = editIntentViolation(intent, filesBeforeRun, after, instruction);
                 if (falta) {
