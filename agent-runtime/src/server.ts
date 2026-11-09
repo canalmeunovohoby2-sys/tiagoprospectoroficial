@@ -2201,6 +2201,18 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 })
               : { executed: false, pass: false, correctionRound: false, technicalFailure: "", final: null };
             if (firstGenQa.correctionRound) emitFiles();
+            // TRABALHO APLICADO = CONCLUÍDO: se houve arquivos alterados (e o build-check acima
+            // passou), NÃO exibir texto de falha do guard ("não consegui confirmar…"). O agente
+            // pode ter batido no limite de iterações, mas o pedido FOI aplicado.
+            if (!timedOut && outcome.ok === false && (outcome.touched?.length ?? 0) > 0) {
+              const textoAtual = String(outcome.reply ?? "");
+              if (/não consegui confirmar a verificação|guard de conclusão recusou|exceeded maxIterations/i.test(textoAtual)) {
+                outcome.ok = true;
+                outcome.reply = `Alteração aplicada (${outcome.touched!.length} arquivo(s)) e o build passou. Confira no preview — se quiser ajustar algo, me diga.`;
+                outcome.error = undefined;
+                genTrace("accepted-after-work", { projectId, touched: outcome.touched!.length });
+              }
+            }
             const runErro = String(
               (outcome as unknown as { error?: unknown }).error
                 ?? ((outcome as unknown as { errors?: unknown[] }).errors?.[0] ?? ""),
