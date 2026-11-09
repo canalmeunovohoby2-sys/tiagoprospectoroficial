@@ -69,15 +69,44 @@ function runNpm(root: string, args: string[], timeoutMs: number): Promise<{ code
   });
 }
 
-/** Garante dependências instaladas no workspace (npm install 1x). */
+/** Binário NATIVO do Rollup por plataforma (optionalDependency que o npm às vezes omite). */
+const ROLLUP_NATIVE: Record<string, string> = {
+  win32: process.arch === "arm64" ? "@rollup/rollup-win32-arm64-msvc" : "@rollup/rollup-win32-x64-msvc",
+  darwin: process.arch === "arm64" ? "@rollup/rollup-darwin-arm64" : "@rollup/rollup-darwin-x64",
+  linux: process.arch === "arm64" ? "@rollup/rollup-linux-arm64-gnu" : "@rollup/rollup-linux-x64-gnu",
+};
+
+function rollupNativeOk(root: string, pkg: string): boolean {
+  if (!pkg) return true;
+  return existsSync(join(root, "node_modules", "@rollup", pkg.split("/")[1] ?? ""));
+}
+
+/**
+ * Garante dependências instaladas no workspace.
+ * BUG REAL (build/publicação): antes bastava `node_modules` existir para considerar tudo
+ * pronto — uma instalação PARCIAL (sem o binário nativo do Rollup) nunca era reparada e
+ * TODO build falhava com "Cannot find module '@rollup/rollup-win32-x64-msvc'", cancelando
+ * a publicação. Agora valida vite + binário do Rollup e repara (install com
+ * --include=optional e, se preciso, instala o pacote nativo explicitamente).
+ */
 export async function ensureProjectDeps(root: string, log: string[] = []): Promise<{ ok: boolean; error?: string; log: string }> {
-  if (existsSync(join(root, "node_modules"))) return { ok: true, log: "" };
   if (!existsSync(join(root, "package.json"))) return { ok: false, error: "Projeto sem package.json.", log: "" };
-  const res = await runNpm(root, ["install", "--no-audit", "--no-fund", "--prefer-offline"], INSTALL_TIMEOUT_MS);
-  const text = `[install]\n${res.log}`;
-  log.push(text);
-  if (res.code !== 0) return { ok: false, error: `npm install falhou (exit ${res.code}).`, log: text };
-  return { ok: true, log: text };
+  const nativo = ROLLUP_NATIVE[process.platform] ?? "";
+  const pronto = existsSync(join(root, "node_modules", "vite")) && rollupNativeOk(root, nativo);
+  if (pronto) return { ok: true, log: "" };
+  let texto = "";
+  const res = await runNpm(root, ["install", "--no-audit", "--no-fund", "--include=optional"], INSTALL_TIMEOUT_MS);
+  texto += `[install]\n${res.log}`;
+  if (res.code !== 0) {
+    log.push(texto);
+    return { ok: false, error: `npm install falhou (exit ${res.code}).`, log: texto };
+  }
+  if (!rollupNativeOk(root, nativo)) {
+    const fix = await runNpm(root, ["install", "--no-save", "--no-audit", "--no-fund", nativo], INSTALL_TIMEOUT_MS);
+    texto += `\n[install-rollup]\n${fix.log}`;
+  }
+  log.push(texto);
+  return { ok: true, log: texto };
 }
 
 /** Coleta os arquivos de texto de `dist/` (mapa relativo posix). */
