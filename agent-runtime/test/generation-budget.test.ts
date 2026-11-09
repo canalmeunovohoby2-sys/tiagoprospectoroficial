@@ -10,14 +10,14 @@ const src = readFileSync(join(process.cwd(), "src/server.ts"), "utf8");
 describe("orcamento de execucao · gerar x editar", () => {
   it("GERAR tem 15 min; EDITAR capado em 4 min", () => {
     expect(src).toContain("Math.max(baseTimeout, 900_000), 900_000)");
-    expect(src).toContain("Math.min(baseTimeout, 240_000)");
+    expect(src).toContain("surgicalEdit ? 120_000 : 240_000");
     const i = src.indexOf("const baseTimeout");
     const bloco = src.slice(i, i + 400);
     expect(bloco).toContain('runKindEfetivo === "generate"');
   });
 
   it("GERAR recebe no minimo 80 iteracoes (EDITAR nao muda)", () => {
-    expect(src).toContain("maxIterations: runKindEfetivo === \"generate\" ? Math.max(Number(body.maxIterations ?? 0), 80) : body.maxIterations");
+    expect(src).toContain("maxIterations: runKindEfetivo === \"generate\" ? Math.max(Number(body.maxIterations ?? 0), 80) : (surgicalEdit ? Math.min(Number(body.maxIterations ?? 40), 24) : body.maxIterations)");
   });
 
   it("o endpoint /generate tambem nao nasce com poucas iteracoes", () => {

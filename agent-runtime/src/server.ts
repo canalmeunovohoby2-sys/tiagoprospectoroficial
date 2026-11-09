@@ -358,7 +358,7 @@ export function editIntentViolation(
     }
   }
   if (kind === "color") {
-    const re = /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/gi;
+    const re = /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\b(?:bg|text|border|from|to|via|ring|fill|stroke)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}\b/gi;
     const novo = new Set((textoNovo.match(re) ?? []).map((s) => s.toLowerCase()));
     const antes = new Set((textoAntes.match(re) ?? []).map((s) => s.toLowerCase()));
     if (![...novo].some((c) => !antes.has(c))) return "o pedido é de COR e nenhuma cor nova apareceu no código";
@@ -2020,7 +2020,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 projectId,
                 currentFiles,
                 businessForRun,
-                { ...body, mode: runKindEfetivo === "generate" ? "generate" : "edit", maxIterations: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : body.maxIterations },
+                { ...body, mode: runKindEfetivo === "generate" ? "generate" : "edit", maxIterations: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : (surgicalEdit ? Math.min(Number(body.maxIterations ?? 40), 24) : body.maxIterations) },
                 exec,
                 { hasBase: runKindEfetivo === "generate" ? false : !firstGen, autonomy },
               );
@@ -2049,7 +2049,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             const baseTimeout = resolveRunTimeoutMs();
             const runTimeoutMs = runKindEfetivo === "generate"
               ? (baseTimeout === 0 ? 0 : Math.min(Math.max(baseTimeout, 900_000), 900_000))
-              : Math.min(baseTimeout, 240_000);
+              : Math.min(baseTimeout, surgicalEdit ? 120_000 : 240_000);
             let timedOut = false;
             // Resultado PARCIAL honesto (diff real do disco) — usado pelo watchdog.
             const partialAfterTimeout = (): AgentRunOutcome => {
