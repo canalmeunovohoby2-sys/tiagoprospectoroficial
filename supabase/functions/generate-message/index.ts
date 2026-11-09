@@ -15,6 +15,28 @@ interface LeadInput {
   score_reasons?: string[];
 }
 
+/**
+ * Fallback determinístico (sem IA): 3 abordagens específicas do lead, seguindo as mesmas
+ * regras de copy (curtas, sem clichê de IA, sem link, uma pergunta final). Usado quando a
+ * chave do provedor não está configurada ou o provedor falha — a feature nunca quebra.
+ */
+function fallbackVariants(lead: LeadInput): string[] {
+  const nome = String(lead.name ?? "").trim() || "sua empresa";
+  const seg = String(lead.segment ?? lead.category ?? "seu segmento").trim() || "seu segmento";
+  const cidade = lead.city ? ` em ${lead.city}` : "";
+  const nota = typeof lead.rating === "number" && lead.rating > 0
+    ? `Vi que a ${nome} tem ${lead.rating.toFixed(1)}★${typeof lead.reviews_count === "number" && lead.reviews_count > 0 ? ` com ${lead.reviews_count} avaliações` : ""} — reputação assim merece um site à altura.`
+    : "";
+  const semSite = lead.has_website === false
+    ? `Reparei que ainda não há um site próprio de vocês (só o perfil no Google).`
+    : "";
+  return [
+    `${nome}${cidade}: ${nota || semSite || `acompanho o trabalho de ${seg} na região e o de vocês chama atenção.`} Montei uma ideia de site que valoriza o que vocês já entregam. Quer que eu te mostre como ficaria?`,
+    `Pergunta rápida sobre a ${nome}${cidade}: o site de vocês hoje passa a mesma confiança do atendimento? ${semSite} Preparei um conceito sob medida para ${seg}. Faz sentido eu te mandar?`,
+    `${nome}${cidade}: ${semSite || nota || `o trabalho de vocês é bem avaliado e merece uma presença digital à altura.`} Fiz uma proposta de site pensada para ${seg}. Posso te mostrar em 2 minutos?`,
+  ];
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -114,13 +136,13 @@ ${ctx}`;
         });
       }
     } catch (e) {
-      if (e instanceof AiError) {
-        return new Response(
-          JSON.stringify({ error: e.message, kind: e.kind, detail: e.detail }),
-          { status: e.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
-      }
-      throw e;
+      // PROVEDOR INDISPONÍVEL / CHAVE AUSENTE: não derruba a funcionalidade — devolve as
+      // 3 abordagens determinísticas e informa o motivo (o app usa `message`).
+      const motivo = e instanceof Error ? e.message : "falha na IA";
+      const fb = fallbackVariants(lead);
+      return new Response(JSON.stringify({ message: fb[0], variants: fb, warning: motivо }, {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }));
     }
 
     return new Response(JSON.stringify({ message, variants }), {
