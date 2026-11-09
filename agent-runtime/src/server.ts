@@ -2083,7 +2083,18 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // ainda" sem explicação. Registra no rastro e emite atividade de erro para o chat.
             if (!timedOut && (outcome.ok === false || (outcome.iterations ?? 0) === 0)) {
               const motivo = runErro || String(outcome.reply ?? "").trim().slice(0, 300) || "A execução não iniciou (verifique a IA em Configurações → IA).";
-              genTrace("run-error", { projectId, kind: runKindEfetivo, erro: motivo.slice(0, 300) });
+              const evs = Array.isArray((outcome as unknown as { events?: unknown[] }).events)
+                ? (outcome as unknown as { events: Array<{ type?: unknown; error?: unknown }> }).events
+                : [];
+              const timing = (outcome as unknown as { timing?: { turnCount?: number; modelMs?: number } }).timing;
+              genTrace("run-error", {
+                projectId, kind: runKindEfetivo, erro: motivo.slice(0, 300),
+                eventos: evs.slice(-8).map((ev) => String(ev?.type ?? "?")),
+                turnos: timing?.turnCount ?? null,
+                modelMs: timing?.modelMs ?? null,
+                replyLen: String((outcome as unknown as { reply?: unknown }).reply ?? "").length,
+                ultimoErroEvento: String(evs.map((ev) => ev?.error).filter(Boolean).slice(-1)[0] ?? "").slice(0, 200),
+              });
               // SESSÃO ENVENENADA: uma run abortada/presa deixa o Agent em estado inválido e
               // TODAS as tentativas seguintes falham em ~15s com 0 iterações. Descarta a
               // sessão desta chave para o próximo clique começar com um Agent novo.
