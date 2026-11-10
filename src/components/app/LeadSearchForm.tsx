@@ -395,7 +395,7 @@ export function LeadSearchForm({
         }
       }
       const enrichedLeads = rawLeads.map((l: SearchPlacesLead) => enrichLeadWithScores(l));
-      const realLeads = sortLeadsByScore(enrichedLeads);
+      const realLeads = sortLeadsByScore(enrichedLeads).filter((l) => !l.has_website && !String(l.website ?? "").trim());
       const warnings = uniqueWarnings(data?.warnings ?? []);
       const usedSource = data?.source ?? "none";
 

@@ -76,7 +76,7 @@ export default function OrvixProspectarResultados() {
   const [approachLead, setApproachLead] = useState<Lead | null>(null);
   const [crmLead, setCrmLead] = useState<Lead | null>(null);
   const [showRejected, setShowRejected] = useState(false);
-  const [onlyHigh, setOnlyHigh] = useState(false);
+  const [onlyHigh] = useState(false);
   const [sortMode, setSortMode] = useState<OrvixSortMode>("priority");
   const [auditOpen, setAuditOpen] = useState(false);
 
@@ -146,7 +146,7 @@ export default function OrvixProspectarResultados() {
       setLoading(true);
       const initial = await fetchLeads();
       if (cancelled) return;
-      setLeads(initial);
+      setLeads(initial.filter((l) => !l.has_website && !String(l.website ?? "").trim()));
       setLoading(false);
 
       // Background: Website & Instagram Discovery. Não bloqueia a exibição.
@@ -411,10 +411,6 @@ export default function OrvixProspectarResultados() {
                   </SelectContent>
                 </Select>
               </div>
-              <label className="inline-flex items-center gap-2 text-xs cursor-pointer select-none">
-                <Switch checked={onlyHigh} onCheckedChange={setOnlyHigh} />
-                <span>Apenas altamente confiáveis</span>
-              </label>
             </div>
           </div>
         </Card>

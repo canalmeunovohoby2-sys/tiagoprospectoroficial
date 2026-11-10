@@ -58,6 +58,11 @@ function OrvixLeadCardBase({ lead: l, isRejected, confidence, opportunity, segme
           {/* Linha 1: Empresa + prioridade + confiança */}
           <div className="flex items-center gap-2 min-w-0">
             <h3 className="font-display text-base font-semibold truncate">{l.name}</h3>
+            {!l.website && (
+              <Badge className="shrink-0 border-emerald-500/40 bg-emerald-500/15 text-[10px] font-semibold uppercase tracking-wide text-emerald-600">
+                Sem site
+              </Badge>
+            )}
             {confidence && (
               <Tooltip>
                 <TooltipTrigger asChild>
