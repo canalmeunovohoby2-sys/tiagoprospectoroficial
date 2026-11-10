@@ -146,7 +146,7 @@ export default function OrvixProspectarResultados() {
       setLoading(true);
       const initial = await fetchLeads();
       if (cancelled) return;
-      setLeads(initial.filter((l) => !l.has_website && !String(l.website ?? "").trim()));
+      setLeads(initial);
       setLoading(false);
 
       // Background: Website & Instagram Discovery. Não bloqueia a exibição.

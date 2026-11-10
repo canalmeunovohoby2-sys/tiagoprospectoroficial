@@ -111,7 +111,7 @@ const SOURCE_LABELS = {
 // Antes usávamos "LeadHunterBrasil/1.0 (lovable.app)", que o Nominatim
 // passou a rejeitar com HTTP 403 (IPs de nuvem sem contato válido).
 const OSM_USER_AGENT =
-  "TiagoProspector/1.0 (+https://tiagoprospectoroficial.vercel.app; canalmeunovohoby3@gmail.com)";
+  "TiagoProspector/1.0 (+https://seusiteagora.vercel.app; canalmeunovohoby3@gmail.com)";
 
 const FIELD_MASK = [
   "places.id",

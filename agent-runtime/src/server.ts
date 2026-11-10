@@ -1,3 +1,4 @@
+import "./env.js";
 // Servidor HTTP do Prospector Agent Runtime.
 // Expoe /health e /run (JSON). Roda em Node (fora do front e do edge Deno).
 // Uso: PROSPECTOR_API_KEY=... npx tsx src/server.ts
@@ -44,6 +45,9 @@ import { callModelWithTools } from "./studio/agent-core/model.js";
 import { isBootstrapProject } from "./studio/agent-core/first-message.js";
 import { createLiveStreamBridge } from "./studio/live-events.js";
 import { buildDesignDirection, extractBrandColors, hasArtDirection } from "./studio/agent-core/design-direction.js";
+import { generateArtDirection, formatArtDirectionBlock, type ArtDirectionSpec } from "./studio/agent-core/art-direction.js";
+import { findVisualReferences } from "./studio/agent-core/references.js";
+import { critiqueGeneratedSite, formatCritique } from "./studio/agent-core/design-critique.js";
 import { runVisualVerification } from "./studio/agent-core/visual-verify.js";
 import { runFirstGenQaCycle, type FirstGenQaResult } from "./studio/agent-core/firstgen-qa.js";
 import { validateRenderedSite, type DirectionExpectation } from "./studio/visual-validation.js";
@@ -51,6 +55,12 @@ import { EDIT_TOOLS } from "./work-evidence.js";
 import { intentCoverage, type WorkEvidence } from "./work-evidence.js";
 import { syncWorkspaceFromClient, bumpWorkspaceRevision, currentWorkspaceRevision } from "./workspace.js";
 import { backupAndPruneFirstGen, shouldPruneFirstGen } from "./firstgen-workspace.js";
+/** Identidade de NEGOCIO da run (nome+segmento) - base do isolamento de assets. */
+function businessRunKey(b: { name?: string | null; segment?: string | null }): string {
+  const n = (s: unknown): string =>
+    String(s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+  return `${n(b.name)}|${n(b.segment)}`;
+}
 
 // BLINDAGEM DO PROCESSO: um erro assíncrono (ex.: cliente desconecta no meio do
 // stream → ERR_STREAM_WRITE_AFTER_END) NÃO pode derrubar o runtime local. Antes,
@@ -1900,6 +1910,19 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             }
             const currentFiles = Object.keys(readWorkspace(root)).length ? readWorkspace(root) : clientFiles;
             const firstGen = isBootstrapProject(currentFiles) || Object.keys(currentFiles).length === 0;
+// ISOLAMENTO DE NEGOCIO: se o mesmo projeto passou a representar OUTRO negocio, o
+// workspace pode conter fotos/assets do anterior (imagem de outro segmento). Poda o
+// visual antes de gerar (com backup) e registra no trace.
+try {
+  const bKey = businessRunKey(businessForRun);
+  const bFile = join(root, ".prospector-business.json");
+  const prev = existsSync(bFile) ? String((JSON.parse(readFileSync(bFile, "utf8")) as { key?: string })?.key ?? "") : "";
+  if (prev && prev !== bKey) {
+    const pr = backupAndPruneFirstGen(root, projectId);
+    genTrace("business-changed-prune", { projectId, prev, next: bKey, removed: pr.removed.length });
+  }
+  writeFileSync(bFile, JSON.stringify({ key: bKey, at: Date.now() }), "utf8");
+} catch { /* isolamento best-effort: nunca bloqueia a geracao */ }
             // ANEXO NUNCA É CONVERSA: mandar um arquivo/logo é pedido de uso —
             // entra em edição (ou geração, se o projeto ainda for bootstrap).
             // INTENCAO DE GERACAO: "crie o site" num projeto sem site real volta a ser GERACAO
@@ -1976,6 +1999,35 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
               brandColors,
               services: businessForRun.services,
             }, `${projectId}|${businessForRun.name ?? ""}|${businessForRun.segment ?? ""}|${businessForRun.city ?? ""}`);
+            // FASE 1+2 - DIRECAO DE ARTE INDIVIDUAL + REFERENCIAS REAIS (somente na geracao).
+            // Uma chamada de modelo no maximo; timeout/validacao/fallback: a geracao NUNCA quebra.
+            const completeForCreative = async (a: { system: string; user: string; maxTokens: number; temperature: number }): Promise<string> => {
+              const r = await callModelWithTools({
+                providerId: exec.providerId,
+                modelId: exec.modelId,
+                apiKey: exec.apiKey,
+                baseUrl: exec.baseUrl,
+                system: a.system,
+                messages: [{ role: "user", content: a.user }],
+                tools: [],
+                maxTokens: a.maxTokens,
+                temperature: a.temperature,
+              }).catch(() => null);
+              return r?.ok ? String(r.turn?.text ?? "") : "";
+            };
+            let artSpec: ArtDirectionSpec | null = null;
+            if (runKindEfetivo === "generate") {
+              const refs = await findVisualReferences({ business: businessForRun, artHint: instruction.slice(0, 80) })
+                .catch(() => ({ references: [], researched: false, note: "falha na pesquisa" }));
+              artSpec = await generateArtDirection({
+                business: businessForRun,
+                references: refs.references,
+                researched: refs.researched,
+                complete: completeForCreative,
+                timeoutMs: 45_000,
+              });
+              genTrace("art-direction", { projectId, source: artSpec.meta.source, researched: artSpec.meta.researched, sections: artSpec.sectionPlan.length, fonts: artSpec.typography.pair });
+            }
             const creativeBrief = false /* RESTAURACAO: brief por IA fora do caminho — o AGENTE decide a identidade visual */
               ? await generateCreativeBrief({
                   model: callModelWithTools,
@@ -1988,7 +2040,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 continuityBlock,
                 // CONVERGENCIA ESTETICA: na 1a geracao os tokens determinisicos da direcao (paleta/hero/grid/ritmo)
                 // NAO entram — viravam um prior forte e os sites do mesmo segmento saiam parecidos. Em edicao continuam.
-                directionBlock: direction.block,
+                directionBlock: artSpec ? formatArtDirectionBlock(artSpec) : direction.block,
                 instruction,
                 creativeBrief,
                 mediaBlock: mediaBlockForRun,
@@ -2172,12 +2224,27 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
             // GERAR → build/preview → QA Chromium real → [no máx. 1 rodada de correção
             // com os problemas devolvidos ao agente] → QA final. Falha técnica do QA
             // NUNCA vira sucesso silencioso (ressalva explícita no payload).
+                        let critiqueModelUsed = false;
             const firstGenQa: FirstGenQaResult = runKindEfetivo === "generate" && !timedOut && autonomy !== "full"
               ? await runFirstGenQaCycle({
                   root,
                   instruction,
                   business: businessForRun,
                   buildProject: buildReactProject,
+                    critique: async (v) => {
+                      if (!artSpec) return { issues: [], pass: true };
+                      critiqueModelUsed = true;
+                      const c = await critiqueGeneratedSite({
+                        spec: artSpec,
+                        files: readWorkspace(root),
+                        verification: v,
+                        complete: critiqueModelUsed ? undefined : completeForCreative,
+                        timeoutMs: 30_000,
+                      }).catch(() => null);
+                      const f = c ? formatCritique(c) : { issues: [], pass: true };
+                      try { genTrace("design-critique", { projectId, verdict: c?.verdict ?? "skipped", findings: c?.findings.length ?? 0, model: c?.model ?? 0 }); } catch { /* noop */ }
+                      return f;
+                    },
                   runVisualVerification,
                   correctWithAgent: async (issues) => {
                     try {

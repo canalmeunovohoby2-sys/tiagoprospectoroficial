@@ -13,6 +13,7 @@ import type { Database } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/useAuth";
 import { enrichLeadWithScores, sortLeadsByScore } from "@/lib/leadScoring";
 import { localQuery, localScrapersEnabled, mergeLocalPlaces, searchLocalPlaces } from "@/lib/localLeadScrapers";
+import { prioritizeSiteLess, siteStatusOf } from "@/lib/leadSitePriority";
 
 type LeadInsert = Database["public"]["Tables"]["leads"]["Insert"];
 
@@ -395,7 +396,23 @@ export function LeadSearchForm({
         }
       }
       const enrichedLeads = rawLeads.map((l: SearchPlacesLead) => enrichLeadWithScores(l));
-      const realLeads = sortLeadsByScore(enrichedLeads).filter((l) => !l.has_website && !String(l.website ?? "").trim());
+              // PRIORIDADE (não descarte): coleta tudo; empresas sem site sobem, presença
+        // desconhecida fica no meio e site próprio/rede social no fim da lista.
+        const siteCounts = { sem_site: 0, desconhecido: 0, site_social: 0, site_proprio: 0 };
+        for (const l of enrichedLeads) siteCounts[siteStatusOf(l)]++;
+        const searchFunnel = {
+          edge_raw: edgeLeads.length,
+          local_raw: Math.max(0, rawLeads.length - edgeLeads.length),
+          merged: enrichedLeads.length,
+          sem_site: siteCounts.sem_site,
+          desconhecido: siteCounts.desconhecido,
+          site_social: siteCounts.site_social,
+          site_proprio: siteCounts.site_proprio,
+          final_listado: enrichedLeads.length,
+          sources_status: (data as unknown as { sources_status?: unknown })?.sources_status ?? null,
+        };
+        console.info("[prospector:funil-busca]", searchFunnel);
+        const realLeads = prioritizeSiteLess(sortLeadsByScore(enrichedLeads));
       const warnings = uniqueWarnings(data?.warnings ?? []);
       const usedSource = data?.source ?? "none";
 
@@ -511,6 +528,7 @@ export function LeadSearchForm({
       try {
         const auditPayload = {
           audit: (data as unknown as { audit?: unknown })?.audit ?? null,
+            funnel: searchFunnel,
           diagnostics: data?.diagnostics ?? null,
           source: usedSource,
           search_status: searchStatus,

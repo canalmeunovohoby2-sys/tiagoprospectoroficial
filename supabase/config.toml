@@ -2,8 +2,8 @@ project_id = "yvjescftagxktiikqxvc"
 
 [auth]
 enabled = true
-site_url = "https://tiagoprospectoroficial.vercel.app"
-additional_redirect_urls = ["http://localhost:8080", "http://localhost:5173"]
+site_url = "https://seusiteagora.vercel.app"
+additional_redirect_urls = ["https://seusiteagora.vercel.app", "https://seusiteagora.vercel.app/**", "https://tiagoprospectoroficial.vercel.app", "https://tiagoprospectoroficial.vercel.app/**", "http://localhost:8080", "http://localhost:8080/**", "http://localhost:5173", "http://localhost:5173/**"]
 enable_signup = true
 enable_anonymous_sign_ins = true
 
@@ -12,3 +12,6 @@ verify_jwt = false
 
 [functions.runtime-config]
 verify_jwt = false
+
+[storage.vector]
+enabled = false

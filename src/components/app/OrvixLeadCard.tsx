@@ -20,6 +20,7 @@ import { confidenceBadgeClass } from "@/lib/orvixLeadConfidence";
 import type { OpportunityScore } from "@/lib/orvixOpportunityScore";
 import { opportunityBadgeClass } from "@/lib/orvixOpportunityScore";
 import { computeBusinessFit, businessFitBadgeClass } from "@/lib/orvixBusinessFit";
+import { siteStatusOf } from "@/lib/leadSitePriority";
 import type { SegmentConfidence } from "@/lib/orvixSegmentConfidence";
 import { segmentConfidenceBadgeClass } from "@/lib/orvixSegmentConfidence";
 
@@ -57,12 +58,13 @@ function OrvixLeadCardBase({ lead: l, isRejected, confidence, opportunity, segme
         <div className="min-w-0 flex-1 space-y-0.5">
           {/* Linha 1: Empresa + prioridade + confiança */}
           <div className="flex items-center gap-2 min-w-0">
-            <h3 className="font-display text-base font-semibold truncate">{l.name}</h3>
-            {!l.website && (
-              <Badge className="shrink-0 border-emerald-500/40 bg-emerald-500/15 text-[10px] font-semibold uppercase tracking-wide text-emerald-600">
-                Sem site
-              </Badge>
-            )}
+            <h3 className="font-display text-base font-semibold truncate">{l.name}</h3>            {(() => {
+              const st = siteStatusOf(l);
+              if (st === "sem_site") return <Badge className="shrink-0 border-emerald-500/40 bg-emerald-500/15 text-[10px] font-semibold uppercase tracking-wide text-emerald-600">Sem site</Badge>;
+              if (st === "desconhecido") return <Badge variant="outline" className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Não verificado</Badge>;
+              if (st === "site_social") return <Badge variant="outline" className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-amber-600">Só rede social</Badge>;
+              return <Badge variant="outline" className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Site</Badge>;
+            })()}
             {confidence && (
               <Tooltip>
                 <TooltipTrigger asChild>

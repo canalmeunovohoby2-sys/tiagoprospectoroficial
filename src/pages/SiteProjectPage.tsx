@@ -792,18 +792,29 @@ export default function SiteProjectPage() {
           const lead = projectLeadRef.current;
           // Mídia/localização REAIS do cliente (React Studio). O front só entrega
           // dados verificáveis; o runtime monta o mapa (sem API key) e as regras.
-          const media = isReactProject
+          // GUARDA DE CONTEXTO (regressao de imagem de outro segmento): fotos, endereco e
+// geo do lead so entram se o lead for REALMENTE deste negocio (nome ou segmento
+// compativel). Sem isso, um projeto reaproveitado herdava as fotos do lead anterior.
+const normBiz = (s?: string | null) => String(s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+const projectBizName = normBiz(project.company_name || project.name);
+const projectBizSeg = normBiz(project.segment);
+// Dois negocios do mesmo segmento NAO podem compartilhar fotos: exige NOME quando
+// ambos existem; segmento so como fallback quando falta nome em um dos lados.
+const namesBothPresent = !!lead?.name && !!projectBizName;
+const leadMediaTrusted = !!lead && (namesBothPresent
+  ? normBiz(lead.name).slice(0, 24) === projectBizName.slice(0, 24)
+  : (!!lead.segment && !!projectBizSeg && normBiz(lead.segment) === projectBizSeg));const media = isReactProject
             ? buildSiteMediaContext({
                 name: project.company_name || project.name,
                 segment: project.segment,
-                category: lead?.category ?? null,
-                address: (typeof cContact.address === "string" ? cContact.address : null) ?? lead?.address ?? null,
+                category: leadMediaTrusted ? (lead?.category ?? null) : null,
+                address: (typeof cContact.address === "string" ? cContact.address : null) ?? (leadMediaTrusted ? lead?.address ?? null : null),
                 city: project.city,
                 state: project.state,
-                photoName: lead?.photo_name,
-                googleUrl: lead?.google_url,
-                latitude: lead?.latitude,
-                longitude: lead?.longitude,
+                photoName: leadMediaTrusted ? lead?.photo_name : undefined,
+                googleUrl: leadMediaTrusted ? lead?.google_url : undefined,
+                latitude: leadMediaTrusted ? lead?.latitude : null,
+                longitude: leadMediaTrusted ? lead?.longitude : null,
               })
             : null;
           // Imagens ilustrativas do sistema existente (Pexels via get-images),

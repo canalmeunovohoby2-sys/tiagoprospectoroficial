@@ -46,6 +46,8 @@ export async function runFirstGenQaCycle(opts: {
   buildProject: (root: string) => Promise<{ ok: boolean; html?: string; error?: string }>;
   runVisualVerification: (input: { serveDir: string; objective: string }) => Promise<VisualVerification>;
   correctWithAgent: (issues: string) => Promise<boolean>;
+    /** FASE 4 - critica de direcao de arte sobre o site RENDERIZADO (opcional; nunca quebra o QA). */
+    critique?: (verification: VisualVerification) => Promise<{ issues: string[]; pass: boolean }>;
   onStep?: (step: { phase: string; detail: string }) => void;
   /** Problemas estruturais DETERMINÍSTICOS detectados antes do QA (ex.: rascunho
    *  bootstrap ainda montado). Se houver, contam como falha e forçam a rodada
@@ -70,10 +72,16 @@ export async function runFirstGenQaCycle(opts: {
 
     step("validating", "Verificando o site em desktop, tablet e mobile…");
     const first = await opts.runVisualVerification({ serveDir, objective });
-    if (qaResultIsPass(first) && preIssues.length === 0) return { executed: true, pass: true, correctionRound: false, technicalFailure: "", final: first };
+      // FASE 4 - critica de direcao de arte (1 avaliacao; nao aprova com problema relevante).
+      let critiqueIssues: string[] = [];
+      try {
+        const crit = await opts.critique?.(first);
+        if (crit && !crit.pass) critiqueIssues = (crit.issues ?? []).filter(Boolean).slice(0, 10);
+      } catch { /* critica indisponivel: segue com a verificacao tecnica */ }
+    if (qaResultIsPass(first) && preIssues.length === 0 && critiqueIssues.length === 0) return { executed: true, pass: true, correctionRound: false, technicalFailure: "", final: first };
 
     // QA falhou (ou rascunho determinístico detectado) → UMA rodada de correção.
-    const issues = [...preIssues, formatQaIssues(first)].filter(Boolean);
+    const issues = [...preIssues, formatQaIssues(first), ...critiqueIssues].filter(Boolean);
     let correctionRound = false;
     try {
       correctionRound = await opts.correctWithAgent(issues.join("\n- "));
@@ -90,7 +98,14 @@ export async function runFirstGenQaCycle(opts: {
 
     step("validating", "Verificando novamente o site após os ajustes…");
     const second = await opts.runVisualVerification({ serveDir, objective });
-    return { executed: true, pass: qaResultIsPass(second), correctionRound: true, technicalFailure: "", final: second };
+    // FASE 4 - a critica final decide junto (sem segunda chamada de modelo: o callback
+    // do servidor usa so o determinismo na segunda passada). Nunca aprova se ainda falha.
+    let critiqueOk = true;
+    try {
+      const c2 = await opts.critique?.(second);
+      if (c2 && !c2.pass) critiqueOk = false;
+    } catch { /* critica indisponivel: mantem a verificacao tecnica */ }
+    return { executed: true, pass: qaResultIsPass(second) && critiqueOk, correctionRound: true, technicalFailure: "", final: second };
   } catch (e) {
     return empty(e instanceof Error ? e.message : String(e));
   } finally {
