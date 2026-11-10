@@ -1988,7 +1988,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 continuityBlock,
                 // CONVERGENCIA ESTETICA: na 1a geracao os tokens determinisicos da direcao (paleta/hero/grid/ritmo)
                 // NAO entram — viravam um prior forte e os sites do mesmo segmento saiam parecidos. Em edicao continuam.
-                directionBlock: firstGen ? undefined : direction.block,
+                directionBlock: direction.block,
                 instruction,
                 creativeBrief,
                 mediaBlock: mediaBlockForRun,
@@ -1999,7 +1999,8 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 ? "\n\nAUTONOMIA TOTAL (você decide): você é a autoridade final desta execução — arquitetura, design, estrutura, arquivos, ferramentas e o momento de concluir. As diretrizes/direções acima são REFERÊNCIA (adapte ou substitua conforme seu julgamento). Nenhum guard vai bloquear sua conclusão: execute as mudanças com as ferramentas e finalize quando considerar pronto."
                   + "\nVELOCIDADE (o usuário vê a mudança em SEGUNDOS, sem esperar o fim): o preview recompila sozinho a cada arquivo salvo. NÃO rode `npm install`/`npm run build` em edições — reserve build para quando o usuário pedir publicar/exportar ou quando for indispensável. Verifique o resultado UMA vez (browser_open + uma inspeção) e finalize; não repita inspeções nem abra o navegador várias vezes."
                 : "";
-              const mission = missionBase + autonomyBlock;
+              const speedBlock = "\nVELOCIDADE (o usuario ve a mudanca em SEGUNDOS): o preview recompila sozinho a cada arquivo salvo. NAO rode npm install nem npm run build na geracao/edicoes (so quando pedirem publicar/exportar). Verifique o resultado no maximo UMA vez e finalize - nao repita inspecoes/medicoes. Grave arquivos COMPLETOS e poucos: agrupe secoes no mesmo arquivo em vez de criar um componente por secao; priorize 8 a 12 arquivos no total.";
+              const mission = missionBase + autonomyBlock + speedBlock;
             // ===== SESSÃO POR PROJETO (continuidade cognitiva real) =====
             // Reaproveita o agente VIVO do projeto (chave isolada por usuário+projeto+
             // conversa). Projeto A nunca compartilha sessão com B; trocar de IA recria.
