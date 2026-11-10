@@ -1,0 +1,6 @@
+import{c as s,j as t,C as o}from"./index-LUgQvkkz.js";/**
+ * @license lucide-react v0.462.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const d=s("Construction",[["rect",{x:"2",y:"6",width:"20",height:"8",rx:"1",key:"1estib"}],["path",{d:"M17 14v7",key:"7m2elx"}],["path",{d:"M7 14v7",key:"1cm7wv"}],["path",{d:"M17 3v3",key:"1v4jwn"}],["path",{d:"M7 3v3",key:"7o6guu"}],["path",{d:"M10 14 2.3 6.3",key:"1023jk"}],["path",{d:"m14 6 7.7 7.7",key:"1s8pl2"}],["path",{d:"m8 6 8 8",key:"hl96qh"}]]);function m({title:e,subtitle:a}){return t.jsxs("div",{className:"p-6 lg:p-8 max-w-7xl mx-auto",children:[t.jsx("h1",{className:"font-display text-3xl font-bold tracking-tight",children:e}),t.jsx("p",{className:"text-muted-foreground mt-1 mb-8",children:a}),t.jsxs(o,{className:"p-12 text-center border-dashed border-border/60",children:[t.jsx(d,{className:"h-10 w-10 mx-auto text-muted-foreground mb-4"}),t.jsx("h2",{className:"font-display font-semibold text-lg",children:"Em construção"}),t.jsx("p",{className:"text-sm text-muted-foreground mt-2 max-w-md mx-auto",children:"Esta seção entra na próxima fase do build. A fundação (auth, banco, tema, layout) já está pronta."})]})]})}export{m as default};

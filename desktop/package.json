@@ -1,0 +1,47 @@
+{
+  "name": "tiagoprospector-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TiagoProspector Desktop (Windows) — UI atual + Agent Runtime local automático.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.tiagoprospector.desktop",
+    "productName": "TiagoProspector",
+    "files": ["main.js", "package.json"],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TiagoProspector"
+    },
+    "extraResources": [
+      { "from": "../dist-desktop", "to": "frontend" },
+      {
+        "from": "../agent-runtime",
+        "to": "agent-runtime",
+        "filter": [
+          "**/*",
+          "!test/**",
+          "!scripts/**",
+          "!**/*.md",
+          "!**/.git/**",
+          "!**/*.tmp-*",
+          "!**/*.log",
+          "!**/*.map"
+        ]
+      }
+    ]
+  }
+}

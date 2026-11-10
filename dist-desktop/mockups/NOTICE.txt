@@ -1,0 +1,24 @@
+Assets de mockup de dispositivo usados na PROPOSTA em PDF.
+
+1) NOTEBOOK (MacBook aberto, tela + teclado/trackpad visiveis)
+   Fonte:    https://www.webmobilefirst.com/en/mockups/
+   Arquivo:  apple-macbook-neo-2026-front.png   (800x488)
+   Licenca:  "Personal and commercial use allowed. No attribution required, no
+             watermark. Modification and cropping allowed. Resale or
+             redistribution of the file alone prohibited."
+             https://www.webmobilefirst.com/en/license-agreement/
+
+2) IPHONE 15 Pro (titanium preto, retrato)
+   Fonte:    https://github.com/Alqemist-labs/mockup-studio
+   Licenca:  MIT
+   Autor:    Alqemist Studio (https://www.alqemist.com/)
+   Arquivo:  apple-iphone-15-pro-black-titanium-portrait.png (1419x2796)
+
+Observacoes:
+- As marcas e os modelos citados (Apple, MacBook, iPhone) pertencem a Apple Inc.
+  Os frames sao usados apenas para ILUSTRAR uma interface/produto e nao
+  representam produto ou parceria oficial.
+- Composicao feita localmente no navegador (canvas), de forma deterministica, com
+  a captura REAL do site dentro da tela do aparelho. Sem IA, sem chamadas externas.
+- As coordenadas da area de tela de cada frame foram obtidas por analise do canal
+  alfa (regiao transparente interna) e estao em src/lib/proposalMockups.ts.

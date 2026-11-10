@@ -2020,7 +2020,7 @@ Mantenha os dados reais do negócio e não invente nada. Após corrigir, verifiq
                 projectId,
                 currentFiles,
                 businessForRun,
-                { ...body, mode: runKindEfetivo === "generate" ? "generate" : "edit", maxIterations: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 80) : body.maxIterations },
+                { ...body, mode: runKindEfetivo === "generate" ? "generate" : "edit", maxIterations: runKindEfetivo === "generate" ? Math.max(Number(body.maxIterations ?? 0), 120) : body.maxIterations },
                 exec,
                 { hasBase: runKindEfetivo === "generate" ? false : !firstGen, autonomy },
               );

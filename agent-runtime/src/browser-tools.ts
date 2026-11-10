@@ -190,12 +190,18 @@ export function buildBrowserTools(
     description:
       "Mede a GEOMETRIA REAL do site renderizado (bounding box, posição, dimensões, espaçamento, alinhamento, sobreposição, proporção, viewport). " +
       "Recebe um ou mais seletores CSS (ex.: '.hero h1' ou ['.hero', '.hero .cta']). Retorna dados estruturados por elemento + relações entre eles. " +
-      "Use quando a tarefa envolver posicionamento, espaçamento, tamanho, alinhamento, responsividade ou composição visual. Depois de editar, meça de novo para confirmar o efeito.",
+      "Use quando a tarefa envolver posicionamento, espaçamento, tamanho, alinhamento, responsividade ou composição visual. Meça no máximo uma vez por mudança estrutural; NÃO repita medições para 'confirmar' efeitos — o QA visual automático já faz isso.",
     inputSchema: z.object({
       selectors: z.union([z.string(), z.array(z.string())]).optional().describe("um seletor CSS ou lista de seletores para medir"),
     }),
     async execute(input) {
       const s = session();
+      const now = Date.now();
+      const hist: number[] = (((s as any).__measureAt as number[] | undefined) ?? []).filter((t) => now - t < 300_000);
+      if (hist.length >= 3) {
+        return "browser_measure: voce ja mediu o layout 3 vezes nos ultimos 5 minutos. NAO meca de novo agora - use os dados obtidos, grave os arquivos restantes (write_file) e chame finish_task. Medir repetidamente nao melhora o layout.";
+      }
+      (s as any).__measureAt = [...hist, now];
       const raw = Array.isArray(input.selectors) ? input.selectors : (input.selectors ? [input.selectors] : ["body", "header", "main", "footer"]);
       if (!raw.length) return "browser_measure: informe ao menos um seletor.";
       const data = await s.measure(raw);
